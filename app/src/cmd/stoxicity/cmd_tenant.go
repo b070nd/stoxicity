@@ -35,8 +35,11 @@ func cmdTenant(_ context.Context, a *app, args []string) error {
 
 // cmdSources lists the sources with the health the store last saw.
 func cmdSources(ctx context.Context, a *app, args []string) error {
+	if len(args) >= 1 && args[0] == "eval" {
+		return cmdSourcesEval(ctx, a, args[1:])
+	}
 	if len(args) != 1 || args[0] != "list" {
-		return usageErrorf("expected: list")
+		return usageErrorf("expected: list | eval [-days N]")
 	}
 	db, err := a.store()
 	if err != nil {
