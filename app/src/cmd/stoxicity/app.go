@@ -17,6 +17,7 @@ import (
 
 	"github.com/b070nd/stoxicity/app/src/channel"
 	"github.com/b070nd/stoxicity/app/src/classify"
+	"github.com/b070nd/stoxicity/app/src/company"
 	"github.com/b070nd/stoxicity/app/src/config"
 	"github.com/b070nd/stoxicity/app/src/entity"
 	"github.com/b070nd/stoxicity/app/src/envfile"
@@ -110,6 +111,11 @@ type app struct {
 	// The second scorer is built on first use, and its failure reported once.
 	enr     pipeline.Enricher
 	enrDone bool
+
+	// The company master and the resolver built from it, loaded on first use.
+	master     company.Master
+	masterDone bool
+	res        entity.Resolver
 }
 
 // run is the whole program. It returns the exit code.
@@ -547,10 +553,68 @@ func (a *app) relative(p string) string {
 	return filepath.Join(a.baseDir, p)
 }
 
-// entities knows the companies the user follows: the watchlist and the tickers
-// that the tenants' watches name. There is no company master list yet, so a
-// mention is found by its ticker only.
+// companyDir is the folder of the cached company master.
+func (a *app) companyDir() string { return filepath.Join(a.dataDir(), "company") }
+
+// companies returns the cached company master, read once. A damaged cache is
+// reported on stderr and counts as empty; "stoxicity company update" repairs it.
+func (a *app) companies() company.Master {
+	if !a.masterDone {
+		a.masterDone = true
+		m, err := company.Load(a.companyDir())
+		if err != nil {
+			fmt.Fprintf(a.stderr, "stoxicity: %v\n", err)
+		}
+		a.master = m
+	}
+	return a.master
+}
+
+// refreshCompanies brings the cached company master up to date when
+// company.enabled is set, and forgets what was read so the next use sees the
+// new list. A failure is a warning: the old list, or none, still works.
+func (a *app) refreshCompanies(ctx context.Context, force bool) (company.Result, error) {
+	client, err := a.httpClient()
+	if err != nil {
+		return company.Result{}, err
+	}
+	res, err := company.Refresh(ctx, client, a.companyDir(), company.Options{
+		URL:    a.cfg.Company.URL,
+		MaxAge: a.cfg.CompanyMaxAge(),
+		Force:  force,
+		Now:    a.now,
+	})
+	a.masterDone, a.res = false, nil
+	return res, err
+}
+
+// refreshCompaniesQuietly is refreshCompanies for fetch and run: it does
+// nothing when the setting is off or the client cannot be built (the poller
+// reports that itself), and turns a failure into a warning.
+func (a *app) refreshCompaniesQuietly(ctx context.Context) {
+	if !a.cfg.Company.Enabled {
+		return
+	}
+	if _, err := a.httpClient(); err != nil {
+		return
+	}
+	res, err := a.refreshCompanies(ctx, false)
+	switch {
+	case err != nil:
+		fmt.Fprintf(a.stderr, "stoxicity: company master not refreshed: %v\n", err)
+	case res.Updated:
+		a.log.Debug("company master updated", "tickers", res.Records)
+	}
+}
+
+// entities knows the companies in the news: the cached company master plus
+// the tickers that the watchlist and the tenants' watches name, which cover
+// listings the master does not have. Without a master a mention is found by
+// its ticker only.
 func (a *app) entities() entity.Resolver {
+	if a.res != nil {
+		return a.res
+	}
 	var tickers []string
 	tickers = append(tickers, a.cfg.Watchlist...)
 	if ts, err := a.tenants().List(); err == nil {
@@ -564,14 +628,8 @@ func (a *app) entities() entity.Resolver {
 			}
 		}
 	}
-	slices.Sort(tickers)
-	var list []model.Entity
-	for _, t := range slices.Compact(tickers) {
-		if t = strings.ToUpper(strings.TrimSpace(t)); t != "" {
-			list = append(list, model.Entity{Ticker: t})
-		}
-	}
-	return entity.New(list)
+	a.res = company.NewResolver(a.companies(), tickers)
+	return a.res
 }
 
 // httpClient returns the client for fetching. It refuses to run without a

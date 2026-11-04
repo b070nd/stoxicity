@@ -24,6 +24,7 @@ type Config struct {
 	Fetch     Fetch    `yaml:"fetch"`
 	Refresh   Refresh  `yaml:"refresh"`
 	Laya      Laya     `yaml:"laya"`
+	Company   Company  `yaml:"company"`
 	Tenancy   Tenancy  `yaml:"tenancy"`
 	// Topics are the themes an article can be filed under. See package classify.
 	Topics []TopicRule `yaml:"topics"`
@@ -83,6 +84,19 @@ type FastRefresh struct {
 	To   string `yaml:"to"`
 	// WeekdaysOnly leaves out Saturday and Sunday in Zone.
 	WeekdaysOnly bool `yaml:"weekdays_only"`
+}
+
+// Company is the company master: the SEC's list of tickers, names and CIKs,
+// cached under data_dir/company. See package company.
+type Company struct {
+	// Enabled makes fetch and run keep the cached list up to date. Off, the
+	// cache is still read, and "stoxicity company update" still works.
+	Enabled bool `yaml:"enabled"`
+	// MaxAge is how old the cached list may get before the SEC is asked again.
+	MaxAge string `yaml:"max_age"`
+	// URL replaces the SEC's address, for a mirror or a test. Empty means the
+	// SEC.
+	URL string `yaml:"url"`
 }
 
 // Laya points at a laya-serve sidecar used for the second scoring stage.
@@ -162,6 +176,10 @@ func (c Config) FetchTimeout() time.Duration { return parseDuration(c.Fetch.Time
 // MaxBackoff returns Refresh.MaxBackoff as a duration, or zero if it does not
 // parse.
 func (c Config) MaxBackoff() time.Duration { return parseDuration(c.Refresh.MaxBackoff) }
+
+// CompanyMaxAge returns Company.MaxAge as a duration, or zero if it does not
+// parse.
+func (c Config) CompanyMaxAge() time.Duration { return parseDuration(c.Company.MaxAge) }
 
 // LayaTimeout returns Laya.Timeout as a duration, or zero if it does not parse.
 func (c Config) LayaTimeout() time.Duration { return parseDuration(c.Laya.Timeout) }

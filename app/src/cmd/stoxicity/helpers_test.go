@@ -42,6 +42,13 @@ const atomFeed = `<?xml version="1.0" encoding="utf-8"?>
   </entry>
 </feed>`
 
+// Synthetic fixture in the shape of the SEC's company_tickers.json.
+const companyList = `{
+ "0":{"cik_str":1000001,"ticker":"ACME","title":"ACME CORP"},
+ "1":{"cik_str":1000002,"ticker":"GLOBB","title":"Globex Holdings Inc"},
+ "2":{"cik_str":1000002,"ticker":"GLOB","title":"Globex Holdings Inc"}
+}`
+
 // testEnv is a configuration folder in a temporary directory and a feed server.
 type testEnv struct {
 	dir    string
@@ -64,6 +71,10 @@ func newTestEnv(t *testing.T) *testEnv {
 	mux.HandleFunc("/feed.xml", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/atom+xml")
 		fmt.Fprint(w, atomFeed)
+	})
+	mux.HandleFunc("/company_tickers.json", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("ETag", `"company-1"`)
+		fmt.Fprint(w, companyList)
 	})
 	srv := httptest.NewTLSServer(mux)
 	t.Cleanup(srv.Close)
@@ -88,7 +99,7 @@ func newTestEnv(t *testing.T) *testEnv {
 			t.Fatal(err)
 		}
 	}
-	write("config.yaml", "since: 2026-11-01\ndata_dir: ./data\nwatchlist: [ACME]\n")
+	write("config.yaml", "since: 2026-11-01\ndata_dir: ./data\nwatchlist: [ACME]\ncompany:\n  url: "+srv.URL+"/company_tickers.json\n")
 	write("sources.yaml", fmt.Sprintf(`sources:
   - id: news-feed
     name: Synthetic news

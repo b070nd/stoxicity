@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/b070nd/stoxicity/app/src/feeds"
+	"github.com/b070nd/stoxicity/app/src/feeds/edgar"
 	"github.com/b070nd/stoxicity/app/src/feeds/registry"
 	"github.com/b070nd/stoxicity/app/src/httpx"
 	"github.com/b070nd/stoxicity/app/src/ledger"
@@ -81,7 +82,7 @@ func (a *app) poller(srcs []model.Source, pipe *pipeline.Pipeline, now bool) (*s
 	var states scheduler.StateStore = db
 	opts := scheduler.Options{
 		Sources:         srcs,
-		Fetchers:        registry.New(client, registry.Options{Now: a.opts.now}),
+		Fetchers:        registry.New(client, registry.Options{Now: a.opts.now, Tickers: edgar.TickersByCIK(a.companies().Entities)}),
 		Sink:            pipe,
 		DefaultInterval: a.cfg.FetchInterval(),
 		MaxBackoff:      a.cfg.MaxBackoff(),
@@ -133,6 +134,7 @@ func cmdFetch(ctx context.Context, a *app, args []string) error {
 		fmt.Fprintln(a.stdout, "no enabled sources: set enabled: true in sources.yaml, or name a source")
 		return nil
 	}
+	a.refreshCompaniesQuietly(ctx)
 	db, err := a.store()
 	if err != nil {
 		return err
@@ -197,6 +199,7 @@ func cmdRun(ctx context.Context, a *app, args []string) error {
 	if len(srcs) == 0 {
 		return errors.New("no enabled sources: set enabled: true in sources.yaml")
 	}
+	a.refreshCompaniesQuietly(ctx)
 	db, err := a.store()
 	if err != nil {
 		return err

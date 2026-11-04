@@ -111,6 +111,7 @@ func defaults() Config {
 			RelevanceWeight: 0.3,
 			BatchSize:       16,
 		},
+		Company: Company{Enabled: true, MaxAge: "168h"},
 		Tenancy: Tenancy{Dir: "tenants", Default: "default"},
 	}
 }
@@ -162,6 +163,7 @@ func validate(cfg Config) error {
 	checkDuration("fetch.timeout", cfg.Fetch.Timeout)
 	checkDuration("refresh.max_backoff", cfg.Refresh.MaxBackoff)
 	checkDuration("laya.timeout", cfg.Laya.Timeout)
+	checkDuration("company.max_age", cfg.Company.MaxAge)
 
 	checkUnit := func(key string, v float64) {
 		if !(v >= 0 && v <= 1) { // also rejects NaN

@@ -33,6 +33,7 @@ func commands() []command {
 		{name: "eval", usage: "eval [-days 90] [-threshold X]", summary: "measure the lens against your labels", bootstrap: true, run: cmdEval},
 		{name: "rescore", usage: "rescore [-days N | -from DAY -to DAY]", summary: "score stored articles again with the current lens", bootstrap: true, run: cmdRescore},
 		{name: "classify", usage: "classify [-no-laya] TEXT... | -", summary: "show how one headline is scored and classified; stores nothing", bootstrap: true, run: cmdClassify},
+		{name: "company", usage: "company status | update [-force] | find TEXT...", summary: "the company master (SEC tickers and names): refresh or search it", bootstrap: true, run: cmdCompany},
 		{name: "watch", usage: "watch list | check [id...] | test ID [-since 24h]", summary: "list, validate or try the tenant's watches", bootstrap: true, run: cmdWatch},
 		{name: "tenant", usage: "tenant list", summary: "list tenants", bootstrap: true, run: cmdTenant},
 		{name: "sources", usage: "sources list", summary: "list sources with their last health", bootstrap: true, run: cmdSources},

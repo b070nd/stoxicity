@@ -16,9 +16,7 @@ Only `STOXICITY_*` variables and the names given by a source's `auth_env` are
 read. The loader is described in `app/src/envfile/envfile.go`.
 
 `.env.local` is created with permissions `600` (owner only). Keep it that way.
-This directory is not a git repository yet; `.gitignore` already excludes
-`.env.local`, so run `git init` after reading this and check with
-`git status` that the file is not listed.
+`.gitignore` excludes it; check with `git status` that it is never listed.
 
 ## Variables
 
@@ -63,6 +61,43 @@ days).
 (`interval`, default 2m) on weekdays between `from` and `to` in `zone`
 (default 06:00-22:00 New York time, following its daylight saving). It is off
 by default.
+
+## Company master
+
+`company:` in `config.yaml` controls a cached copy of the SEC's list of US-listed
+tickers (`https://www.sec.gov/files/company_tickers.json`: ticker, EDGAR
+conformed name, CIK). It does three things: news is matched to a company by its
+name as well as its ticker, EDGAR filings get their tickers (a filing names only
+a CIK), and `stoxicity stock TICKER` shows the company name.
+
+```yaml
+company:
+  enabled: true   # fetch and run refresh the cache when it is older than max_age
+  max_age: 168h
+  url: ""         # a mirror or a test server; empty means the SEC
+```
+
+- The cache is `data/company/company_tickers.json` plus a small file with the
+  ETag and the time it was last checked. A refresh is one conditional request
+  (the SEC's 10 requests a second limit and the contact in the User-Agent apply
+  as for any SEC call); a `304` only renews the time.
+- A new list replaces the old one only if it parses and holds at least half as
+  many tickers, so a damaged answer cannot wipe a good cache.
+- The SEC says the file is updated "periodically" with no guarantee of accuracy
+  or scope. Names are EDGAR conformed names, often in capitals (`NVIDIA CORP`);
+  the program shows them in title case and still recognises the original
+  spelling. Matching by name is a convenience, so measure it before trusting it.
+- Where one company has several tickers (share classes, warrants) only the
+  shortest ticker is matched by name, so "Alphabet" is one company; the other
+  tickers keep their name for display and are found by ticker.
+- The watchlist and the tickers in watches are added, so a listing outside the
+  SEC's list is found by its ticker.
+
+```
+stoxicity company status            # tickers cached, when it was checked
+stoxicity company update [-force]   # ask the SEC now
+stoxicity company find TEXT...      # search tickers and names
+```
 
 ## Topics and sectors
 

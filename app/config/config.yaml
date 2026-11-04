@@ -44,6 +44,15 @@ refresh:
     to: "22:00"
     weekdays_only: true
 
+# Company master: the SEC's list of US-listed tickers with company names and
+# CIKs (https://www.sec.gov/files/company_tickers.json), cached in
+# data_dir/company. It lets news be matched to companies by name and gives
+# filings their tickers. fetch and run refresh it when it is older than max_age
+# (one conditional request); "stoxicity company update" does it by hand.
+company:
+  enabled: true
+  max_age: 168h
+
 # Second scoring stage: a laya-serve sidecar. On, but its answers are gated by
 # min_confidence and only the fields in `apply` change a score; the rest are
 # recorded as reasons until they have been compared with your own labels
