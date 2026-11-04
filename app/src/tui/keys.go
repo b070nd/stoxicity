@@ -16,6 +16,17 @@ const (
 	Forward      Action = "forward"
 	GoHome       Action = "home"
 	GoWatches    Action = "watches"
+	GoStocks     Action = "stocks"
+	GoTopics     Action = "topics"
+	GoDomains    Action = "domains"
+	GoSources    Action = "sources"
+	OpenURL      Action = "open-url" // the selected article in the browser
+	Up           Action = "up"
+	Down         Action = "down"
+	PageUp       Action = "page-up"
+	PageDown     Action = "page-down"
+	Top          Action = "top"
+	Bottom       Action = "bottom"
 	FocusFilter  Action = "filter" // the Google-style filter bar
 	Keep         Action = "keep"   // label the selected article relevant
 	Drop         Action = "drop"   // label it noise
@@ -47,6 +58,17 @@ var DefaultKeys = []Binding{
 	{[]string{"]"}, Forward, "forward"},
 	{[]string{"H"}, GoHome, "dashboard"},
 	{[]string{"W"}, GoWatches, "manage watches"},
+	{[]string{"s"}, GoStocks, "stocks"},
+	{[]string{"t"}, GoTopics, "topics"},
+	{[]string{"D"}, GoDomains, "domains"},
+	{[]string{"S"}, GoSources, "source health"},
+	{[]string{"o"}, OpenURL, "open the article in the browser"},
+	{[]string{"up", "ctrl+p"}, Up, "move up"},
+	{[]string{"down", "ctrl+n"}, Down, "move down"},
+	{[]string{"pgup"}, PageUp, "page up"},
+	{[]string{"pgdown"}, PageDown, "page down"},
+	{[]string{"home"}, Top, "first row"},
+	{[]string{"end"}, Bottom, "last row"},
 	{[]string{"/"}, FocusFilter, "filter"},
 	{[]string{"k"}, Keep, "keep (relevant)"},
 	{[]string{"d"}, Drop, "drop (noise)"},

@@ -38,7 +38,8 @@ Read its "Unverified" section before relying on any of it.
    sources are shown to every tenant.
 
 How fetchers and the SEC EDGAR reader are meant to work:
-[docs/fetchers.md](docs/fetchers.md).
+[docs/fetchers.md](docs/fetchers.md). The full-screen interface and its keys:
+[docs/tui.md](docs/tui.md).
 
 macOS and Linux only; Windows is out of scope.
 
@@ -124,7 +125,8 @@ app/
     domains/ digest/        per-domain counts, the daily summary
     tagcloud/ timeline/     cloud tiers, bars per day and event list
     nav/                    routes, breadcrumbs, back/forward
-    tui/                    shell and views
+    tui/                    full-screen interface: screens, model, key map
+    workspace/              opens config, stores and one tenant for the TUI
 ```
 
 Scoring in two stages: keyword rules first, then optionally a
