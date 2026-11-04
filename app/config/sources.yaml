@@ -8,6 +8,14 @@
 # Do not scrape sites whose robots.txt or terms forbid automated collection
 # (Reuters, WSJ, MarketWatch and FT do); add a licensed API or feed instead.
 #
+# The official feeds below were read on 2026-11-04 from the publishers' own
+# feed pages; docs/research/official-sources.md has the evidence for each
+# licence, the robots.txt findings and the sources left out. A feed whose
+# robots.txt or terms do not allow a bot is listed with enabled: false and the
+# reason, so the decision stays visible. `internal` is used where the publisher
+# allows reuse only for non-commercial purposes or the wording was not read in
+# full; change it to `redistributable` only after reading the cited page.
+#
 # Checked on 2026-11-03 (docs/research): the Fed feed, and the EDGAR feed with
 # type=10-K, 8-K and 4. Not checked: type=10-Q.
 sources:
@@ -29,6 +37,58 @@ sources:
     paged: true
     enabled: true # needs STOXICITY_CONTACT set; the SEC blocks undeclared clients
 
+  # ---- United States --------------------------------------------------------
+  # The SEC's feeds: "considered public information and may be copied or
+  # further distributed" (privacy-information, Website Dissemination). The
+  # request limit of 10 a second and the declared User-Agent apply.
+  - id: sec-press
+    name: SEC, press releases
+    domain: sec.gov
+    kind: rss
+    url: https://www.sec.gov/news/pressreleases.rss
+    tier: 1
+    tags: [regulation, us]
+    licence: redistributable
+    terms: https://www.sec.gov/about/privacy-information
+    enabled: true
+
+  - id: sec-speeches
+    name: SEC, speeches and statements
+    domain: sec.gov
+    kind: rss
+    url: https://www.sec.gov/news/speeches-statements.rss
+    tier: 1
+    tags: [regulation, us]
+    licence: redistributable
+    terms: https://www.sec.gov/about/privacy-information
+    enabled: true
+
+  - id: sec-litigation
+    name: SEC, litigation releases
+    domain: sec.gov
+    kind: rss
+    url: https://www.sec.gov/enforcement-litigation/litigation-releases/rss
+    tier: 1
+    tags: [regulation, enforcement, us]
+    licence: redistributable
+    terms: https://www.sec.gov/about/privacy-information
+    enabled: true
+
+  - id: sec-suspensions
+    name: SEC, trading suspensions
+    domain: sec.gov
+    kind: rss
+    url: https://www.sec.gov/enforcement-litigation/trading-suspensions/rss
+    tier: 1
+    tags: [regulation, enforcement, us]
+    licence: redistributable
+    terms: https://www.sec.gov/about/privacy-information
+    enabled: true
+
+  # The Board: "information on Board's website is in the public domain and may
+  # be copied and distributed without permission" (disclaimer, Copyright).
+  # press_all also carries the FOMC statements and the enforcement actions. The
+  # Board's robots.txt answers 404, so it states no rule.
   - id: fed-press
     name: Federal Reserve, press releases
     domain: federalreserve.gov
@@ -36,7 +96,211 @@ sources:
     url: https://www.federalreserve.gov/feeds/press_all.xml
     tier: 1
     tags: [macro, us]
-    # The feed states no reuse terms, so it is kept internal until they are found.
+    licence: redistributable
+    terms: https://www.federalreserve.gov/disclaimer.htm
+    enabled: true
+
+  - id: fed-speeches
+    name: Federal Reserve, speeches and testimony
+    domain: federalreserve.gov
+    kind: rss
+    url: https://www.federalreserve.gov/feeds/speeches_and_testimony.xml
+    tier: 1
+    tags: [macro, us]
+    licence: redistributable
+    terms: https://www.federalreserve.gov/disclaimer.htm
+    enabled: true
+
+  # BLS: "everything that we publish ... is in the public domain" (copyright
+  # information). Only this one BLS feed is a stream of releases (Atom). The
+  # other feed, bls_latest.rss, is one item overwritten in place with no guid,
+  # which cannot be told apart from the last poll; the CPI, jobs and PPI
+  # releases need a per-release feed or the API (not yet found).
+  - id: bls-jolts
+    name: BLS, job openings and labor turnover
+    domain: bls.gov
+    kind: rss
+    url: https://www.bls.gov/feed/jolts.rss
+    tier: 1
+    tags: [macro, us]
+    licence: redistributable
+    terms: https://www.bls.gov/opub/copyright-information.htm
+    enabled: true
+
+  # BEA: the feed is live and carries every release, but apps.bea.gov/robots.txt
+  # says "User-agent: *" / "Disallow: /" and /rss/ is not in its Allow list, and
+  # no reuse sentence was found. Off until BEA says a bot may read it.
+  - id: bea-releases
+    name: BEA, news releases
+    domain: bea.gov
+    kind: rss
+    url: https://apps.bea.gov/rss/rss.xml
+    tier: 1
+    tags: [macro, us]
+    licence: internal
+    owner: default
+    enabled: false
+
+  # ---- Euro area -------------------------------------------------------------
+  # ECB: copyright is the ECB's; the disclaimer (read as a summary, not
+  # verbatim) allows reproduction with the ECB cited. Kept internal until the
+  # wording is read. robots.txt sets Crawl-delay: 5, far below our polling.
+  - id: ecb-press
+    name: ECB, press releases, speeches and monetary policy decisions
+    domain: ecb.europa.eu
+    kind: rss
+    url: https://www.ecb.europa.eu/rss/press.html
+    tier: 1
+    tags: [macro, euro-area]
+    licence: internal
+    owner: default
+    enabled: true
+
+  - id: ecb-statistics
+    name: ECB, statistical press releases
+    domain: ecb.europa.eu
+    kind: rss
+    url: https://www.ecb.europa.eu/rss/statpress.html
+    tier: 1
+    tags: [macro, euro-area]
+    licence: internal
+    owner: default
+    enabled: true
+
+  # Working papers and bulletin boxes: mostly research, so off by default.
+  - id: ecb-publications
+    name: ECB, publications and working papers
+    domain: ecb.europa.eu
+    kind: rss
+    url: https://www.ecb.europa.eu/rss/pub.html
+    tier: 1
+    tags: [macro, euro-area]
+    licence: internal
+    owner: default
+    enabled: false
+
+  # Eurostat's editorial content is CC BY 4.0 and reuse is authorised with the
+  # source acknowledged (copyright notice), but robots.txt disallows the
+  # search-portlet addresses this feed is served from for every agent. Off
+  # until you decide whether to follow the feed page or the robots rule.
+  - id: eurostat-releases
+    name: Eurostat, news releases and euro indicators
+    domain: ec.europa.eu
+    kind: rss
+    url: https://ec.europa.eu/eurostat/en/search?p_p_id=estatsearchportlet_WAR_estatsearchportlet&p_p_lifecycle=2&p_p_state=maximized&p_p_mode=view&p_p_resource_id=atom&_estatsearchportlet_WAR_estatsearchportlet_collection=CAT_PREREL
+    tier: 1
+    tags: [macro, euro-area]
+    licence: redistributable
+    terms: https://ec.europa.eu/eurostat/help/copyright-notice
+    enabled: false
+
+  # EBA: "Reproduction of all EBA material on this site is authorised,
+  # provided the source is acknowledged" (legal notice). Crawl-delay: 10.
+  - id: eba-news
+    name: European Banking Authority, news
+    domain: eba.europa.eu
+    kind: rss
+    url: https://www.eba.europa.eu/news-press/news/rss.xml
+    tier: 1
+    tags: [regulation, banks, euro-area]
+    licence: redistributable
+    terms: https://www.eba.europa.eu/find-out-about-us/legal-notice
+    enabled: true
+
+  # ---- United Kingdom --------------------------------------------------------
+  # The Bank owns the copyright and "typically grants permission for
+  # non-commercial re-use" (legal page), so these stay internal.
+  - id: boe-news
+    name: Bank of England, news and monetary policy summaries
+    domain: bankofengland.co.uk
+    kind: rss
+    url: https://www.bankofengland.co.uk/rss/news
+    tier: 1
+    tags: [macro, uk]
+    licence: internal
+    owner: default
+    enabled: true
+
+  - id: boe-speeches
+    name: Bank of England, speeches
+    domain: bankofengland.co.uk
+    kind: rss
+    url: https://www.bankofengland.co.uk/rss/speeches
+    tier: 1
+    tags: [macro, uk]
+    licence: internal
+    owner: default
+    enabled: true
+
+  - id: boe-publications
+    name: Bank of England, publications
+    domain: bankofengland.co.uk
+    kind: rss
+    url: https://www.bankofengland.co.uk/rss/publications
+    tier: 1
+    tags: [macro, uk]
+    licence: internal
+    owner: default
+    enabled: true
+
+  - id: boe-prudential
+    name: Bank of England, prudential regulation
+    domain: bankofengland.co.uk
+    kind: rss
+    url: https://www.bankofengland.co.uk/rss/prudential-regulation-publications
+    tier: 1
+    tags: [regulation, banks, uk]
+    licence: internal
+    owner: default
+    enabled: false
+
+  # FCA: its terms bar "scraper", "robot" and "bot" tools without prior written
+  # consent (4.8) and any data feed to a comparison table (3.4). The feed
+  # lists a date like "Wednesday, November 4, 2026 - 10:01" that the date
+  # parser does not read. Off; ask the FCA before enabling.
+  - id: fca-news
+    name: FCA, news and press releases
+    domain: fca.org.uk
+    kind: rss
+    url: https://www.fca.org.uk/news/rss.xml
+    tier: 1
+    tags: [regulation, uk]
+    licence: internal
+    owner: default
+    enabled: false
+
+  # ---- Switzerland -----------------------------------------------------------
+  # SNB: reuse "for non-commercial purposes" with the source named (disclaimer
+  # and copyright); commercial reuse is not addressed, so these stay internal.
+  - id: snb-press
+    name: Swiss National Bank, press releases
+    domain: snb.ch
+    kind: rss
+    url: https://www.snb.ch/public/rss/en/pressrel
+    tier: 1
+    tags: [macro, switzerland]
+    licence: internal
+    owner: default
+    enabled: true
+
+  - id: snb-monetary-policy
+    name: Swiss National Bank, monetary policy
+    domain: snb.ch
+    kind: rss
+    url: https://www.snb.ch/public/rss/en/mopo
+    tier: 1
+    tags: [macro, switzerland]
+    licence: internal
+    owner: default
+    enabled: true
+
+  - id: snb-speeches
+    name: Swiss National Bank, speeches
+    domain: snb.ch
+    kind: rss
+    url: https://www.snb.ch/public/rss/en/speeches
+    tier: 1
+    tags: [macro, switzerland]
     licence: internal
     owner: default
     enabled: true

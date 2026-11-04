@@ -390,6 +390,12 @@ func canonicalURL(raw, base string) string {
 	u.Scheme = strings.ToLower(u.Scheme)
 	u.Host = strings.ToLower(u.Host)
 	u.Fragment = ""
+	// Some publishers write a double slash in the path of every link (the ECB
+	// does); the page is the same, so one spelling keeps one identity.
+	if strings.Contains(u.Path, "//") {
+		u.Path = slashRun.ReplaceAllString(u.Path, "/")
+		u.RawPath = ""
+	}
 	if u.RawQuery != "" {
 		q := u.Query()
 		for name := range q {
@@ -401,6 +407,8 @@ func canonicalURL(raw, base string) string {
 	}
 	return u.String()
 }
+
+var slashRun = regexp.MustCompile(`/{2,}`)
 
 // domainOf is the host of link without a leading "www.", or fallback.
 func domainOf(link, fallback string) string {
