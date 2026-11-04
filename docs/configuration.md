@@ -26,14 +26,15 @@ read. The loader is described in `app/src/envfile/envfile.go`.
 | `STOXICITY_TIMEZONE` | `.env` | no | Time zone for days and digest times (`Europe/Berlin`) |
 | `STOXICITY_DATA_DIR` | `.env` | no | Database and runtime state |
 | `STOXICITY_LOG_LEVEL` | `.env` | no | `debug`, `info`, `warn`, `error` |
-| `STOXICITY_SMTP_HOST`, `_PORT` | `.env` | no | Mail server for the email channel |
 | `STOXICITY_LAYA_URL` | `.env` | no | laya-serve address |
 | `STOXICITY_FILE_DIR` | `.env` | no | Folder for the file channel (Markdown, one file per notification); relative paths start at the folder of `.env`. Unset: a watch that names `file` is reported on stderr and its alerts count as delivered |
 | `STOXICITY_FEED_PATH`, `_TITLE`, `_URL` | `.env` | no | Feed channel: the Atom file to write, its title and the address it is served from. All three are needed |
 | `STOXICITY_PUBLIC_URL` | `.env` | no | Base of links in feed and email; unset for now |
 | `STOXICITY_CONTACT` | `.env.local` | personal | Your email or https URL, sent in the User-Agent (the SEC requires it) |
-| `STOXICITY_SMTP_USER`, `_PASSWORD` | `.env.local` | **yes** | Mail account |
-| `STOXICITY_MAIL_FROM`, `_TO` | `.env.local` | personal | Sender and recipient |
+| `STOXICITY_GMAIL_CLIENT_ID` | `.env.local` | personal | OAuth client ID of your Google Cloud project (email channel) |
+| `STOXICITY_GMAIL_CLIENT_SECRET` | `.env.local` | **yes** | Its client secret (Google marks it optional for desktop clients) |
+| `STOXICITY_GMAIL_REFRESH_TOKEN` | `.env.local` | **yes** | Optional. `stoxicity gmail auth` stores the token in `data/gmail/refresh_token` (owner-only); this variable overrides the file |
+| `STOXICITY_MAIL_FROM`, `_TO` | `.env.local` | personal | Sender (your Gmail address) and recipient |
 | `STOXICITY_WEBHOOK_URL` | `.env.local` | **yes** | Webhook channel: the https address notifications are posted to (the URL carries the secret) |
 | `STOXICITY_LAYA_API_KEY` | `.env.local` | **yes** | laya-serve key, sent as a Bearer token; must equal the sidecar's `LAYA_API_KEY` |
 
@@ -242,20 +243,62 @@ clocks. Times are stored in UTC.
 One consequence to know: a US filing at 9 pm New York time is 3 am Berlin the
 next day, so late US filings count towards the following Berlin day.
 
-## Gmail
+## Email through the Gmail API
 
-Placeholders for the email channel are in `.env` (server) and `.env.local`
-(account). **How to authenticate is not decided.** Two routes exist:
+The email channel sends each alert and digest through the Gmail API with OAuth
+2.0, for one Google account. It uses the scope
+`https://www.googleapis.com/auth/gmail.send` only: it can send mail on your
+behalf and cannot read it. The evidence for every fact below is in
+`docs/research/gmail-api.md`.
 
-| Route | Variables | Trade-off |
-|---|---|---|
-| SMTP with an app password | `STOXICITY_SMTP_USER`, `STOXICITY_SMTP_PASSWORD` | Least code; stores a password-like secret |
-| Gmail API with OAuth | client ID, client secret, refresh token (names to be chosen) | More setup; no password stored |
+**Set up once**
 
-Google's current rules for app passwords and OAuth consent were not checked in
-this project. Read them before choosing, and before putting any real value in
-`.env.local`. Whichever route is used, a missing credential must stop the
-channel with a message naming the empty variable and never printing a value.
+1. In the Google Cloud console create a project, enable the Gmail API, configure
+   the OAuth consent screen, and create an OAuth client of type **Desktop app**.
+   (These console steps are not checked against Google's pages in this project;
+   follow Google's current screens.)
+2. Put the client ID and secret in `.env.local`, with your address:
+
+   ```
+   STOXICITY_GMAIL_CLIENT_ID=...
+   STOXICITY_GMAIL_CLIENT_SECRET=...
+   STOXICITY_MAIL_FROM=you@gmail.com
+   STOXICITY_MAIL_TO=you@gmail.com
+   ```
+
+3. Run `stoxicity gmail auth`. It prints an address (and tries to open it). Approve
+   "Send email on your behalf". Google sends the browser back to a listener on
+   `127.0.0.1` that the command runs for a few minutes, with PKCE and a random
+   `state`. The refresh token goes to `data/gmail/refresh_token` (folder 0700,
+   file 0600). It is never printed or logged.
+4. `stoxicity gmail status` lists which values are set (never their content), and
+   `stoxicity gmail test` sends one message to `STOXICITY_MAIL_TO`.
+
+**The seven-day trap.** Google issues a refresh token that **expires after 7
+days** to a project whose consent screen has the publishing status *Testing*,
+for any scope beyond name, email address and profile. For a long-running
+installation, set the status to *In production*. The app is then "unverified"
+(`gmail.send` is a sensitive scope), which shows a warning screen you pass with
+*Advanced, Go to (project) (unsafe)* and caps new users at 100 over the project's
+life; for one person that is no limit. Google states the 7-day rule only for
+*Testing* and names no fixed lifetime for production tokens. A token also stops
+working when you revoke it, when it was unused for six months, and when you
+change the Google password (the token has a Gmail scope).
+
+When Google refuses the token, sending stops with `Google no longer accepts the
+stored authorisation; run "stoxicity gmail auth" again`, and the alert counts as
+failed and is retried, not dropped.
+
+**Not confirmed.** Google's pages do not say whether the base64url `raw` field
+needs `=` padding (the program sends it padded, as the official Python sample
+does), what size limit the API has, whether a desktop client may omit the
+secret in practice, or the daily limit through the API. For a personal account
+Google's help page names "more than 500 emails sent in a day" as the point where
+sending can be blocked for 1 to 24 hours; a watch's alerts stay far below it.
+
+The message is plain text, UTF-8, quoted-printable; the subject is encoded, and
+text from articles cannot add headers. A notification that would exceed 1 MB
+loses articles from its end until it fits.
 
 ## Name and domain
 

@@ -78,6 +78,11 @@ type runOptions struct {
 	enricher pipeline.Enricher
 	// stdin replaces the standard input, which classify reads for "-".
 	stdin io.Reader
+	// openURL replaces the attempt to open the Gmail authorisation address in a
+	// browser.
+	openURL func(string) error
+	// gmailAuthURL, gmailTokenURL and gmailSendURL replace Google's addresses.
+	gmailAuthURL, gmailTokenURL, gmailSendURL string
 }
 
 // app is everything a command works with. Commands take it explicitly so a
@@ -531,13 +536,13 @@ func (a *app) channels() map[channel.Kind]channel.Channel {
 		}
 	}
 	slices.Sort(kinds)
-	built, errs := channel.Build(kinds, channel.Settings{
-		FileDir:    a.relative(os.Getenv("STOXICITY_FILE_DIR")),
-		FeedPath:   a.relative(os.Getenv("STOXICITY_FEED_PATH")),
-		FeedTitle:  os.Getenv("STOXICITY_FEED_TITLE"),
-		FeedURL:    os.Getenv("STOXICITY_FEED_URL"),
-		WebhookURL: os.Getenv("STOXICITY_WEBHOOK_URL"),
-	}, nil)
+	settings := a.gmailSettings()
+	settings.FileDir = a.relative(os.Getenv("STOXICITY_FILE_DIR"))
+	settings.FeedPath = a.relative(os.Getenv("STOXICITY_FEED_PATH"))
+	settings.FeedTitle = os.Getenv("STOXICITY_FEED_TITLE")
+	settings.FeedURL = os.Getenv("STOXICITY_FEED_URL")
+	settings.WebhookURL = os.Getenv("STOXICITY_WEBHOOK_URL")
+	built, errs := channel.Build(kinds, settings, nil)
 	for _, err := range errs {
 		fmt.Fprintf(a.stderr, "stoxicity: %v\n", err)
 	}

@@ -19,7 +19,7 @@ type Kind string
 
 const (
 	TUI     Kind = "tui"     // the in-app alerts widget and unread badges
-	Email   Kind = "email"   // SMTP
+	Email   Kind = "email"   // the Gmail API with OAuth, see gmail.go
 	Webhook Kind = "webhook" // JSON POST; Slack and Discord adapters, Teams via Workflows (its Office 365 connectors were retired in May 2026)
 	File    Kind = "file"    // Markdown written to a folder
 	Feed    Kind = "feed"    // Atom feed a reader can subscribe to

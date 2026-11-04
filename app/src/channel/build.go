@@ -1,7 +1,6 @@
 package channel
 
 import (
-	"errors"
 	"fmt"
 	"net/http"
 )
@@ -15,6 +14,15 @@ type Settings struct {
 	FeedTitle  string // STOXICITY_FEED_TITLE
 	FeedURL    string // STOXICITY_FEED_URL
 	WebhookURL string // STOXICITY_WEBHOOK_URL
+
+	// The email channel: the Gmail API with OAuth, see gmail.go.
+	GmailClientID     string // STOXICITY_GMAIL_CLIENT_ID
+	GmailClientSecret string // STOXICITY_GMAIL_CLIENT_SECRET
+	GmailRefreshToken string // STOXICITY_GMAIL_REFRESH_TOKEN, or the file "stoxicity gmail auth" wrote
+	MailFrom          string // STOXICITY_MAIL_FROM
+	MailTo            string // STOXICITY_MAIL_TO
+	// GmailTokenURL and GmailSendURL replace Google's addresses, for tests.
+	GmailTokenURL, GmailSendURL string
 }
 
 // setting pairs a variable name with its value for the empty-value check.
@@ -25,9 +33,8 @@ type setting struct {
 // Build returns the channel for each kind in kinds, keyed by kind, together
 // with one error for each kind that could not be built. Other kinds still
 // build when one fails. The TUI is skipped without error because it shows hits
-// itself. Email is not available yet. A setting that is empty is reported by
-// its variable name, never by its value. client is used by the webhook channel
-// and may be nil.
+// itself. A setting that is empty is reported by its variable name, never by
+// its value. client is used by the webhook and email channels and may be nil.
 //
 // The caller fills Settings from these environment variables:
 //
@@ -36,6 +43,9 @@ type setting struct {
 //	STOXICITY_FEED_TITLE   title of the feed
 //	STOXICITY_FEED_URL     public address the feed is read from
 //	STOXICITY_WEBHOOK_URL  https address for the webhook channel (a secret)
+//	STOXICITY_GMAIL_CLIENT_ID, STOXICITY_GMAIL_CLIENT_SECRET, STOXICITY_MAIL_FROM,
+//	STOXICITY_MAIL_TO      the email channel; the refresh token is stored by
+//	                       "stoxicity gmail auth"
 func Build(kinds []Kind, s Settings, client *http.Client) (map[Kind]Channel, []error) {
 	out := map[Kind]Channel{}
 	var errs []error
@@ -44,7 +54,16 @@ func Build(kinds []Kind, s Settings, client *http.Client) (map[Kind]Channel, []e
 		case TUI:
 			// The TUI shows hits itself; nothing to build.
 		case Email:
-			errs = append(errs, errors.New("email: not available yet: the Gmail route is not decided"))
+			ch, err := NewGmail(GmailConfig{
+				ClientID: s.GmailClientID, ClientSecret: s.GmailClientSecret, RefreshToken: s.GmailRefreshToken,
+				From: s.MailFrom, To: s.MailTo, HTTPClient: client,
+				TokenURL: s.GmailTokenURL, SendURL: s.GmailSendURL,
+			})
+			if err != nil {
+				errs = append(errs, flatten(err)...)
+				continue
+			}
+			out[Email] = ch
 		case File:
 			if e := unset(File, setting{"STOXICITY_FILE_DIR", s.FileDir}); len(e) > 0 {
 				errs = append(errs, e...)
@@ -86,6 +105,14 @@ func Build(kinds []Kind, s Settings, client *http.Client) (map[Kind]Channel, []e
 		}
 	}
 	return out, errs
+}
+
+// flatten returns the errors joined in err, or err itself.
+func flatten(err error) []error {
+	if j, ok := err.(interface{ Unwrap() []error }); ok {
+		return j.Unwrap()
+	}
+	return []error{err}
 }
 
 // unset returns one error per setting whose value is empty, naming the

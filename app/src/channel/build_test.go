@@ -45,7 +45,8 @@ func TestBuildErrorsAndSkips(t *testing.T) {
 		{"webhook not configured", []Kind{Webhook}, Settings{}, []string{"channel: webhook: setting not configured: STOXICITY_WEBHOOK_URL"}},
 		{"feed names each empty setting", []Kind{Feed}, Settings{FeedURL: "https://feeds.example.com/acme.xml"},
 			[]string{"STOXICITY_FEED_PATH", "STOXICITY_FEED_TITLE"}},
-		{"email is not available", []Kind{Email}, Settings{}, []string{"email: not available yet: the Gmail route is not decided"}},
+		{"email names each empty setting", []Kind{Email}, Settings{},
+			[]string{"STOXICITY_GMAIL_CLIENT_ID", "STOXICITY_MAIL_FROM", "STOXICITY_MAIL_TO", `run "stoxicity gmail auth"`}},
 		{"unknown kind", []Kind{Kind("sms")}, Settings{}, []string{`channel: unknown kind "sms"`}},
 		{"webhook over plain http", []Kind{Webhook}, Settings{WebhookURL: "http://hooks.example.com/" + secretPart}, []string{"webhook: http is allowed only"}},
 	}
@@ -73,8 +74,8 @@ func TestBuildErrorsAndSkips(t *testing.T) {
 func TestBuildContinuesPastFailures(t *testing.T) {
 	dir := t.TempDir()
 	chans, errs := Build([]Kind{Email, File, Webhook}, Settings{FileDir: filepath.Join(dir, "notes")}, nil)
-	if len(errs) != 2 {
-		t.Errorf("errors = %v, want the email and webhook errors", errs)
+	if len(errs) != 5 {
+		t.Errorf("errors = %v, want the four email errors and the webhook error", errs)
 	}
 	if _, ok := chans[File]; !ok {
 		t.Error("file channel was not built beside the failures")
