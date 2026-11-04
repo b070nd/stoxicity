@@ -1,0 +1,20 @@
+# Copy to macro-radar.yaml. Central banks and regulators, no single stock.
+id: macro-radar
+name: Macro radar
+description: Rates, inflation and regulation that move whole markets.
+
+scope:
+  domains: [federalreserve.gov, ecb.europa.eu, sec.gov]
+  groups: [macro]
+
+alerts:
+  - name: policy-change
+    when: {min_materiality: 4, kinds: [rates, inflation]}
+    channels: [tui, webhook]
+
+digest:
+  cadence: weekly
+  at: "08:00"
+  channels: [email]
+
+dashboard: [alerts, timeline, tagcloud, domains]

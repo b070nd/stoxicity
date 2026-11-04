@@ -1,0 +1,16 @@
+{
+  "_note": "synthetic fixture, not verified against live data",
+  "cik": "0000320193",
+  "name": "Apple Inc.",
+  "tickers": ["AAPL"],
+  "filings": {
+    "recent": {
+      "accessionNumber": ["0000320193-26-000026", "0000320193-26-000020", "bogus-number", "0000320193-26-000015", "000032019326000010"],
+      "filingDate": ["2026-11-04", "2026-10-30", "2026-10-29", "2026-10-01", "2026-09-15"],
+      "acceptanceDateTime": ["2026-11-04T15:58:12.000Z", "2026-10-30T20:31:53.000Z", "2026-10-29T10:00:00.000Z", "", "2026-09-15T21:00:00.000Z"],
+      "form": ["8-K", "10-Q", "8-K", "4", "8-K"],
+      "items": ["2.02,9.01", "", "1.01", "", "Item 5.02, Item 9.01"],
+      "primaryDocument": ["aapl-20261104.htm", "aapl-20260926.htm", "x.htm", "", "aapl-20260915.htm"]
+    }
+  }
+}

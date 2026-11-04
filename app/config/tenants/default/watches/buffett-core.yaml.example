@@ -1,0 +1,35 @@
+# Copy to buffett-core.yaml. A concentrated list of businesses held for years:
+# only primary-source and material news, and a quiet inbox at night.
+id: buffett-core
+name: Buffett core
+description: Companies I intend to hold for a decade.
+
+scope:
+  tickers: [KO, AXP, AAPL]
+  # Whole families of events; see model.EventGroup. Single kinds go in `kinds`.
+  groups: [results, guidance, capital, governance, ownership, integrity]
+
+# Custom words go in the query, applied on read: no re-scoring needed.
+query: '-"price target" -rumor'
+
+lens:
+  threshold: 0.6
+  min_materiality: 3
+
+alerts:
+  - name: material
+    when: {min_materiality: 4}
+    channels: [tui, email]
+    quiet_hours: "22:00-07:00"
+    cooldown: 2h
+  # Restatements, bankruptcy and cyber incidents: worth waking up for.
+  - name: integrity
+    when: {kinds: [non_reliance, bankruptcy, cyber]}
+    channels: [tui, email]
+
+digest:
+  cadence: daily
+  at: "07:30"
+  channels: [email, file]
+
+dashboard: [alerts, timeline, stocks, digest]

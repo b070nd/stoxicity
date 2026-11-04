@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="ISO-8859-1" ?>
+<!-- synthetic fixture, not verified against live data -->
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Latest Filings</title>
+  <updated>2026-11-04T11:05:00-05:00</updated>
+  <entry>
+    <title>4 - DOE JANE (0001999999) (Reporting)</title>
+    <link rel="alternate" type="text/html" href="https://www.sec.gov/Archives/edgar/data/1999999/000032019326000030/0000320193-26-000030-index.htm"/>
+    <summary type="html">&lt;b&gt;Filed:&lt;/b&gt; 2026-11-04 &lt;b&gt;AccNo:&lt;/b&gt; 0000320193-26-000030 &lt;b&gt;Size:&lt;/b&gt; 9 KB</summary>
+    <updated>2026-11-04T10:59:00-05:00</updated>
+    <id>urn:tag:sec.gov,2008:accession-number=0000320193-26-000030</id>
+  </entry>
+  <entry>
+    <title>4 - Apple Inc. (0000320193) (Issuer)</title>
+    <link rel="alternate" type="text/html" href="https://www.sec.gov/Archives/edgar/data/320193/000032019326000030/0000320193-26-000030-index.htm"/>
+    <summary type="html">&lt;b&gt;Filed:&lt;/b&gt; 2026-11-04 &lt;b&gt;AccNo:&lt;/b&gt; 0000320193-26-000030 &lt;b&gt;Size:&lt;/b&gt; 9 KB</summary>
+    <updated>2026-11-04T10:59:00-05:00</updated>
+    <id>urn:tag:sec.gov,2008:accession-number=0000320193-26-000030</id>
+  </entry>
+</feed>

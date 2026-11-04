@@ -1,0 +1,4 @@
+id: default
+name: Default
+# Opened on start. The first run has a working dashboard without any setup.
+default_watch: all-relevant

@@ -1,0 +1,18 @@
+# build output and runtime state
+/bin/
+/dist/
+/data/
+/app/data/
+
+# other tenants stay local; only the default tenant and the *.example watches are tracked
+/app/config/tenants/*
+!/app/config/tenants/default/
+
+# credentials: .env is tracked and holds settings only; anything local is ignored
+.env.local
+.env.*.local
+/.claude/settings.local.json
+
+# stray binaries from "go build" run inside app/
+/app/stoxicity
+/app/stoxicity-tui

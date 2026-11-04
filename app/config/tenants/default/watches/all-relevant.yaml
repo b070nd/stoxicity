@@ -1,0 +1,6 @@
+# The starter watch: everything the lens calls relevant, nothing else set.
+id: all-relevant
+name: Everything relevant
+description: Every article that passes the long-term-investor lens.
+
+dashboard: [alerts, digest, timeline, tagcloud, stocks, domains]

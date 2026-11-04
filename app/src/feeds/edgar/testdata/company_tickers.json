@@ -1,0 +1,9 @@
+{
+  "0": {"cik_str": 320193, "ticker": "AAPL", "title": "Apple Inc."},
+  "1": {"cik_str": 789019, "ticker": "MSFT", "title": "MICROSOFT CORP"},
+  "2": {"cik_str": 1045810, "ticker": " nvda ", "title": "NVIDIA CORP"},
+  "3": {"cik_str": 1652044, "ticker": "GOOGL", "title": "Alphabet Inc."},
+  "4": {"cik_str": 1234567, "ticker": "", "title": "No Ticker Corp"},
+  "5": {"cik_str": 0, "ticker": "ZERO", "title": "Zero CIK Co"},
+  "10": {"cik_str": 1000001, "ticker": "nvda", "title": "Duplicate Corp"}
+}

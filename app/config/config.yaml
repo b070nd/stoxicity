@@ -1,0 +1,188 @@
+# Aggregation starts on this day.
+since: 2026-11-01
+
+# Decides which day an article belongs to (timeline, daily digest, digest
+# times). Central European time, with daylight saving. STOXICITY_TIMEZONE in
+# .env overrides it.
+timezone: Europe/Berlin
+
+data_dir: ./data
+
+# Symbols you already follow; discovery skips these.
+watchlist: []
+
+fetch:
+  # Your email or an https URL goes into the User-Agent, because the SEC asks
+  # automated clients to identify themselves and blocks those that do not.
+  # Required before any source is enabled. Set STOXICITY_CONTACT in .env.local
+  # instead of writing it here.
+  contact: ""
+  interval: 30m # a default; a source can set its own `interval`
+  timeout: 20s
+
+# Tenants share one information base but each has its own watches, labels and
+# alert state, in tenants/<id>/. One user needs nothing beyond "default".
+tenancy:
+  dir: tenants
+  default: default
+
+# Background refresh while the TUI or daemon runs.
+refresh:
+  enabled: true
+  max_backoff: 6h
+  per_host: 2
+  # Faster polling of filings sources (SEC EDGAR) while the US market day is on,
+  # because an 8-K can move a stock within minutes. It applies only to sources
+  # of kind `filings`, inside from-to in `zone` (so it follows New York
+  # daylight saving), and replaces their own interval there. Off by default:
+  # it multiplies the requests to sec.gov, which allows 10 a second per client.
+  fast:
+    enabled: false
+    interval: 2m # at least 1m
+    zone: America/New_York
+    from: "06:00"
+    to: "22:00"
+    weekdays_only: true
+
+# Second scoring stage: a laya-serve sidecar. On, but its answers are gated by
+# min_confidence and only the fields in `apply` change a score; the rest are
+# recorded as reasons until they have been compared with your own labels
+# (docs/research, 3.2; run `stoxicity eval`).
+# Start the server bound to loopback: it listens on 0.0.0.0 by default.
+#   LAYA_HOST=127.0.0.1 LAYA_API_KEY=... laya-serve
+laya:
+  enabled: true
+  url: http://127.0.0.1:8000
+  # Empty lets laya's router choose. Pick a checkpoint by measuring on your
+  # labels. typed-decisions is a specialist for four synthetic workflows and
+  # is not a sensible default for news.
+  model: ""
+  # laya's confidence is 1 minus normalised entropy. It is uncalibrated, so a
+  # threshold from another system does not carry over and 0.7 is only a
+  # starting point: an answer below it never changes a score (it is recorded as
+  # "unsure"). Fit the number on held-out labels (`stoxicity eval`).
+  min_confidence: 0.7
+  # The first request after the server starts loads the model and can be slow.
+  timeout: 60s
+  # Which answers may change a score; any of kind, tone, sector, topics,
+  # materiality, relevance. Every other answer is still recorded as an advisory
+  # reason on the score, so `stoxicity eval` can compare it with your labels.
+  # Probing laya zero-shot gave MIXED results (a restatement filed under
+  # "results", "analyst raises price target" read as negative, Tesla as
+  # technology), so sector, materiality and relevance stay advisory until eval
+  # shows they agree with your keep/drop labels. kind only fills in what the
+  # rules left as "other", and tone and topics only fill what is empty.
+  apply: [kind, topics, tone]
+  # Weight (0 to 1) of laya's relevance when `relevance` is in apply.
+  relevance_weight: 0.3
+  # Articles per request to the server (1 to 64).
+  batch_size: 16
+
+# Long-term-investor filter (Lynch / Buffett): fundamentals in, noise out.
+# These words are a first guess and one feature among several, not a proven
+# separator: "earnings" and "dividend" appear in most routine items. Measure
+# them against your labels (package eval) before relying on them.
+lens:
+  threshold: 0.5
+  boost:
+    - earnings
+    - annual report
+    - 10-K
+    - guidance
+    - free cash flow
+    - competitive advantage
+    - moat
+    - buyback
+    - dividend
+    - insider buying
+    - spin-off
+    - capital allocation
+  demote:
+    - price target
+    - intraday
+    - options flow
+    - short squeeze
+    - meme stock
+    - technical analysis
+
+# Topics file an article under a theme; the topic: filter, topic pages, the tag
+# cloud and a watch's scope.topics read them. These are starting points: edit
+# them freely. A topic matches when any word or phrase appears in the title or
+# summary (whole words, any case) or any ticker is among the article's tickers.
+# Prefer phrases to bare words, and leave out words that mean something else
+# half the time ("rate", "bank", "growth"). Names are lower-case slugs. Changing
+# a rule changes the classifier version stored with each score.
+topics:
+  - name: ai-infrastructure
+    words: [data center, data centre, data centers, data centres, hyperscaler, hyperscalers, gpu, gpus, ai infrastructure, ai chips]
+  - name: semiconductors
+    words: [semiconductor, semiconductors, chipmaker, chipmakers, foundry, wafer, lithography, memory chips]
+    tickers: [ASML, TSM]
+  - name: interest-rates
+    words: [interest rate, interest rates, rate cut, rate cuts, rate hike, rate hikes, federal reserve, fomc, central bank, treasury yields]
+  - name: inflation
+    words: [inflation, inflationary, disinflation, consumer price index, cpi, core pce, producer price index]
+  - name: energy-transition
+    words: [renewable energy, energy transition, clean energy, solar power, solar panels, wind power, offshore wind, battery storage, electric vehicles, green hydrogen]
+  - name: oil-and-gas
+    words: [crude oil, oil prices, oil price, opec, natural gas, lng, shale, oilfield, refinery, brent crude]
+  - name: banks-and-credit
+    words: [net interest income, net interest margin, loan losses, credit losses, loan loss provisions, regional banks, regional bank, private credit, credit card delinquencies, deposit outflows]
+  - name: biotech
+    words: [biotech, biotechnology, clinical trial, clinical trials, phase 3, phase iii, fda approval, gene therapy, drug candidate, pdufa]
+  - name: consumer-staples
+    words: [packaged food, packaged foods, grocery, grocers, supermarket, household products, consumer staples, private label, snack maker, beverage maker]
+  - name: housing
+    words: [housing market, home prices, home sales, existing home sales, pending home sales, mortgage rates, mortgage rate, housing starts, homebuilder, homebuilders]
+  - name: cybersecurity
+    words: [cybersecurity, cyberattack, cyber attack, ransomware, data breach, zero-day, endpoint security, cyber incident, hackers, malware]
+  - name: buybacks-and-dividends
+    words: [buyback, buybacks, share repurchase, share repurchases, stock repurchase, dividend, dividends, special dividend, dividend hike, dividend cut]
+  - name: mergers-and-acquisitions
+    words: [merger, mergers, merger agreement, takeover, takeover bid, buyout, tender offer, to acquire, agreed to acquire, agrees to acquire, acquisition of]
+  - name: regulation-and-antitrust
+    words: [antitrust, anticompetitive, competition authority, competition regulator, ftc, monopoly, market dominance, price fixing, price-fixing, consent decree]
+  - name: china-and-trade
+    words: [tariff, tariffs, trade war, trade tensions, trade deal, export controls, us-china, beijing, customs duties]
+  - name: supply-chain
+    words: [supply chain, supply chains, supply disruption, supply disruptions, shipping delays, port congestion, container shipping, freight rates, component shortage, chip shortage]
+
+# Sectors: the 11 GICS sectors. An article gets the sector with the highest
+# score, where each ticker among its tickers counts 3 and each distinct word in
+# its text counts 1; a tie, or no hit at all, leaves the sector empty rather
+# than guessing. The words and tickers are starting points, not index
+# membership lists: extend them with the companies you follow.
+sectors:
+  - name: technology
+    words: [software, semiconductor, semiconductors, chipmaker, cloud computing, data center, data centre, artificial intelligence, cybersecurity]
+    tickers: [AAPL, MSFT, NVDA, AVGO, ORCL, CRM, ADBE, AMD]
+  - name: health-care
+    words: [drugmaker, pharmaceutical, biotech, clinical trial, fda approval, medical device, hospital operator, health insurer]
+    tickers: [JNJ, UNH, LLY, PFE, MRK, ABBV, TMO, ABT]
+  - name: financials
+    words: [net interest income, investment bank, asset manager, loan losses, wealth management, lender, insurer]
+    tickers: [JPM, BAC, WFC, GS, MS, BLK, SCHW]
+  - name: consumer-discretionary
+    words: [automaker, carmaker, retailer, e-commerce, restaurant chain, luxury goods, same-store sales, electric vehicle]
+    tickers: [AMZN, TSLA, HD, MCD, NKE, SBUX, LOW, BKNG]
+  - name: consumer-staples
+    words: [packaged food, grocery, supermarket, beverage maker, household products, tobacco, consumer staples]
+    tickers: [PG, KO, PEP, WMT, COST, PM, MDLZ, CL]
+  - name: energy
+    words: [oil producer, crude oil, natural gas, refiner, oilfield services, oil and gas, lng]
+    tickers: [XOM, CVX, COP, SLB, EOG, OXY, MPC, PSX]
+  - name: utilities
+    words: [electric utility, regulated utility, power utility, rate case, water utility, gas utility]
+    tickers: [NEE, DUK, SO, AEP, EXC, SRE, XEL]
+  - name: industrials
+    words: [aerospace, defense contractor, railroad, freight, airline, machinery, aircraft maker, construction equipment]
+    tickers: [CAT, HON, UPS, BA, GE, RTX, DE, LMT]
+  - name: materials
+    words: [miner, mining company, steelmaker, chemicals maker, copper, lithium, gold miner, iron ore]
+    tickers: [LIN, SHW, FCX, NEM, APD, ECL, DOW, NUE]
+  - name: real-estate
+    words: [reit, real estate investment trust, commercial real estate, office landlord, property developer, occupancy rate]
+    tickers: [PLD, AMT, EQIX, SPG, PSA, WELL, CCI]
+  - name: communication-services
+    words: [telecom, wireless carrier, streaming service, social media, advertising revenue, broadcaster, video game maker]
+    tickers: [GOOGL, META, NFLX, DIS, CMCSA, VZ, TMUS]

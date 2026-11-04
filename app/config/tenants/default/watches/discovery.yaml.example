@@ -1,0 +1,12 @@
+# Copy to discovery.yaml. Looking for businesses not on any list yet.
+id: discovery
+name: Discovery
+description: Spin-offs, insider buying and capital allocation across all sectors.
+
+scope:
+  kinds: [insider_buy, spinoff, acquisition, buyback]
+
+lens:
+  min_materiality: 3
+
+dashboard: [candidates, topics, tagcloud, digest]

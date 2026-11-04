@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- synthetic fixture, not verified against live data -->
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+         xmlns="http://purl.org/rss/1.0/"
+         xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel rdf:about="https://example.net/rss">
+    <title>Example RDF feed</title>
+    <link>https://example.net/</link>
+    <description>Synthetic</description>
+  </channel>
+  <item rdf:about="https://example.net/a">
+    <title>RDF item one</title>
+    <link>https://example.net/a</link>
+    <description>First RDF summary</description>
+    <dc:date>2026-11-01T08:00:00+00:00</dc:date>
+  </item>
+  <item rdf:about="https://example.net/b">
+    <title>RDF item two</title>
+    <link>https://example.net/b</link>
+    <dc:date>2026-11-01T09:30:00Z</dc:date>
+  </item>
+</rdf:RDF>

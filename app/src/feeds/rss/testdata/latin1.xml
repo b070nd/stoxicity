@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="ISO-8859-1"?>
+<!-- synthetic fixture, not verified against live data -->
+<rss version="2.0"><channel><title>Latin</title>
+<item><title>Café Zürich “quoted”</title><link>https://example.ch/cafe</link><pubDate>Tue, 03 Nov 2026 10:00:00 +0100</pubDate><description>Société générale</description></item>
+</channel></rss>

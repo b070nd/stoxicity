@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- synthetic fixture, not verified against live data -->
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Example Bank press releases</title>
+    <link>https://www.example.org/</link>
+    <description>Synthetic</description>
+    <atom:link href="https://www.example.org/feed.xml" rel="self" type="application/rss+xml"/>
+    <item>
+      <title>Rates &amp; outlook: &lt;b&gt;hold&lt;/b&gt; steady</title>
+      <link>https://www.example.org/news/rates?utm_source=feed&amp;id=7&amp;utm_medium=rss#top</link>
+      <atom:link href="https://www.example.org/news/rates-alt" rel="alternate"/>
+      <guid isPermaLink="false">rates-7</guid>
+      <pubDate>Mon, 02 Nov 2026 14:30:00 +0100</pubDate>
+      <description><![CDATA[<p>The board &quot;held&quot; rates.</p><script>alert(1)</script>]]></description>
+    </item>
+    <item>
+      <title>Second release</title>
+      <link>/news/second</link>
+      <pubDate>Mon, 02 Nov 2026 09:00:00 GMT</pubDate>
+      <description>Plain text summary.</description>
+    </item>
+    <item>
+      <title>No date here</title>
+      <link>https://www.example.org/news/nodate</link>
+    </item>
+  </channel>
+</rss>

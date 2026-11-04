@@ -1,0 +1,196 @@
+# stoxicity
+
+A news aggregator for long-term stock investors, covering news from 2026-11-01.
+It reads only sources worth a Peter Lynch / Warren Buffett style investor's time
+and answers:
+
+- which stocks to look at (discovery)
+- which themes are gaining coverage (trends)
+- which domains produce how much relevant news each day (domains)
+
+News is filtered with a Google-style query (`"free cash flow" -rumor ticker:AAPL site:sec.gov`).
+
+The layout follows [cvewatch](https://github.com/b070nd/cvewatch): a CLI, a
+separate full-screen TUI binary, and YAML configuration.
+
+**Status: early.** The CLI works end to end (see Usage); the full-screen
+interface is still a stub. Working and tested so far: `nav` (routes,
+breadcrumbs, back/forward, watch switching), `watch` (validation, matching,
+alert evaluation), `channel` (quiet hours, cooldown, dedupe), the event
+taxonomy and source licences in `model`, `sources` (licence checks and
+visibility), `httpx` (User-Agent), `tagcloud`, `timeline`, `eval` (precision@k,
+Brier, ECE), `sanitize` (strips escape sequences and invisible Unicode from
+feed text) and the TUI key map.
+
+The design decisions, with sources, are in
+[docs/research/bleeding-edge-design.md](docs/research/bleeding-edge-design.md).
+Read its "Unverified" section before relying on any of it.
+
+## Before you fetch anything
+
+1. Put your email address in `.env.local` as `STOXICITY_CONTACT` (copy
+   `.env.local.example` on a fresh checkout). It goes into the User-Agent; the
+   SEC blocks clients that do not identify themselves.
+2. Settings (time zone `Europe/Berlin`, mail server, paths) are in `.env`, which
+   is safe to commit. Credentials go only in `.env.local`, which is git-ignored.
+   See [docs/configuration.md](docs/configuration.md).
+3. Every source in `sources.yaml` states its licence; only `redistributable`
+   sources are shown to every tenant.
+
+How fetchers and the SEC EDGAR reader are meant to work:
+[docs/fetchers.md](docs/fetchers.md).
+
+macOS and Linux only; Windows is out of scope.
+
+## Screens
+
+Every screen has a route, and the breadcrumb bar shows the trail:
+`Home › Topics › AI infrastructure › NVDA`.
+
+| route | screen |
+|---|---|
+| `/` | today's digest, tag cloud, 14-day timeline |
+| `/stocks`, `/stock/NVDA` | stocks in relevant news; one stock with summary, fundamentals, timeline |
+| `/topics`, `/topic/ai-infra` | topics as a cloud and trend table; one topic aggregation |
+| `/domains`, `/domain/sec.gov` | relevant against total per domain; one domain |
+| `/day/2026-11-03` | one day |
+| `/search?q=...` | Google-style query results with facet counts |
+| `/sources` | source health (shared, belongs to no watch) |
+| `/watches` | the tenant's watches: unread, channels; create, edit, mute |
+| `/w/<watch>/...` | any screen above, pinned to one watch |
+
+## Tenants, watches and channels
+
+```
+            shared information base                 per tenant
+  sources → pipeline → articles, clusters,    →  watches   labels   alert state
+            (once)     entities, base scores      │                  read markers
+                                                  ▼
+                                       tui · email · webhook · file · feed
+```
+
+- **One information base.** Ingest runs once and writes articles, clusters,
+  entities and versioned base scores. No tenant or watch is involved, so adding
+  a tenant adds no fetching or scoring cost.
+- **Tenants** own watches, labels (keep/drop), alert hits and read markers. They
+  are reachable only through a `store.TenantStore` bound to one tenant. A single
+  user has the tenant `default` and never sees any of this.
+- **Watches** are saved views over the base, one YAML file each in
+  `app/config/tenants/<tenant>/watches/`. A watch selects subjects (tickers,
+  topics, sectors), narrows them (domains, event kinds, relevance and
+  materiality floors, a Google-style query), sets alerts (conditions, channels,
+  quiet hours, cooldown), an optional digest, and the dashboard widgets. Watches
+  never copy or re-score articles, so switching is instant.
+- **Switching** is one key: `tab` / `shift+tab` cycle watches, `1`-`9` jump, `w`
+  opens a finder with unread badges. The screen you are on stays; only the
+  watch behind it changes (`Home › Topics › AI` stays on the AI topic page).
+- **Channels** deliver the same notification everywhere a watch names: `tui`,
+  `email`, `webhook`, `file` (Markdown), `feed` (Atom).
+
+Try `stoxicity watch check` after editing a watch: it reports every problem in
+one pass. Copy any `*.yaml.example` to start a new watch.
+
+## Layout
+
+```
+app/
+  config/                   config.yaml, sources.yaml
+  src/
+    cmd/stoxicity/          CLI: fetch, run, digest, search, watch, tenant, sources, doctor
+    cmd/stoxicity-tui/      full-screen interface
+    config/                 load the configuration folder
+    model/                  shared types (Source, Article, Score, Entity)
+    sources/ httpx/         source registry and licences, shared HTTP client
+    feeds/ rss edgar api    fetchers, one package per source kind (docs/fetchers.md)
+    envfile/                loads .env and .env.local
+    scheduler/              background refresh, backoff, circuit breaker, events
+    sanitize/               strip escape sequences from untrusted text
+    pipeline/               ingest stages that build the shared base
+    tenant/                 workspaces that share the base
+    watch/                  watch spec, validation, matching, alert evaluation
+    channel/                delivery kinds, quiet hours, cooldown, dedupe
+    dashboard/              widgets a watch's home screen can show
+    entity/                 company mentions to tickers
+    cluster/                group syndicated copies of one story
+    store/                  persistence: shared Base + tenant-bound TenantStore
+    filter/                 Google-style query language
+    lens/                   keyword relevance scoring
+    lens/laya/              laya-serve client, second scoring stage
+    labels/                 keep/drop verdicts, the gold set
+    eval/                   precision@k, Brier, calibration error
+    marketdata/             quotes and fundamentals for stock pages
+    summarize/              extractive summaries with sources
+    discover/ trends/       new stock candidates, rising topics
+    domains/ digest/        per-domain counts, the daily summary
+    tagcloud/ timeline/     cloud tiers, bars per day and event list
+    nav/                    routes, breadcrumbs, back/forward
+    tui/                    shell and views
+```
+
+Scoring in two stages: keyword rules first, then optionally a
+[laya](https://huggingface.co/convaiinnovations/laya) sidecar. Laya stays off
+until it has been calibrated on your own labels.
+
+## Usage
+
+Build and check the installation:
+
+```bash
+make build                  # bin/stoxicity and bin/stoxicity-tui
+./bin/stoxicity version
+./bin/stoxicity doctor      # OK/WARN/FAIL per check; exit 1 if any FAIL
+```
+
+Without a build, run from `app/`: `go run ./src/cmd/stoxicity doctor`.
+
+```bash
+stoxicity fetch [source-id...]      # poll once, print new articles per source
+stoxicity run                       # poll until Ctrl-C, one line per poll
+stoxicity digest [-day 2026-11-03]  # the day's top news, domains, candidates, trends
+stoxicity search [-from D] [-to D] [-limit N] 'free cash flow -rumor ticker:AAPL'
+stoxicity stock NVDA [-days 30] [-limit 10]   # one stock: summary, timeline, trend, domains, related topics
+stoxicity stocks [-days 14]         # stocks in relevant news with mentions, materiality, tone
+stoxicity topic ai-infra [-days 30] [-limit 10]   # one topic: its stocks, domains, timeline, top articles
+stoxicity topics [-days 14]         # all topics as a tag cloud with counts and trend lift
+stoxicity label keep|drop ID... [-sampled]   # record your verdict on articles
+stoxicity label list [-n 20]        # your latest labels
+stoxicity label sample [-n 10] [-days 7]   # random unlabelled articles to judge, then label with -sampled
+stoxicity eval [-days 90] [-threshold X]   # precision, recall, Brier, ECE of the lens against your labels
+stoxicity rescore [-days N | -from D -to D]   # score stored articles again after changing the lens
+stoxicity watch list                # the tenant's watches and unread hits
+stoxicity watch check [id...]       # validate watch files and their queries
+stoxicity watch test <id> -since 24h   # show matches, write nothing
+stoxicity tenant list
+stoxicity sources list              # kind, licence, last health from the database
+```
+
+Global flags come before the command: `-config-dir DIR`, `-env-file FILE`
+(repeatable), `-tenant ID`, `-v` (debug log). Days are read in the configured
+time zone (`Europe/Berlin`). Exit codes: 0 ok, 1 error, 2 usage. Output goes to
+stdout, diagnostics to stderr. Put flags of `search` before the query; use `--`
+if the query starts with `-`.
+
+The stock and topic pages say that price and fundamentals are not available:
+no market data provider is configured. Tag clouds are plain text: one asterisk
+on each side of a term per size step above the smallest, capitals for the two
+largest steps, and the article count in brackets, for example `**ai-infra**(5)`.
+Label a few articles from `label sample` with `-sampled` before trusting
+`eval`; labels taken from the top of the ranking alone make the lens look better
+than it is, and `eval` prints the sampled labels' precision and recall apart.
+`rescore` adds a score for the current lens version and keeps the older ones.
+
+- **Settings.** `.env` and `.env.local` are found by walking up from the current
+  directory; `config.yaml` and `sources.yaml` in `app/config`. See
+  [docs/configuration.md](docs/configuration.md).
+- **Where data goes.** `data/` next to `.env` (set `STOXICITY_DATA_DIR` or
+  `data_dir` to move it): `base.db` is the shared base, `tenants/<id>.db` holds
+  each tenant's hits and labels. It is git-ignored.
+- **Network.** `fetch` and `run` refuse to start without `STOXICITY_CONTACT`
+  (your email or an https URL); it goes into the User-Agent. SEC EDGAR needs it
+  in particular and is limited to 10 requests a second. Offline commands work
+  without it. Naming a source on the `fetch` command line polls it even if it is
+  disabled.
+- **Not verified.** The EDGAR formats the fetchers read are written from the
+  documented formats and have not been checked against live data. Ticker
+  resolution knows only the `watchlist` and the tickers named in watches, since
+  there is no company master list yet.

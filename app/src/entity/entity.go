@@ -1,0 +1,15 @@
+// Package entity resolves company mentions in text to tickers. Stock pages,
+// discovery and the watchlist all depend on it. It holds a master list of
+// tickers, names, aliases and SEC CIKs and finds them in article text.
+package entity
+
+import "github.com/b070nd/stoxicity/app/src/model"
+
+// Resolver finds companies in text.
+type Resolver interface {
+	// Find returns the entities mentioned in text. It must not match common
+	// words that happen to equal a ticker or a name.
+	Find(text string) []model.Entity
+	// Lookup returns one entity by ticker.
+	Lookup(ticker string) (model.Entity, bool)
+}

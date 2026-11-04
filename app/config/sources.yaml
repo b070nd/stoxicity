@@ -1,0 +1,42 @@
+# Curated sources. Keep this list short: only what a long-term investor reads.
+# tier 1 = primary (filings, regulators, central banks), 2 = reporting, 3 = commentary.
+#
+# licence says who may see a source's articles:
+#   redistributable  anyone; `terms` must cite the page that grants it
+#   internal         the owner tenant only (`owner`)
+#   personal         the owner tenant only (`owner`)
+# Do not scrape sites whose robots.txt or terms forbid automated collection
+# (Reuters, WSJ, MarketWatch and FT do); add a licensed API or feed instead.
+#
+# Checked on 2026-11-03 (docs/research): the Fed feed, and the EDGAR feed with
+# type=10-K, 8-K and 4. Not checked: type=10-Q.
+sources:
+  - id: sec-edgar
+    name: SEC EDGAR, current filings
+    domain: sec.gov
+    kind: filings
+    # The current-filings Atom feed; the fetcher adds `type=<form>` and the
+    # paging parameters for each form below. See docs/fetchers.md.
+    url: https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&output=atom
+    tier: 1
+    tags: [filings, us]
+    forms: ["8-K", "10-K", "10-Q", "4"]
+    licence: redistributable
+    terms: https://www.sec.gov/about/privacy-information
+    # A rolling window without ETag or Last-Modified: read it page by page
+    # (start=) until a known entry appears. Busy forms such as 8-K and Form 4
+    # fill a 100-entry page and overflow a 30-minute poll.
+    paged: true
+    enabled: true # needs STOXICITY_CONTACT set; the SEC blocks undeclared clients
+
+  - id: fed-press
+    name: Federal Reserve, press releases
+    domain: federalreserve.gov
+    kind: rss
+    url: https://www.federalreserve.gov/feeds/press_all.xml
+    tier: 1
+    tags: [macro, us]
+    # The feed states no reuse terms, so it is kept internal until they are found.
+    licence: internal
+    owner: default
+    enabled: true
