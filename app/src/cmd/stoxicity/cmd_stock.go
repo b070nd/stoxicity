@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"github.com/b070nd/stoxicity/app/src/pages"
 	"strings"
 )
 
@@ -40,7 +41,7 @@ func cmdStock(ctx context.Context, a *app, args []string) error {
 	if err != nil {
 		return err
 	}
-	p := newPageParams(a.now(), *days, *limit, a.cfg.Lens.Threshold, a.location())
+	p := pages.NewParams(a.now(), *days, *limit, a.cfg.Lens.Threshold, a.location())
 	arts, err := rd.Range(ctx, p.First, p.End())
 	if err != nil {
 		return err
@@ -49,7 +50,7 @@ func cmdStock(ctx context.Context, a *app, args []string) error {
 	if e, ok := a.entities().Lookup(ticker); ok {
 		name = e.Name
 	}
-	renderStockPage(a.stdout, buildStockPage(arts, ticker, name, p), a.tenantID)
+	renderStockPage(a.stdout, pages.BuildStockPage(arts, ticker, name, p), a.tenantID)
 	return nil
 }
 
@@ -74,12 +75,12 @@ func cmdStocks(ctx context.Context, a *app, args []string) error {
 	if err != nil {
 		return err
 	}
-	p := newPageParams(a.now(), *days, 0, a.cfg.Lens.Threshold, a.location())
+	p := pages.NewParams(a.now(), *days, 0, a.cfg.Lens.Threshold, a.location())
 	arts, err := rd.Range(ctx, p.First, p.End())
 	if err != nil {
 		return err
 	}
-	renderStocksPage(a.stdout, buildStocksPage(arts, a.cfg.Watchlist, p), a.tenantID)
+	renderStocksPage(a.stdout, pages.BuildStocksPage(arts, a.cfg.Watchlist, p), a.tenantID)
 	return nil
 }
 

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/b070nd/stoxicity/app/src/pages"
 	"strings"
 )
 
@@ -32,7 +33,7 @@ func cmdTopic(ctx context.Context, a *app, args []string) error {
 	if err != nil {
 		return err
 	}
-	p := newPageParams(a.now(), *days, *limit, a.cfg.Lens.Threshold, a.location())
+	p := pages.NewParams(a.now(), *days, *limit, a.cfg.Lens.Threshold, a.location())
 	arts, err := rd.Range(ctx, p.First, p.End())
 	if err != nil {
 		return err
@@ -42,10 +43,10 @@ func cmdTopic(ctx context.Context, a *app, args []string) error {
 	for i, t := range a.cfg.Topics {
 		configured[i] = t.Name
 	}
-	known := knownTopics(inWindow(arts, p), configured)
-	if !containsFold(known, topic) {
-		fmt.Fprintf(a.stdout, "Unknown topic %q: no article in %s carries it and the configuration does not define it.\n", topic, p.describe())
-		if near := closestNames(topic, known, closestTopics); len(near) > 0 {
+	known := pages.KnownTopics(pages.InWindow(arts, p), configured)
+	if !pages.ContainsFold(known, topic) {
+		fmt.Fprintf(a.stdout, "Unknown topic %q: no article in %s carries it and the configuration does not define it.\n", topic, p.Describe())
+		if near := pages.ClosestNames(topic, known, pages.ClosestTopics); len(near) > 0 {
 			fmt.Fprintln(a.stdout, "Closest topics:")
 			for _, n := range near {
 				fmt.Fprintf(a.stdout, "  %s\n", n)
@@ -55,7 +56,7 @@ func cmdTopic(ctx context.Context, a *app, args []string) error {
 		}
 		return nil
 	}
-	renderTopicPage(a.stdout, buildTopicPage(arts, topic, p), a.tenantID)
+	renderTopicPage(a.stdout, pages.BuildTopicPage(arts, topic, p), a.tenantID)
 	return nil
 }
 
@@ -80,12 +81,12 @@ func cmdTopics(ctx context.Context, a *app, args []string) error {
 	if err != nil {
 		return err
 	}
-	p := newPageParams(a.now(), *days, 0, a.cfg.Lens.Threshold, a.location())
-	prev := p.previous()
+	p := pages.NewParams(a.now(), *days, 0, a.cfg.Lens.Threshold, a.location())
+	prev := p.Previous()
 	arts, err := rd.Range(ctx, prev.First, p.End())
 	if err != nil {
 		return err
 	}
-	renderTopicsPage(a.stdout, buildTopicsPage(arts, p), a.tenantID)
+	renderTopicsPage(a.stdout, pages.BuildTopicsPage(arts, p), a.tenantID)
 	return nil
 }

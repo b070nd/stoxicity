@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"github.com/b070nd/stoxicity/app/src/pages"
 	"time"
 
 	"github.com/b070nd/stoxicity/app/src/digest"
@@ -58,9 +59,4 @@ func cmdDigest(ctx context.Context, a *app, args []string) error {
 }
 
 // kindOf is the event kind of an article, or "-" if it has none.
-func kindOf(a model.Article) string {
-	if a.Score.Kind == "" {
-		return "-"
-	}
-	return string(a.Score.Kind)
-}
+func kindOf(a model.Article) string { return pages.KindOf(a) }

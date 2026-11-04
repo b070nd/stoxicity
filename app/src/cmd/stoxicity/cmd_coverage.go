@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/b070nd/stoxicity/app/src/pages"
 	"io"
 	"strings"
 	"text/tabwriter"
@@ -65,7 +66,7 @@ func cmdCoverage(ctx context.Context, a *app, args []string) error {
 	if err != nil {
 		return err
 	}
-	p := newPageParams(a.now(), *days, *limit, a.cfg.Lens.Threshold, a.location())
+	p := pages.NewParams(a.now(), *days, *limit, a.cfg.Lens.Threshold, a.location())
 	arts, err := rd.Range(ctx, p.First, p.End())
 	if err != nil {
 		return err
@@ -91,7 +92,7 @@ func filterStories(stories []coverage.Story, threshold float64, all bool, want c
 }
 
 // renderCoverage writes the story list.
-func renderCoverage(w io.Writer, stories []coverage.Story, p pageParams, tenantID string, limit int) {
+func renderCoverage(w io.Writer, stories []coverage.Story, p pages.Params, tenantID string, limit int) {
 	counts := map[coverage.Backing]int{}
 	thin := 0
 	for _, s := range stories {
@@ -108,7 +109,7 @@ func renderCoverage(w io.Writer, stories []coverage.Story, p pageParams, tenantI
 		fmt.Fprintln(w, "\nNo stories match.")
 		return
 	}
-	shown := head(stories, limit)
+	shown := pages.Head(stories, limit)
 	fmt.Fprintln(w)
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(tw, "OUTLETS\tBACKING\tMAT\tTONE\tFIRST\tSTORY")
@@ -131,7 +132,7 @@ func storyTitle(s coverage.Story) string {
 	if len(s.Tickers) == 0 {
 		return s.Lead.Title
 	}
-	return s.Lead.Title + " (" + strings.Join(head(s.Tickers, 4), ", ") + ")"
+	return s.Lead.Title + " (" + strings.Join(pages.Head(s.Tickers, 4), ", ") + ")"
 }
 
 // outletName is the domain of an article, or its source when it has none.
@@ -162,7 +163,7 @@ func cmdSourcesEval(ctx context.Context, a *app, args []string) error {
 	if err != nil {
 		return err
 	}
-	p := newPageParams(a.now(), *days, 1, a.cfg.Lens.Threshold, a.location())
+	p := pages.NewParams(a.now(), *days, 1, a.cfg.Lens.Threshold, a.location())
 	arts, err := acc.rd.Range(ctx, p.First, p.End())
 	if err != nil {
 		return err
@@ -181,7 +182,7 @@ func cmdSourcesEval(ctx context.Context, a *app, args []string) error {
 }
 
 // renderSourceEval writes the per-source table.
-func renderSourceEval(w io.Writer, stats []coverage.SourceStat, stories, articles int, p pageParams, tenantID string) {
+func renderSourceEval(w io.Writer, stats []coverage.SourceStat, stories, articles int, p pages.Params, tenantID string) {
 	fmt.Fprintf(w, "Sources, tenant %s, %s to %s (%d days): %d articles in %d stories\n",
 		tenantID, p.First.Format(time.DateOnly), p.Last.Format(time.DateOnly), p.Days, articles, stories)
 	if len(stats) == 0 {

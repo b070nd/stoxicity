@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/b070nd/stoxicity/app/src/pages"
 	"math/rand"
 	"time"
 
@@ -189,7 +190,7 @@ func labelSample(ctx context.Context, a *app, args []string) error {
 		return err
 	}
 	loc := a.location()
-	p := newPageParams(a.now(), *days, 0, a.cfg.Lens.Threshold, loc)
+	p := pages.NewParams(a.now(), *days, 0, a.cfg.Lens.Threshold, loc)
 	arts, err := acc.rd.Range(ctx, p.First, p.End())
 	if err != nil {
 		return err
@@ -212,10 +213,10 @@ func labelSample(ctx context.Context, a *app, args []string) error {
 		fmt.Fprintf(a.stdout, "no unlabelled articles between %s and %s\n", p.First.Format(time.DateOnly), p.Last.Format(time.DateOnly))
 		return nil
 	}
-	newestFirst(pool)
+	pages.NewestFirst(pool)
 	rng := rand.New(rand.NewSource(a.now().UnixNano()))
 	rng.Shuffle(len(pool), func(i, j int) { pool[i], pool[j] = pool[j], pool[i] })
-	pool = head(pool, *n)
+	pool = pages.Head(pool, *n)
 
 	fmt.Fprintf(a.stdout, "%d of the unlabelled articles between %s and %s; judge each, then run: stoxicity label keep|drop -sampled ID...\n",
 		len(pool), p.First.Format(time.DateOnly), p.Last.Format(time.DateOnly))

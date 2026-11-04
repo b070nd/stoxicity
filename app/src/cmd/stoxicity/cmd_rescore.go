@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/b070nd/stoxicity/app/src/pages"
 	"time"
 )
 
@@ -50,7 +51,7 @@ func cmdRescore(ctx context.Context, a *app, args []string) error {
 		if err := checkWindow(*days, 1); err != nil {
 			return err
 		}
-		p := newPageParams(a.now(), *days, 1, 0, loc)
+		p := pages.NewParams(a.now(), *days, 1, 0, loc)
 		from, to = p.First, p.End()
 	}
 	if _, err := a.requireTenant(); err != nil {

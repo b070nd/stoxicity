@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"github.com/b070nd/stoxicity/app/src/pages"
 	"strings"
 	"testing"
 	"time"
@@ -36,7 +37,7 @@ func TestCoverageRefusesABadBacking(t *testing.T) {
 
 func TestRenderCoverageMarksThinStories(t *testing.T) {
 	loc := time.UTC
-	p := newPageParams(time.Date(2026, 11, 3, 12, 0, 0, 0, loc), 7, 5, 0.5, loc)
+	p := pages.NewParams(time.Date(2026, 11, 3, 12, 0, 0, 0, loc), 7, 5, 0.5, loc)
 	lead := model.Article{ID: "a", Domain: "wire.example", Title: "Acme warns on margins", Published: time.Date(2026, 11, 3, 9, 0, 0, 0, loc)}
 	stories := []coverage.Story{{
 		ID: "s", Lead: lead, Outlets: []string{"wire.example"}, Backing: coverage.BackingUnconfirmed,

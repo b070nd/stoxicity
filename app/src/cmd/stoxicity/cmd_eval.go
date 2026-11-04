@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/b070nd/stoxicity/app/src/pages"
 	"io"
 	"sort"
 	"strings"
@@ -214,7 +215,7 @@ func cmdEval(ctx context.Context, a *app, args []string) error {
 	if err != nil {
 		return err
 	}
-	p := newPageParams(a.now(), *days, 0, *threshold, a.location())
+	p := pages.NewParams(a.now(), *days, 0, *threshold, a.location())
 
 	var items []labelled
 	skipped := 0
