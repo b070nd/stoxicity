@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -29,6 +30,8 @@ const (
 	modeList mode = iota
 	modeFilter
 	modeHelp
+	modeTag    // typing tags for a stock
+	modeMember // typing list names for a stock
 )
 
 // Model is the Bubble Tea model of the interface. All of its state is plain
@@ -69,6 +72,7 @@ type Model struct {
 	detail *model.Article
 	mode   mode
 	filter []rune
+	target string // the ticker a tag or list edit is for
 	status string
 	failed bool // status is an error
 
@@ -100,6 +104,10 @@ type (
 	}
 	openedMsg struct{ err error }
 	seenMsg   struct{}
+	editedMsg struct { // a tag or list change finished
+		what string
+		err  error
+	}
 )
 
 // New returns the model for a session. Options.Backend must be set.
@@ -202,11 +210,15 @@ func (m *Model) loadCmd(force bool) tea.Cmd {
 // rebuild builds the screen of the current route from what is loaded.
 func (m *Model) rebuild() {
 	r := m.stack.Current()
+	if r.Kind == nav.Companies && m.mode == modeFilter {
+		r.Arg = strings.TrimSpace(string(m.filter)) // the list narrows as you type
+	}
 	p := m.params()
 	d := Data{
 		Params: p, Watchlist: m.be.Watchlist(), Topics: m.be.TopicNames(),
 		Name: m.be.CompanyName, Verdicts: m.verdicts, Sources: m.sources,
 		Watches: m.watches, WatchID: m.stack.Watch(), Now: m.be.Now(), Truncated: m.truncated,
+		Universe: m.be.Universe(), Following: m.be.Following,
 	}
 	if needsShared(r.Kind) {
 		d.Articles = m.shared
@@ -222,6 +234,9 @@ func (m *Model) rebuild() {
 		}
 	}
 	m.cursor = min(m.cursors[r.String()], max(len(m.sel)-1, 0))
+	if m.mode == modeFilter && r.Kind == nav.Companies {
+		m.cursor = 0 // a query being typed starts from the best match
+	}
 	m.top = 0
 	m.follow()
 }

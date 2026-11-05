@@ -11,6 +11,7 @@ import (
 	"github.com/b070nd/stoxicity/app/src/labels"
 	"github.com/b070nd/stoxicity/app/src/model"
 	"github.com/b070nd/stoxicity/app/src/nav"
+	"github.com/b070nd/stoxicity/app/src/universe"
 )
 
 // Update handles one message.
@@ -52,6 +53,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case seenMsg:
 		return m, m.watchesCmd()
+	case editedMsg:
+		if msg.err != nil {
+			m.fail("%v", msg.err)
+			break
+		}
+		m.ok("%s", msg.what)
+		m.rebuild()
 	}
 	return m, nil
 }
@@ -187,6 +195,8 @@ func (m *Model) key(k tea.KeyPressMsg) tea.Cmd {
 	switch m.mode {
 	case modeFilter:
 		return m.filterKey(k)
+	case modeTag, modeMember:
+		return m.editKey(k)
 	case modeHelp:
 		m.mode = modeList
 		return nil
@@ -228,6 +238,12 @@ func (m *Model) key(k tea.KeyPressMsg) tea.Cmd {
 		return m.goTo(nav.Route{Kind: nav.Home})
 	case GoStocks:
 		return m.goTo(nav.Route{Kind: nav.Stocks})
+	case GoCompanies:
+		return m.goTo(nav.Route{Kind: nav.Companies})
+	case TagStock:
+		return m.startEdit(modeTag)
+	case ListStock:
+		return m.startEdit(modeMember)
 	case GoTopics:
 		return m.goTo(nav.Route{Kind: nav.Topics})
 	case GoDomains:
@@ -261,6 +277,12 @@ func (m *Model) key(k tea.KeyPressMsg) tea.Cmd {
 		m.move(len(m.sel))
 	case FocusFilter:
 		m.mode, m.filter = modeFilter, nil
+		if cur.Kind == nav.Companies { // refine the query on screen
+			m.filter = []rune(cur.Arg)
+			if cur.Arg != "" {
+				m.filter = append(m.filter, ' ')
+			}
+		}
 	case Keep:
 		return m.label(true)
 	case Drop:
@@ -292,18 +314,36 @@ func (m *Model) detailKey(b Binding) tea.Cmd {
 	return nil
 }
 
-// filterKey edits the filter bar.
+// filterKey edits the filter bar. On the Companies screen the bar narrows the
+// company list as you type and enter keeps the query as the route; elsewhere
+// enter runs the query as a search.
 func (m *Model) filterKey(k tea.KeyPressMsg) tea.Cmd {
+	companies := m.stack.Current().Kind == nav.Companies
 	switch k.String() {
 	case "esc", "ctrl+c":
 		m.mode = modeList
+		if companies {
+			m.rebuild()
+		}
 	case "enter":
 		q := strings.TrimSpace(string(m.filter))
 		m.mode = modeList
+		if companies {
+			if _, err := universe.ParseQuery(q); err != nil {
+				m.fail("%v", err)
+				m.mode = modeFilter
+				return nil
+			}
+			if q == m.stack.Current().Arg {
+				m.rebuild()
+				return nil
+			}
+			return m.goTo(nav.Route{Kind: nav.Companies, Arg: q})
+		}
 		if q == "" {
 			return nil
 		}
-		if _, err := filter.Parse(q); err != nil {
+		if _, err := filter.ParseWith(q, m.be.Universe().FilterEnv()); err != nil {
 			m.fail("%v", err)
 			m.mode = modeFilter
 			return nil
@@ -320,7 +360,93 @@ func (m *Model) filterKey(k tea.KeyPressMsg) tea.Cmd {
 			m.filter = append(m.filter, []rune(t)...)
 		}
 	}
+	if companies && m.mode == modeFilter {
+		m.rebuild()
+	}
 	return nil
+}
+
+// stockUnderCursor is the ticker a tag or list edit applies to: the stock
+// whose page is open, or the stock of the selected row.
+func (m *Model) stockUnderCursor() string {
+	if r := m.stack.Current(); r.Kind == nav.Stock {
+		return strings.ToUpper(r.Arg)
+	}
+	if row, ok := m.row(); ok && row.Go != nil && row.Go.Kind == nav.Stock {
+		return strings.ToUpper(row.Go.Arg)
+	}
+	return ""
+}
+
+// startEdit opens the prompt for tags or lists.
+func (m *Model) startEdit(to mode) tea.Cmd {
+	t := m.stockUnderCursor()
+	if t == "" {
+		m.fail("put the cursor on a stock first")
+		return nil
+	}
+	m.target, m.filter, m.mode = t, nil, to
+	return nil
+}
+
+// editKey edits the tag or list prompt. Enter applies every word: a word adds
+// the tag or list, a word with a leading "-" removes it.
+func (m *Model) editKey(k tea.KeyPressMsg) tea.Cmd {
+	switch k.String() {
+	case "esc", "ctrl+c":
+		m.mode = modeList
+	case "enter":
+		words := strings.Fields(strings.ToLower(strings.ReplaceAll(string(m.filter), "#", "")))
+		to := m.mode
+		m.mode = modeList
+		if len(words) == 0 {
+			return nil
+		}
+		return m.edit(to, m.target, words)
+	case "backspace":
+		if n := len(m.filter); n > 0 {
+			m.filter = m.filter[:n-1]
+		}
+	case "ctrl+u":
+		m.filter = nil
+	default:
+		if t := k.Key().Text; t != "" {
+			m.filter = append(m.filter, []rune(t)...)
+		}
+	}
+	return nil
+}
+
+// edit applies the words to the stock through the backend, one by one, and
+// stops at the first failure.
+func (m *Model) edit(to mode, ticker string, words []string) tea.Cmd {
+	be, ctx := m.be, m.ctx
+	noun := "tag"
+	if to == modeMember {
+		noun = "list"
+	}
+	return func() tea.Msg {
+		var done []string
+		for _, w := range words {
+			add := !strings.HasPrefix(w, "-")
+			w = strings.TrimPrefix(w, "-")
+			var err error
+			if to == modeMember {
+				err = be.SetListMember(ctx, w, ticker, add)
+			} else {
+				err = be.Tag(ctx, ticker, w, add)
+			}
+			if err != nil {
+				return editedMsg{err: fmt.Errorf("%s %s: %w", noun, w, err)}
+			}
+			if add {
+				done = append(done, "+"+w)
+			} else {
+				done = append(done, "-"+w)
+			}
+		}
+		return editedMsg{what: fmt.Sprintf("%s %ss %s", ticker, noun, strings.Join(done, " "))}
+	}
 }
 
 // selected is the article under the cursor, or nil.
@@ -375,17 +501,29 @@ func (m *Model) label(keep bool) tea.Cmd {
 	}
 }
 
-// openURL opens the selected article in the browser. Only web addresses are
-// opened: feeds are untrusted, and a file: or custom-scheme link should not
+// link is the web address under the cursor: the open article's, the selected
+// article's, or a profile row's website or filing page.
+func (m *Model) link() (string, bool) {
+	if a := m.selected(); a != nil {
+		return a.URL, true
+	}
+	if row, ok := m.row(); ok && row.URL != "" {
+		return row.URL, true
+	}
+	return "", false
+}
+
+// openURL opens the link under the cursor in the browser. Only web addresses
+// are opened: feeds are untrusted, and a file: or custom-scheme link should not
 // reach the system's handler.
 func (m *Model) openURL() tea.Cmd {
-	a := m.selected()
-	if a == nil {
+	raw, ok := m.link()
+	if !ok {
 		return nil
 	}
-	u, err := url.Parse(a.URL)
+	u, err := url.Parse(raw)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		m.fail("not a web address: %q", clipURL(a.URL))
+		m.fail("not a web address: %q", clipURL(raw))
 		return nil
 	}
 	open, link := m.opts.OpenURL, u.String()

@@ -49,7 +49,7 @@ func cmdSearch(ctx context.Context, a *app, args []string) error {
 	if !from.IsZero() && !to.IsZero() && !from.Before(to) {
 		return usageErrorf("-from must not be after -to")
 	}
-	q, err := filter.Parse(strings.Join(words, " "))
+	q, err := filter.ParseWith(strings.Join(words, " "), a.filterEnv(a.tenantID))
 	if err != nil {
 		return err
 	}

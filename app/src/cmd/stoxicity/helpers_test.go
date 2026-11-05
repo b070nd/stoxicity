@@ -49,6 +49,21 @@ const companyList = `{
  "2":{"cik_str":1000002,"ticker":"GLOB","title":"Globex Holdings Inc"}
 }`
 
+// Synthetic fixtures in the shapes of the Nasdaq Trader files (header, rows,
+// footer) and of one SEC submissions record.
+const nasdaqFile = `Symbol|Security Name|Market Category|Test Issue|Financial Status|Round Lot Size|ETF|NextShares
+ACME|Acme Corp - Common Stock|Q|N|N|100|N|N
+ETFX|Example Growth ETF|G|N|N|100|Y|N
+File Creation Time: 1105202603:02|||||||
+`
+
+const otherFile = `ACT Symbol|Security Name|Exchange|CQS Symbol|ETF|Round Lot Size|Test Issue|NASDAQ Symbol
+GLOB|Globex Holdings Inc Common Stock|N|GLOB|N|100|N|GLOB
+File Creation Time: 1105202603:02||||||
+`
+
+const acmeRecord = `{"cik":"0001000001","entityType":"operating","sic":"7372","sicDescription":"Services-Prepackaged Software","name":"Acme Corp","fiscalYearEnd":"1231","stateOfIncorporation":"DE","category":"Large accelerated filer","formerNames":[{"name":"ACME HOLDINGS"}]}`
+
 // testEnv is a configuration folder in a temporary directory and a feed server.
 type testEnv struct {
 	dir    string
@@ -76,6 +91,9 @@ func newTestEnv(t *testing.T) *testEnv {
 		w.Header().Set("ETag", `"company-1"`)
 		fmt.Fprint(w, companyList)
 	})
+	mux.HandleFunc("/nasdaqlisted.txt", func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, nasdaqFile) })
+	mux.HandleFunc("/otherlisted.txt", func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, otherFile) })
+	mux.HandleFunc("/sub/CIK0001000001.json", func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, acmeRecord) })
 	srv := httptest.NewTLSServer(mux)
 	t.Cleanup(srv.Close)
 	client, err := httpx.New(httpx.Config{
@@ -99,7 +117,7 @@ func newTestEnv(t *testing.T) *testEnv {
 			t.Fatal(err)
 		}
 	}
-	write("config.yaml", "since: 2026-11-01\ndata_dir: ./data\nwatchlist: [ACME]\ncompany:\n  url: "+srv.URL+"/company_tickers.json\n")
+	write("config.yaml", "since: 2026-11-01\ndata_dir: ./data\nwatchlist: [ACME]\ncompany:\n  url: "+srv.URL+"/company_tickers.json\n  nasdaq_url: "+srv.URL+"/nasdaqlisted.txt\n  other_url: "+srv.URL+"/otherlisted.txt\n  submissions_url: "+srv.URL+"/sub/CIK%s.json\n")
 	write("sources.yaml", fmt.Sprintf(`sources:
   - id: news-feed
     name: Synthetic news

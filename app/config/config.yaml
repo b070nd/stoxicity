@@ -52,6 +52,9 @@ refresh:
 company:
   enabled: true
   max_age: 168h
+  # The Nasdaq Trader symbol directory marks ETFs and gives the market tier and
+  # financial status. A personal copy for your own use; it is not passed on.
+  listing: true
 
 # Second scoring stage: a laya-serve sidecar. On, but its answers are gated by
 # min_confidence and only the fields in `apply` change a score; the rest are

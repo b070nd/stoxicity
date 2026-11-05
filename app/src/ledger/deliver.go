@@ -9,7 +9,6 @@ import (
 
 	"github.com/b070nd/stoxicity/app/src/channel"
 	"github.com/b070nd/stoxicity/app/src/digest"
-	"github.com/b070nd/stoxicity/app/src/filter"
 	"github.com/b070nd/stoxicity/app/src/model"
 	"github.com/b070nd/stoxicity/app/src/store"
 	"github.com/b070nd/stoxicity/app/src/watch"
@@ -377,7 +376,7 @@ func digestDue(d watch.Digest, local time.Time, zone *time.Location) (scheduled 
 
 // digestNotification builds the digest of w for the span before now.
 func (l *Ledger) digestNotification(ctx context.Context, tenantID string, w watch.Watch, key string, scheduled, now time.Time, span time.Duration) (channel.Notification, error) {
-	q, err := filter.Parse(w.Query)
+	q, err := l.parseQuery(tenantID, w.Query)
 	if err != nil {
 		return channel.Notification{}, fmt.Errorf("ledger: watch %q: query: %w", w.ID, err)
 	}

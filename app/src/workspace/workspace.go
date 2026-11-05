@@ -17,7 +17,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/b070nd/stoxicity/app/src/company"
 	"github.com/b070nd/stoxicity/app/src/config"
 	"github.com/b070nd/stoxicity/app/src/envfile"
 	"github.com/b070nd/stoxicity/app/src/filter"
@@ -28,6 +27,7 @@ import (
 	"github.com/b070nd/stoxicity/app/src/store"
 	"github.com/b070nd/stoxicity/app/src/tenant"
 	"github.com/b070nd/stoxicity/app/src/tui"
+	"github.com/b070nd/stoxicity/app/src/universe"
 	"github.com/b070nd/stoxicity/app/src/watch"
 )
 
@@ -42,19 +42,21 @@ type Options struct {
 
 // Workspace is an open tenant. Close it when done.
 type Workspace struct {
-	cfg      config.Config
-	reg      sources.Registry
-	db       *store.DB
-	ts       store.TenantStore
-	tenant   tenant.Tenant
-	read     *reader.Reader
-	watches  watch.FSStore
-	now      func() time.Time
-	zone     *time.Location
-	resolver *company.Resolver
-	watchID  string
+	cfg     config.Config
+	reg     sources.Registry
+	db      *store.DB
+	ts      store.TenantStore
+	tenant  tenant.Tenant
+	read    *reader.Reader
+	watches watch.FSStore
+	now     func() time.Time
+	zone    *time.Location
+	watchID string
 
+	// The universe is replaced as a whole when a tag or a list changes.
+	src     universe.Sources
 	mu      sync.Mutex
+	univ    *universe.Universe
 	byID    map[string]watch.Watch
 	baseDir string
 }
@@ -126,10 +128,6 @@ func Open(opts Options) (*Workspace, error) {
 		now = time.Now
 	}
 	zone := cfg.Location()
-	master, err := company.Load(filepath.Join(dataDir, "company"))
-	if err != nil {
-		master = company.Master{} // a missing or damaged cache only costs names
-	}
 	w := &Workspace{
 		cfg: cfg, reg: reg, db: db, ts: db.Tenant(t.ID), tenant: t,
 		watches: watch.FSStore{Dir: filepath.Join(tenantsDir, t.ID, "watches")},
@@ -137,13 +135,26 @@ func Open(opts Options) (*Workspace, error) {
 	}
 	w.read = reader.New(db, t.ID, reg.VisibleTo(t.ID), zone,
 		reader.WithNow(now), reader.WithSince(cfg.SinceTime()))
-	extra := slices.Clone(cfg.Watchlist)
+	known := slices.Clone(cfg.Watchlist)
 	if ws, err := w.watches.List(); err == nil {
 		for _, x := range ws {
-			extra = append(extra, x.Scope.Tickers...)
+			known = append(known, x.Scope.Tickers...)
 		}
 	}
-	w.resolver = company.NewResolver(master, extra)
+	sectors := map[string]string{}
+	for _, sr := range cfg.Sectors {
+		for _, t := range sr.Tickers {
+			sectors[universe.Ticker(t)] = sr.Name
+		}
+	}
+	w.src = universe.Sources{
+		CompanyDir: filepath.Join(dataDir, "company"),
+		LayerPath:  filepath.Join(tenantsDir, t.ID, universe.FileName),
+		Sectors:    sectors, Known: known,
+	}
+	// A damaged or missing cache only costs names and facets; the universe
+	// still holds whatever loaded.
+	w.univ, _ = universe.Load(w.src)
 	w.watchID = opts.Watch
 	if w.watchID == "" {
 		w.watchID = t.DefaultWatch
@@ -161,10 +172,76 @@ func (w *Workspace) Now() time.Time       { return w.now() }
 func (w *Workspace) DefaultWatch() string { return w.watchID }
 func (w *Workspace) Watchlist() []string  { return slices.Clone(w.cfg.Watchlist) }
 func (w *Workspace) CompanyName(t string) string {
-	if e, ok := w.resolver.Lookup(t); ok {
-		return e.Name
+	p, _ := w.Universe().Get(t)
+	return p.Name
+}
+
+// Universe is the current snapshot of every known company.
+func (w *Workspace) Universe() *universe.Universe {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.univ
+}
+
+// Following lists the names of the tenant's watches whose scope names the
+// ticker.
+func (w *Workspace) Following(ticker string) []string {
+	list, err := w.watches.List()
+	if err != nil {
+		return nil
 	}
-	return ""
+	t := universe.Ticker(ticker)
+	var out []string
+	for _, x := range list {
+		if slices.ContainsFunc(x.Scope.Tickers, func(s string) bool { return universe.Ticker(s) == t }) {
+			name := x.Name
+			if name == "" {
+				name = x.ID
+			}
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// Tag puts a tag on a stock or takes it off, and rebuilds the universe.
+func (w *Workspace) Tag(_ context.Context, ticker, tag string, add bool) error {
+	return w.edit(func(l *universe.Layer) (bool, error) {
+		if add {
+			return l.AddTag(ticker, tag)
+		}
+		return l.RemoveTag(ticker, tag), nil
+	})
+}
+
+// SetListMember puts a stock into a list or takes it out, and rebuilds the
+// universe.
+func (w *Workspace) SetListMember(_ context.Context, listID, ticker string, add bool) error {
+	return w.edit(func(l *universe.Layer) (bool, error) { return l.SetMember(listID, ticker, add) })
+}
+
+// edit changes the tenant's stocks.yaml and loads the universe again. The
+// file is read fresh each time, so a change made by the command line meanwhile
+// is not lost.
+func (w *Workspace) edit(change func(*universe.Layer) (bool, error)) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	layer, err := universe.LoadLayer(w.src.LayerPath)
+	if err != nil {
+		return err
+	}
+	changed, err := change(&layer)
+	if err != nil || !changed {
+		return err
+	}
+	if err := layer.Save(w.src.LayerPath); err != nil {
+		return err
+	}
+	if u, err := universe.Load(w.src); u != nil {
+		w.univ = u
+		_ = err
+	}
+	return nil
 }
 
 // TopicNames are the topics the configuration defines.
@@ -232,7 +309,7 @@ func (w *Workspace) matcher(id string) (func(model.Article) bool, error) {
 	}
 	opts := watch.Options{DefaultThreshold: w.cfg.Lens.Threshold}
 	if x.Query != "" {
-		q, err := filter.Parse(x.Query)
+		q, err := filter.ParseWith(x.Query, w.Universe().FilterEnv())
 		if err != nil {
 			return nil, fmt.Errorf("watch %s: %w", id, err)
 		}
@@ -256,7 +333,7 @@ func (w *Workspace) Articles(ctx context.Context, watchID string, from, to time.
 
 // Search runs a Google-style query over what the watch matches.
 func (w *Workspace) Search(ctx context.Context, watchID, query string, from, to time.Time, limit int) ([]model.Article, error) {
-	q, err := filter.Parse(query)
+	q, err := filter.ParseWith(query, w.Universe().FilterEnv())
 	if err != nil {
 		return nil, err
 	}

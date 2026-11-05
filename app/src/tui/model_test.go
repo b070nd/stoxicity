@@ -13,11 +13,13 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"github.com/b070nd/stoxicity/app/src/company"
 	"github.com/b070nd/stoxicity/app/src/filter"
 	"github.com/b070nd/stoxicity/app/src/labels"
 	"github.com/b070nd/stoxicity/app/src/model"
 	"github.com/b070nd/stoxicity/app/src/nav"
 	"github.com/b070nd/stoxicity/app/src/pages"
+	"github.com/b070nd/stoxicity/app/src/universe"
 )
 
 var zone = func() *time.Location {
@@ -38,6 +40,9 @@ type fake struct {
 	sources  []SourceRow
 	verdicts map[string]labels.Verdict
 
+	layer universe.Layer
+	univ  *universe.Universe
+
 	articleCalls []string // the watch of each Articles call
 	searchCalls  []string
 	labelled     []string
@@ -55,6 +60,67 @@ func art(id, title, domain string, ago time.Duration, rel float64, mat int, tick
 }
 
 func newFake() *fake {
+	f := newFakeArticles()
+	f.rebuildUniverse()
+	return f
+}
+
+// rebuildUniverse makes the universe from the fixed company list and the
+// layer the tests edit.
+func (f *fake) rebuildUniverse() {
+	ents := []model.Entity{
+		{Ticker: "KO", Name: "Coca-Cola Co", CIK: "0000021344", Exchange: "NYSE"},
+		{Ticker: "NVDA", Name: "NVIDIA CORP", CIK: "0001045810", Exchange: "Nasdaq"},
+		{Ticker: "GOOG", Name: "Alphabet Inc.", CIK: "0001652044", Exchange: "Nasdaq"},
+		{Ticker: "GOOGL", Name: "Alphabet Inc.", CIK: "0001652044", Exchange: "Nasdaq"},
+	}
+	f.univ = universe.New(universe.Inputs{
+		Master: company.Master{Entities: ents},
+		Industry: company.IndustryCache{
+			"0001045810": {CIK: "0001045810", SIC: "3674", Description: "Semiconductors & Related Devices", State: "DE", FiscalYear: "0126", Website: "www.nvidia.com"},
+		},
+		Layer: f.layer, Known: []string{"KO"},
+	})
+}
+
+func (f *fake) Universe() *universe.Universe {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.univ
+}
+
+func (f *fake) Following(t string) []string {
+	if t == "NVDA" {
+		return []string{"Tech"}
+	}
+	return nil
+}
+
+func (f *fake) Tag(_ context.Context, ticker, tag string, add bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if add {
+		if _, err := f.layer.AddTag(ticker, tag); err != nil {
+			return err
+		}
+	} else {
+		f.layer.RemoveTag(ticker, tag)
+	}
+	f.rebuildUniverse()
+	return nil
+}
+
+func (f *fake) SetListMember(_ context.Context, id, ticker string, add bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, err := f.layer.SetMember(id, ticker, add); err != nil {
+		return err
+	}
+	f.rebuildUniverse()
+	return nil
+}
+
+func newFakeArticles() *fake {
 	return &fake{
 		arts: []model.Article{
 			art("a1", "Nvidia beats estimates", "sec.gov", 2*time.Hour, 0.9, 4, []string{"NVDA"}, []string{"ai-infra"}),
@@ -851,4 +917,164 @@ func TestWrapBreaksLongWordsAndKeepsParagraphs(t *testing.T) {
 
 func pagesParams() pages.Params {
 	return pages.NewParams(now, 14, 10, 0.5, zone)
+}
+
+func TestCompaniesScreenListsEveryCompanyWithCountsAndFacets(t *testing.T) {
+	h := newHarness(t)
+	h.press("c")
+	h.mustContain("Companies", "4 of 4 companies", "exchange: Nasdaq 3", "NVDA", "Nvidia Corp", "Coca-Cola", "★", "GOOGL", "2 news")
+	if got := h.crumbs(); !strings.HasSuffix(got, "Companies") {
+		t.Errorf("crumbs = %q", got)
+	}
+}
+
+func TestCompaniesNarrowAsYouTypeAndEnterKeepsTheQuery(t *testing.T) {
+	h := newHarness(t)
+	h.press("c", "/")
+	h.typeText("exchange:nyse")
+	v := h.view()
+	if !strings.Contains(v, "Coca-Cola") || strings.Contains(v, "NVDA") {
+		t.Fatalf("live narrowing did not apply:\n%s", v)
+	}
+	if got := h.m.stack.Current().Arg; got != "" {
+		t.Errorf("route changed while typing: %q", got)
+	}
+	h.press("enter")
+	if got := h.m.stack.Current(); got.Kind != nav.Companies || got.Arg != "exchange:nyse" {
+		t.Errorf("route = %v", got)
+	}
+	h.mustContain("1 of 4 companies")
+	// Esc leaves the committed query alone.
+	h.press("/", "backspace", "esc")
+	if h.m.stack.Current().Arg != "exchange:nyse" {
+		t.Errorf("esc changed the route")
+	}
+	h.mustContain("1 of 4 companies")
+}
+
+func TestCompaniesBadQueryStaysInTheBarWithTheError(t *testing.T) {
+	h := newHarness(t)
+	h.press("c", "/")
+	h.typeText("exchange:")
+	h.mustContain("exchange")
+	h.press("enter")
+	if h.m.mode != modeFilter || !h.m.failed {
+		t.Errorf("mode = %v failed = %v, want the bar kept open with an error", h.m.mode, h.m.failed)
+	}
+}
+
+func TestSlashOutsideCompaniesStillSearchesWithUniverseOperators(t *testing.T) {
+	h := newHarness(t)
+	h.press("/")
+	h.typeText("list:nope")
+	h.press("enter")
+	if !h.m.failed {
+		t.Errorf("an unknown list should be reported, status %q", h.m.status)
+	}
+	h.press("esc")
+}
+
+func TestStockProfileShowsWhatIsKnownEvenWithoutNews(t *testing.T) {
+	h := newHarness(t)
+	h.m.goTo(nav.Route{Kind: nav.Stock, Arg: "GOOG"})
+	h.run(h.m.loadCmd(true))
+	h.mustContain("Stock GOOG", "Profile", "Alphabet Inc.", "GOOGL", "No article names GOOG")
+	h.mustContain("universe enrich GOOG")
+}
+
+func TestStockProfileShowsIndustryWatchesAndLinks(t *testing.T) {
+	h := newHarness(t)
+	h.m.goTo(nav.Route{Kind: nav.Stock, Arg: "NVDA"})
+	h.run(h.m.loadCmd(true))
+	h.mustContain("Semiconductors & Related Devices (SIC 3674)", "Nasdaq", "watches Tech", "www.nvidia.com", "EDGAR", "Nvidia beats estimates")
+}
+
+func TestOpenKeyOnAProfileRowOpensWebsiteAndFilingPages(t *testing.T) {
+	h := newHarness(t)
+	h.m.goTo(nav.Route{Kind: nav.Stock, Arg: "NVDA"})
+	h.run(h.m.loadCmd(true))
+	var got []string
+	for i, idx := range h.m.sel {
+		if h.m.scr.Rows[idx].URL != "" {
+			h.m.cursor = i
+			h.press("o")
+			got = append(got, h.opened[len(h.opened)-1])
+		}
+	}
+	if len(got) != 2 || got[0] != "https://www.nvidia.com" || !strings.Contains(got[1], "sec.gov/cgi-bin/browse-edgar") || !strings.Contains(got[1], "CIK=0001045810") {
+		t.Errorf("opened %v", got)
+	}
+}
+
+func TestUnknownTickerWithNoNewsSaysSo(t *testing.T) {
+	h := newHarness(t)
+	h.m.goTo(nav.Route{Kind: nav.Stock, Arg: "ZZZZ"})
+	h.run(h.m.loadCmd(true))
+	h.mustContain("no company list knows it")
+}
+
+func TestTagPromptAddsAndRemovesTags(t *testing.T) {
+	h := newHarness(t)
+	h.m.goTo(nav.Route{Kind: nav.Stock, Arg: "NVDA"})
+	h.run(h.m.loadCmd(true))
+	h.press("#")
+	if h.m.mode != modeTag {
+		t.Fatalf("mode = %v, want the tag prompt", h.m.mode)
+	}
+	h.typeText("moat ai")
+	h.press("enter")
+	h.mustContain("#moat", "#ai", "NVDA tags +moat +ai")
+	p, _ := h.be.Universe().Get("NVDA")
+	if strings.Join(p.Tags, ",") != "ai,moat" {
+		t.Errorf("tags = %v", p.Tags)
+	}
+	h.press("#")
+	h.typeText("-moat")
+	h.press("enter")
+	if p, _ := h.be.Universe().Get("NVDA"); strings.Join(p.Tags, ",") != "ai" {
+		t.Errorf("tags after removal = %v", p.Tags)
+	}
+	h.press("#")
+	h.typeText("Bad Tag!")
+	h.press("enter")
+	if !h.m.failed {
+		t.Errorf("an invalid tag should fail, status %q", h.m.status)
+	}
+}
+
+func TestListPromptCreatesAListAndCompaniesCanBeFilteredByIt(t *testing.T) {
+	h := newHarness(t)
+	h.press("c")
+	// Move to NVDA: the list is ranked by news, NVDA has the most.
+	h.press("L")
+	h.typeText("picks")
+	h.press("enter")
+	h.mustContain("NVDA lists +picks", "lists: picks 1")
+	h.m.goTo(nav.Route{Kind: nav.Companies, Arg: "list:picks"})
+	h.run(h.m.loadCmd(false))
+	h.mustContain("1 of 4 companies")
+}
+
+func TestTagPromptNeedsAStockUnderTheCursor(t *testing.T) {
+	h := newHarness(t)
+	h.press("t") // topics: no stock rows
+	h.press("#")
+	if h.m.mode == modeTag || !h.m.failed {
+		t.Errorf("mode = %v failed = %v, want a refusal", h.m.mode, h.m.failed)
+	}
+}
+
+func TestEscCancelsAnEditPrompt(t *testing.T) {
+	h := newHarness(t)
+	h.m.goTo(nav.Route{Kind: nav.Stock, Arg: "NVDA"})
+	h.run(h.m.loadCmd(true))
+	h.press("#")
+	h.typeText("x")
+	h.press("esc")
+	if h.m.mode != modeList {
+		t.Errorf("mode = %v", h.m.mode)
+	}
+	if p, _ := h.be.Universe().Get("NVDA"); len(p.Tags) != 0 {
+		t.Errorf("tags = %v", p.Tags)
+	}
 }

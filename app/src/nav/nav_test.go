@@ -2,6 +2,7 @@ package nav
 
 import (
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -185,5 +186,43 @@ func TestBackForwardJump(t *testing.T) {
 	}
 	if s.JumpTo(5) {
 		t.Fatal("JumpTo out of range should report false")
+	}
+}
+
+func TestCompaniesRouteRoundTrips(t *testing.T) {
+	for _, r := range []Route{
+		{Kind: Companies},
+		{Kind: Companies, Arg: "exchange:nyse tag:moat"},
+		{Kind: Companies, Arg: `name:"berkshire hathaway" -etf`, Watch: "buffett"},
+	} {
+		got, err := Parse(r.String())
+		if err != nil || got != r {
+			t.Errorf("Parse(%q) = %+v, %v; want %+v", r.String(), got, err, r)
+		}
+	}
+	if _, err := Parse("/companies/extra"); err == nil {
+		t.Error("companies takes no path argument")
+	}
+	if got := (Route{Kind: Companies, Arg: "tag:moat"}).Label(); got != "Companies: tag:moat" {
+		t.Errorf("label = %q", got)
+	}
+	if !(Route{Kind: Companies}).Section() {
+		t.Error("companies is a section")
+	}
+}
+
+func TestStockOpenedFromCompaniesOrSearchSitsUnderThem(t *testing.T) {
+	for _, list := range []Route{{Kind: Companies, Arg: "tag:moat"}, {Kind: Search, Arg: "nvidia"}} {
+		s := New()
+		s.Go(list)
+		s.Go(Route{Kind: Stock, Arg: "NVDA"})
+		var labels []string
+		for _, c := range s.Crumbs() {
+			labels = append(labels, c.Label)
+		}
+		want := []string{"Home", list.Label(), "NVDA"}
+		if !slices.Equal(labels, want) {
+			t.Errorf("from %v: crumbs = %v, want %v", list.Kind, labels, want)
+		}
 	}
 }

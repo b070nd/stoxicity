@@ -63,7 +63,7 @@ func watchList(ctx context.Context, a *app) error {
 // watchCheck validates watch files, all of them if none is named, and prints
 // every problem found.
 func watchCheck(a *app, ids []string) error {
-	ok, problems := checkWatches(a.watches(a.tenantID), a.watchDir(), ids)
+	ok, problems := checkWatches(a.watches(a.tenantID), a.watchDir(), ids, a.filterEnv(a.tenantID))
 	for _, id := range ok {
 		fmt.Fprintf(a.stdout, "ok    %s\n", id)
 	}
@@ -81,7 +81,7 @@ func (a *app) watchDir() string { return a.watches(a.tenantID).Dir }
 
 // checkWatches loads the named watches, or every *.yaml file of dir, and parses
 // their queries. It returns the IDs that are fine and one error per problem.
-func checkWatches(s watch.FSStore, dir string, ids []string) (ok []string, problems []error) {
+func checkWatches(s watch.FSStore, dir string, ids []string, env filter.Env) (ok []string, problems []error) {
 	if len(ids) == 0 {
 		entries, err := os.ReadDir(dir)
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -96,7 +96,7 @@ func checkWatches(s watch.FSStore, dir string, ids []string) (ok []string, probl
 	for _, id := range ids {
 		w, err := s.Get(id)
 		if err == nil {
-			_, err = filter.Parse(w.Query)
+			_, err = filter.ParseWith(w.Query, env)
 			if err != nil {
 				err = fmt.Errorf("watch %q: query: %w", id, err)
 			}

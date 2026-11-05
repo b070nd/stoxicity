@@ -22,6 +22,7 @@ import (
 	"github.com/b070nd/stoxicity/app/src/entity"
 	"github.com/b070nd/stoxicity/app/src/envfile"
 	"github.com/b070nd/stoxicity/app/src/feeds/edgar"
+	"github.com/b070nd/stoxicity/app/src/filter"
 	"github.com/b070nd/stoxicity/app/src/httpx"
 	"github.com/b070nd/stoxicity/app/src/ledger"
 	"github.com/b070nd/stoxicity/app/src/lens"
@@ -31,6 +32,7 @@ import (
 	"github.com/b070nd/stoxicity/app/src/sources"
 	"github.com/b070nd/stoxicity/app/src/store"
 	"github.com/b070nd/stoxicity/app/src/tenant"
+	"github.com/b070nd/stoxicity/app/src/universe"
 	"github.com/b070nd/stoxicity/app/src/watch"
 )
 
@@ -121,6 +123,8 @@ type app struct {
 	master     company.Master
 	masterDone bool
 	res        entity.Resolver
+	univ       *universe.Universe
+	others     map[string]*universe.Universe // other tenants' universes, by tenant
 }
 
 // run is the whole program. It returns the exit code.
@@ -500,7 +504,34 @@ func (a *app) ledger(db store.Store, channels map[channel.Kind]channel.Channel) 
 		Zone:      a.location(),
 		Now:       a.now,
 		Logger:    a.log,
+		FilterEnv: a.filterEnv,
 	})
+}
+
+// filterEnv gives a tenant's watch queries the operators of the company list:
+// company:, list:, tag:, exchange:, industry:. The selected tenant's universe
+// is the one in memory; another tenant's is read when asked for.
+func (a *app) filterEnv(tenantID string) filter.Env {
+	if tenantID == a.tenantID {
+		return a.universe().FilterEnv()
+	}
+	if a.others == nil {
+		a.others = map[string]*universe.Universe{}
+	}
+	u, ok := a.others[tenantID]
+	if !ok {
+		var err error
+		u, err = universe.Load(universe.Sources{
+			CompanyDir: a.companyDir(),
+			LayerPath:  filepath.Join(a.tenantsDir(), tenantID, universe.FileName),
+			Sectors:    a.sectorMap(), Known: a.knownTickers(),
+		})
+		if err != nil {
+			fmt.Fprintf(a.stderr, "stoxicity: %v\n", err)
+		}
+		a.others[tenantID] = u
+	}
+	return u.FilterEnv()
 }
 
 // channels builds the senders for the channel kinds that the watches of every
@@ -589,7 +620,25 @@ func (a *app) refreshCompanies(ctx context.Context, force bool) (company.Result,
 		Force:  force,
 		Now:    a.now,
 	})
-	a.masterDone, a.res = false, nil
+	a.masterDone, a.res, a.univ = false, nil, nil
+	return res, err
+}
+
+// refreshListing brings the Nasdaq symbol directory up to date when
+// company.listing is set.
+func (a *app) refreshListing(ctx context.Context, force bool) (company.Result, error) {
+	if !a.cfg.Company.Listing {
+		return company.Result{Skipped: true}, nil
+	}
+	client, err := a.httpClient()
+	if err != nil {
+		return company.Result{}, err
+	}
+	res, err := company.RefreshListing(ctx, client, a.companyDir(), company.ListingOptions{
+		NasdaqURL: a.cfg.Company.NasdaqURL, OtherURL: a.cfg.Company.OtherURL,
+		MaxAge: a.cfg.CompanyMaxAge(), Force: force, Now: a.now,
+	})
+	a.univ = nil
 	return res, err
 }
 
@@ -610,6 +659,9 @@ func (a *app) refreshCompaniesQuietly(ctx context.Context) {
 	case res.Updated:
 		a.log.Debug("company master updated", "tickers", res.Records)
 	}
+	if _, err := a.refreshListing(ctx, false); err != nil {
+		fmt.Fprintf(a.stderr, "stoxicity: symbol directory not refreshed: %v\n", err)
+	}
 }
 
 // entities knows the companies in the news: the cached company master plus
@@ -620,6 +672,13 @@ func (a *app) entities() entity.Resolver {
 	if a.res != nil {
 		return a.res
 	}
+	a.res = company.NewResolver(a.companies(), a.knownTickers())
+	return a.res
+}
+
+// knownTickers are the tickers that the watchlist and the tenants' watches
+// name.
+func (a *app) knownTickers() []string {
 	var tickers []string
 	tickers = append(tickers, a.cfg.Watchlist...)
 	if ts, err := a.tenants().List(); err == nil {
@@ -633,8 +692,39 @@ func (a *app) entities() entity.Resolver {
 			}
 		}
 	}
-	a.res = company.NewResolver(a.companies(), tickers)
-	return a.res
+	return tickers
+}
+
+// layerPath is the selected tenant's file of lists, tags and extra companies.
+func (a *app) layerPath() string {
+	return filepath.Join(a.tenantsDir(), a.tenantID, universe.FileName)
+}
+
+// sectorMap maps tickers to the sector whose rules name them.
+func (a *app) sectorMap() map[string]string {
+	m := map[string]string{}
+	for _, s := range a.cfg.Sectors {
+		for _, t := range s.Tickers {
+			m[universe.Ticker(t)] = s.Name
+		}
+	}
+	return m
+}
+
+// universe joins the cached company files with the tenant's lists and tags,
+// read once. A damaged file is reported on stderr and left out.
+func (a *app) universe() *universe.Universe {
+	if a.univ == nil {
+		u, err := universe.Load(universe.Sources{
+			CompanyDir: a.companyDir(), LayerPath: a.layerPath(),
+			Sectors: a.sectorMap(), Known: a.knownTickers(),
+		})
+		if err != nil {
+			fmt.Fprintf(a.stderr, "stoxicity: %v\n", err)
+		}
+		a.univ = u
+	}
+	return a.univ
 }
 
 // httpClient returns the client for fetching. It refuses to run without a

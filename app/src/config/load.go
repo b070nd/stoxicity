@@ -111,7 +111,7 @@ func defaults() Config {
 			RelevanceWeight: 0.3,
 			BatchSize:       16,
 		},
-		Company: Company{Enabled: true, MaxAge: "168h"},
+		Company: Company{Enabled: true, MaxAge: "168h", Listing: true},
 		Tenancy: Tenancy{Dir: "tenants", Default: "default"},
 	}
 }

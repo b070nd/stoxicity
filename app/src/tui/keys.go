@@ -17,6 +17,9 @@ const (
 	GoHome       Action = "home"
 	GoWatches    Action = "watches"
 	GoStocks     Action = "stocks"
+	GoCompanies  Action = "companies" // every known company, filterable
+	TagStock     Action = "tag"       // tag the stock under the cursor
+	ListStock    Action = "list"      // put the stock under the cursor in a list
 	GoTopics     Action = "topics"
 	GoDomains    Action = "domains"
 	GoSources    Action = "sources"
@@ -59,10 +62,13 @@ var DefaultKeys = []Binding{
 	{[]string{"H"}, GoHome, "dashboard"},
 	{[]string{"W"}, GoWatches, "manage watches"},
 	{[]string{"s"}, GoStocks, "stocks"},
+	{[]string{"c"}, GoCompanies, "all companies (/ narrows them as you type)"},
+	{[]string{"#"}, TagStock, "tag the stock (-tag removes)"},
+	{[]string{"L"}, ListStock, "put the stock in a list (-list removes)"},
 	{[]string{"t"}, GoTopics, "topics"},
 	{[]string{"D"}, GoDomains, "domains"},
 	{[]string{"S"}, GoSources, "source health"},
-	{[]string{"o"}, OpenURL, "open the article in the browser"},
+	{[]string{"o"}, OpenURL, "open the article, website or filing in the browser"},
 	{[]string{"up", "ctrl+p"}, Up, "move up"},
 	{[]string{"down", "ctrl+n"}, Down, "move down"},
 	{[]string{"pgup"}, PageUp, "page up"},

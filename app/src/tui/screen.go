@@ -13,6 +13,7 @@ import (
 	"github.com/b070nd/stoxicity/app/src/pages"
 	"github.com/b070nd/stoxicity/app/src/summarize"
 	"github.com/b070nd/stoxicity/app/src/tagcloud"
+	"github.com/b070nd/stoxicity/app/src/universe"
 )
 
 // Style names how a row is drawn; the shell maps it to colours.
@@ -41,10 +42,11 @@ type Row struct {
 	Go       *nav.Route
 	Watch    string // enter switches to this watch (the Watches screen)
 	HasWatch bool
+	URL      string // o opens this web address
 }
 
 // Selectable reports whether the cursor can stop on the row.
-func (r Row) Selectable() bool { return r.Article != nil || r.Go != nil || r.HasWatch }
+func (r Row) Selectable() bool { return r.Article != nil || r.Go != nil || r.HasWatch || r.URL != "" }
 
 // Screen is what a view shows: a title and its rows.
 type Screen struct {
@@ -67,6 +69,10 @@ type Data struct {
 	WatchID   string
 	Now       time.Time
 	Truncated bool
+	// Universe is every known company; Following names the watches that follow
+	// a ticker. Either may be missing.
+	Universe  *universe.Universe
+	Following func(ticker string) []string
 }
 
 func (d Data) name(t string) string {
@@ -91,6 +97,8 @@ func Build(r nav.Route, d Data) Screen {
 		return buildStocks(d)
 	case nav.Stock:
 		return buildStock(r.Arg, d)
+	case nav.Companies:
+		return buildCompanies(r.Arg, d)
 	case nav.Topics:
 		return buildTopics(d)
 	case nav.Topic:
@@ -356,11 +364,22 @@ func buildStock(ticker string, d Data) Screen {
 		title += " · " + page.Name
 	}
 	s := Screen{Title: title}
+	var b builder
+	known := profileRows(&b, ticker, d)
 	if page.Total == 0 {
-		s.Notice = "No article names " + ticker + " in this window."
+		if !known {
+			s.Notice = "No article names " + ticker + " in this window, and no company list knows it. Run `stoxicity universe update`, or tag it with # to keep it."
+			return s
+		}
+		b.blank()
+		b.heading("News", nil)
+		b.styled(Dim, "  No article names "+ticker+" in "+d.Params.Describe()+".")
+		s.Rows = b.rows
 		return s
 	}
-	var b builder
+	if known {
+		b.blank()
+	}
 	b.styled(Dim, fmt.Sprintf("%d articles, %d relevant · %s", page.Total, page.Relevant, d.Params.Describe()))
 	if len(page.Summary.Lines) > 0 {
 		b.blank()

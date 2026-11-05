@@ -3,11 +3,19 @@
 // entity index, which finds companies in text, and the EDGAR fetchers, which
 // need the CIK to ticker map to put tickers on filings.
 //
-// The list is https://www.sec.gov/files/company_tickers.json. The SEC says it
-// updates the file "periodically" and does not guarantee its accuracy or
-// scope, and the names are EDGAR conformed names (often upper case, with
-// suffixes such as CORP). Every use of the list is therefore a convenience
-// that a person can override with the watchlist, not a source of truth.
+// The list is https://www.sec.gov/files/company_tickers_exchange.json, which
+// adds the exchange to each record (company_tickers.json, without it, is read
+// too). The SEC says it updates the files "periodically" and does not guarantee
+// their accuracy or scope, and the names are EDGAR conformed names (often upper
+// case, with suffixes such as CORP). Every use of the list is therefore a
+// convenience that a person can override with the watchlist, not a source of
+// truth.
+//
+// Two more files add to the list. listing.go reads the Nasdaq Trader symbol
+// directory, which says whether a symbol is an ETF and gives the market tier
+// and financial status. industry.go reads the SEC's per-company submissions,
+// which give the industry (SIC code), state and fiscal year end for the
+// companies you follow.
 package company
 
 import (
@@ -28,8 +36,8 @@ import (
 	"github.com/b070nd/stoxicity/app/src/model"
 )
 
-// DefaultURL is the SEC's ticker list.
-const DefaultURL = "https://www.sec.gov/files/company_tickers.json"
+// DefaultURL is the SEC's ticker list with exchanges.
+const DefaultURL = "https://www.sec.gov/files/company_tickers_exchange.json"
 
 // DefaultMaxAge is how old the cached list may be before Refresh asks the SEC
 // again. The SEC gives no schedule; a week keeps the load negligible.

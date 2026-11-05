@@ -39,7 +39,8 @@ Read its "Unverified" section before relying on any of it.
 
 How fetchers and the SEC EDGAR reader are meant to work:
 [docs/fetchers.md](docs/fetchers.md). The full-screen interface and its keys:
-[docs/tui.md](docs/tui.md).
+[docs/tui.md](docs/tui.md). The stock universe (every ticker, profiles, lists,
+tags and the company filters): [docs/universe.md](docs/universe.md).
 
 macOS and Linux only; Windows is out of scope.
 
@@ -112,6 +113,8 @@ app/
     channel/                delivery kinds, quiet hours, cooldown, dedupe
     dashboard/              widgets a watch's home screen can show
     entity/                 company mentions to tickers
+    company/                SEC and Nasdaq ticker lists, industry records
+    universe/               every known stock: profiles, lists, tags, queries
     cluster/                group syndicated copies of one story
     store/                  persistence: shared Base + tenant-bound TenantStore
     filter/                 Google-style query language
@@ -194,5 +197,7 @@ than it is, and `eval` prints the sampled labels' precision and recall apart.
   disabled.
 - **Not verified.** The EDGAR formats the fetchers read are written from the
   documented formats and have not been checked against live data. Ticker
-  resolution knows only the `watchlist` and the tickers named in watches, since
-  there is no company master list yet.
+  resolution uses the SEC and Nasdaq lists once `stoxicity universe update` has
+  loaded them; before that it knows only the `watchlist` and the tickers named
+  in watches. The universe covers US listings; other markets only through
+  `extra:` in `stocks.yaml`.

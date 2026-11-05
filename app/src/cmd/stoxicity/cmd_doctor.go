@@ -143,7 +143,7 @@ func (d *doctor) tenants() {
 		d.report(levelFail, "tenant", "%v", err)
 		return
 	}
-	ok, problems := checkWatches(d.a.watches(d.a.tenantID), d.a.watchDir(), nil)
+	ok, problems := checkWatches(d.a.watches(d.a.tenantID), d.a.watchDir(), nil, d.a.filterEnv(d.a.tenantID))
 	for _, p := range problems {
 		d.report(levelFail, "watches", "%v", p)
 	}

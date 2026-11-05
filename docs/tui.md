@@ -2,8 +2,8 @@
 
 `stoxicity-tui` reads what `stoxicity fetch` and `stoxicity run` have stored. It
 never fetches and never scores; it shows the shared base through the licence
-rule of your tenant, and writes only two things: your keep/drop labels and the
-read marker of a watch.
+rule of your tenant, and writes only three things: your keep/drop labels, the
+read marker of a watch, and your tags and lists (`stocks.yaml`).
 
 ```sh
 stoxicity-tui                       # the default tenant and its default watch
@@ -42,7 +42,8 @@ stoxicity-tui -root path/to/config  # default: the closest config folder above t
 |-----|--------|---------------|
 | `H` | Home | digest, top articles, stocks, domains, topic cloud, 14-day timeline |
 | `s` | Stocks | stocks in relevant news with mentions, materiality and tone; ★ marks your watchlist |
-| | Stock | summary, weekly tone and materiality, timeline, what happened, domains, topics, articles |
+| `c` | Companies | every known company, narrowed as you type, with counts by exchange, kind, industry, list and tag |
+| | Stock | profile (identity, listing, industry, links, your lists and tags, watches), then summary, weekly tone and materiality, timeline, what happened, domains, topics, articles |
 | `t` | Topics | tag cloud and a table with the lift over the window before |
 | | Topic | its stocks, domains, timeline, related topics, top articles |
 | `D` | Domains | relevant against total per domain |
@@ -56,7 +57,21 @@ stoxicity-tui -root path/to/config  # default: the closest config folder above t
 an article opens its detail (score, the rules that fired, summary, your label).
 `k` keeps and `d` drops the article under the cursor, in a list or in the detail;
 those verdicts are the gold set for `eval` and for calibrating the lens. `o`
-opens the article in your browser, for `http` and `https` addresses only.
+opens the article in your browser, for `http` and `https` addresses only; on a
+stock profile it opens the company website or its EDGAR filings.
+
+## Companies, tags and lists
+
+`c` opens the company list ([universe.md](universe.md) has the query language).
+`/` there filters the list as you type: `exchange:nyse tag:moat -etf`. `enter`
+keeps the query as part of the breadcrumb, `esc` leaves the list as it was.
+`enter` on a company opens its profile, which also exists for stocks with no news
+in the window.
+
+On a stock page, or with the cursor on any stock row: `#` asks for tags
+(`moat dividend-grower`, or `-moat` to remove) and `L` for lists (a name that
+does not exist yet makes the list). Both are saved to `tenants/<tenant>/stocks.yaml`.
+The filter bar's article search understands `company:`, `list:` and `tag:` too.
 
 Watches are YAML files in `tenants/<tenant>/watches/`; edit them there and
 check them with `stoxicity watch check`. The interface only reads them. To change tenant, restart with `-tenant`.

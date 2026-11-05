@@ -67,6 +67,9 @@ type Config struct {
 	Now func() time.Time
 	// Logger receives debug and warning lines. Nil discards them.
 	Logger *slog.Logger
+	// FilterEnv gives the extra search operators (company:, list:, tag:) of a
+	// tenant to its watch queries. Nil means the plain filter language.
+	FilterEnv func(tenantID string) filter.Env
 	// Window is how far back a watch is evaluated the first time, and again
 	// after its definition changed, measured in fetch time. Zero means 48 hours.
 	Window time.Duration
@@ -136,9 +139,18 @@ func (l *Ledger) Evaluate(ctx context.Context, tenantID string) (map[string]int,
 	return counts, errors.Join(errs...)
 }
 
+// parseQuery reads a watch query with the tenant's extra operators.
+func (l *Ledger) parseQuery(tenantID, expr string) (filter.Query, error) {
+	var env filter.Env
+	if l.cfg.FilterEnv != nil {
+		env = l.cfg.FilterEnv(tenantID)
+	}
+	return filter.ParseWith(expr, env)
+}
+
 // evaluate brings one watch up to date and returns the number of new hits.
 func (l *Ledger) evaluate(ctx context.Context, ts store.TenantStore, allowed map[string]bool, w watch.Watch, now time.Time) (int, error) {
-	q, err := filter.Parse(w.Query)
+	q, err := l.parseQuery(ts.ID(), w.Query)
 	if err != nil {
 		return 0, fmt.Errorf("ledger: watch %q: query: %w", w.ID, err)
 	}
@@ -202,7 +214,7 @@ func (l *Ledger) Preview(ctx context.Context, tenantID string, w watch.Watch, si
 	if l.cfg.Store == nil {
 		return nil, errors.New("ledger: no store configured")
 	}
-	q, err := filter.Parse(w.Query)
+	q, err := l.parseQuery(tenantID, w.Query)
 	if err != nil {
 		return nil, fmt.Errorf("ledger: watch %q: query: %w", w.ID, err)
 	}

@@ -94,3 +94,57 @@ func TestParseTickers(t *testing.T) {
 		})
 	}
 }
+
+// TestParseTickersExchangeShape uses rows in the shape the live
+// company_tickers_exchange.json has: {"data":[[cik,name,ticker,exchange],...]}.
+// The first five rows are copied from the live file; the rest are invented to
+// reach the null exchange, a blank ticker, a bad CIK and a duplicate ticker.
+func TestParseTickersExchangeShape(t *testing.T) {
+	in := `{"data":[
+	 [1045810,"NVIDIA CORP","NVDA","Nasdaq"],
+	 [320193,"Apple Inc.","AAPL","Nasdaq"],
+	 [1067983,"BERKSHIRE HATHAWAY INC","BRK-B","NYSE"],
+	 [2070829,"Contemporary Amperex Technology Co., Limited/ADR","CYATY","OTC"],
+	 [1276187,"Energy Transfer LP","ET","TXSE"],
+	 [9000001,"No Exchange Inc","NOEX",null],
+	 [9000002,"Blank Ticker","",null],
+	 [0,"Zero Cik","ZERO","NYSE"],
+	 [9000003,"Duplicate","NVDA","NYSE"]
+	]}`
+	got, err := ParseTickers(strings.NewReader(in))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []model.Entity{
+		{Ticker: "AAPL", Name: "Apple Inc.", CIK: "0000320193", Exchange: "Nasdaq"},
+		{Ticker: "BRK-B", Name: "BERKSHIRE HATHAWAY INC", CIK: "0001067983", Exchange: "NYSE"},
+		{Ticker: "CYATY", Name: "Contemporary Amperex Technology Co., Limited/ADR", CIK: "0002070829", Exchange: "OTC"},
+		{Ticker: "ET", Name: "Energy Transfer LP", CIK: "0001276187", Exchange: "TXSE"},
+		{Ticker: "NOEX", Name: "No Exchange Inc", CIK: "0009000001"},
+		{Ticker: "NVDA", Name: "NVIDIA CORP", CIK: "0001045810", Exchange: "Nasdaq"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("ParseTickers =\n%+v\nwant\n%+v", got, want)
+	}
+}
+
+func TestParseTickersExchangeShapeFieldsDecideTheOrder(t *testing.T) {
+	in := `{"fields":["ticker","exchange","cik","name"],"data":[["AAA","NYSE",5,"A Corp"]]}`
+	got, err := ParseTickers(strings.NewReader(in))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []model.Entity{{Ticker: "AAA", Name: "A Corp", CIK: "0000000005", Exchange: "NYSE"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %+v", got)
+	}
+	for _, bad := range []string{
+		`{"fields":["cik","name"],"data":[]}`, // no ticker column
+		`{"data":[["x","A","AAA","NYSE"]]}`,   // cik is not a number
+		`{"data":"nope"}`,                     // data is not rows
+	} {
+		if _, err := ParseTickers(strings.NewReader(bad)); err == nil {
+			t.Errorf("%s: want an error", bad)
+		}
+	}
+}

@@ -69,7 +69,11 @@ func (s *Stack) Go(r Route) {
 		s.trail = append(s.trail, r)
 		return
 	}
-	if parent, ok := r.Parent(); ok && !slices.Contains(s.trail, parent) && s.Current().Section() {
+	// A detail opened from a search or from the company list sits under that
+	// list, not under the one the detail normally belongs to.
+	cur := s.Current()
+	fromList := cur.Kind == Search || cur.Kind == Companies
+	if parent, ok := r.Parent(); ok && !slices.Contains(s.trail, parent) && cur.Section() && !fromList {
 		s.trail = append(s.trail, parent)
 	}
 	s.trail = append(s.trail, r)

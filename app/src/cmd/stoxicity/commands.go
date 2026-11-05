@@ -34,6 +34,7 @@ func commands() []command {
 		{name: "eval", usage: "eval [-days 90] [-threshold X]", summary: "measure the lens against your labels", bootstrap: true, run: cmdEval},
 		{name: "rescore", usage: "rescore [-days N | -from DAY -to DAY]", summary: "score stored articles again with the current lens", bootstrap: true, run: cmdRescore},
 		{name: "classify", usage: "classify [-no-laya] TEXT... | -", summary: "show how one headline is scored and classified; stores nothing", bootstrap: true, run: cmdClassify},
+		{name: "universe", usage: "universe status | update | enrich | find QUERY... | show TICKER | tag TICKER TAG... | list [ID]", summary: "every known stock: search, filter, tag and group them", bootstrap: true, run: cmdUniverse},
 		{name: "company", usage: "company status | update [-force] | find TEXT...", summary: "the company master (SEC tickers and names): refresh or search it", bootstrap: true, run: cmdCompany},
 		{name: "gmail", usage: "gmail status | auth | test", summary: "set up and test the email channel (Gmail API with OAuth)", bootstrap: true, run: cmdGmail},
 		{name: "watch", usage: "watch list | check [id...] | test ID [-since 24h]", summary: "list, validate or try the tenant's watches", bootstrap: true, run: cmdWatch},

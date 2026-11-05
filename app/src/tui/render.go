@@ -161,8 +161,13 @@ func (m *Model) bodyLines() []string {
 }
 
 func (m *Model) filterLine() string {
-	if m.mode == modeFilter {
+	switch m.mode {
+	case modeFilter:
 		return " / " + string(m.filter) + "█"
+	case modeTag:
+		return " # tag " + m.target + ": " + string(m.filter) + "█  (-name removes · enter saves · esc cancels)"
+	case modeMember:
+		return " L list for " + m.target + ": " + string(m.filter) + "█  (-name removes; a new name makes the list)"
 	}
 	return styleDim.Render(" / filter · ? help")
 }

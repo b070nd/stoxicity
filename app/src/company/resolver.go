@@ -153,3 +153,10 @@ func titleWord(w string) string {
 	}
 	return string(rs)
 }
+
+// TidyName writes an EDGAR conformed name the way the press does: NVIDIA CORP
+// becomes Nvidia Corp, and a registrant tag such as /DE/ is dropped.
+func TidyName(name string) string { return tidyName(name) }
+
+// CleanTags removes a trailing registrant tag from a conformed name.
+func CleanTags(name string) string { return cleanTags(name) }

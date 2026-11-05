@@ -6,6 +6,7 @@ import (
 
 	"github.com/b070nd/stoxicity/app/src/labels"
 	"github.com/b070nd/stoxicity/app/src/model"
+	"github.com/b070nd/stoxicity/app/src/universe"
 )
 
 // WatchInfo is a watch as the watch bar shows it.
@@ -44,6 +45,11 @@ type Backend interface {
 	TopicNames() []string
 	// CompanyName is the name of a ticker, or "" when unknown.
 	CompanyName(ticker string) string
+	// Universe is the current snapshot of every known company. It is replaced
+	// as a whole after Tag and SetListMember, so ask again after them.
+	Universe() *universe.Universe
+	// Following lists the names of the watches whose scope names the ticker.
+	Following(ticker string) []string
 
 	Watches(ctx context.Context) ([]WatchInfo, error)
 	// Articles are the visible articles published in [from, to). With a watch
@@ -57,4 +63,9 @@ type Backend interface {
 	Label(ctx context.Context, articleID string, keep bool) error
 	// MarkSeen moves the watch's read marker to now.
 	MarkSeen(ctx context.Context, watchID string) error
+	// Tag puts a tag on a stock, or takes it off.
+	Tag(ctx context.Context, ticker, tag string, add bool) error
+	// SetListMember puts a stock in one of the user's lists, or takes it out.
+	// A list that does not exist is created when a stock is added.
+	SetListMember(ctx context.Context, listID, ticker string, add bool) error
 }

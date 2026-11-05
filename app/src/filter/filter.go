@@ -124,7 +124,10 @@ type Query struct {
 }
 
 // Parse reads a search expression. The error, if any, is a *SyntaxError.
-func Parse(expr string) (Query, error) {
+func Parse(expr string) (Query, error) { return ParseWith(expr, Env{}) }
+
+// ParseWith is Parse with the extra operators of env.
+func ParseWith(expr string, env Env) (Query, error) {
 	if len(expr) > MaxLen {
 		return Query{}, &SyntaxError{Pos: MaxLen, Msg: fmt.Sprintf("expression longer than %d bytes", MaxLen)}
 	}
@@ -139,7 +142,7 @@ func Parse(expr string) (Query, error) {
 		}
 		return Query{}, &SyntaxError{Pos: pos, Msg: "invalid UTF-8"}
 	}
-	p := &parser{s: expr}
+	p := &parser{s: expr, env: env}
 	n, err := p.parseAnd(0)
 	if err != nil {
 		return Query{}, err
@@ -443,6 +446,7 @@ func (n orNode) fts() (ftsPart, bool) {
 
 func (n notNode) fts() (ftsPart, bool) { return ftsPart{}, false }
 func (n strOp) fts() (ftsPart, bool)   { return ftsPart{}, false }
+func (n setOp) fts() (ftsPart, bool)   { return ftsPart{}, false }
 func (n numOp) fts() (ftsPart, bool)   { return ftsPart{}, false }
 func (n dateOp) fts() (ftsPart, bool)  { return ftsPart{}, false }
 
@@ -503,6 +507,8 @@ func render(n node, ctx int) string {
 		return `"` + strings.Join(n.words, " ") + `"`
 	case strOp:
 		return n.name + ":" + quoteValue(n.val)
+	case setOp:
+		return n.name + ":" + quoteValue(n.val)
 	case numOp:
 		op := cmpText[n.cmp]
 		if n.cmp == cmpEQ {
@@ -550,6 +556,7 @@ type parser struct {
 	s     string
 	i     int
 	terms int
+	env   Env
 }
 
 func (p *parser) errAt(pos int, format string, args ...any) error {
@@ -739,8 +746,9 @@ func (p *parser) quoted() (string, error) {
 // of the colon in it; p.i is just past the token.
 func (p *parser) operator(start, colon int, w string) (node, error) {
 	name := strings.ToLower(w[:colon])
-	if !slices.Contains(operatorNames, name) {
-		return nil, p.errAt(start, "unknown operator %q; known operators: %s", w[:colon], strings.Join(operatorNames, ", "))
+	resolve, isSet := p.env.Tickers[name]
+	if !isSet && !slices.Contains(operatorNames, name) {
+		return nil, p.errAt(start, "unknown operator %q; known operators: %s", w[:colon], strings.Join(p.env.names(), ", "))
 	}
 	val, valPos := w[colon+1:], start+colon+1
 	if val == "" && p.i < len(p.s) && p.s[p.i] == '"' {
@@ -753,6 +761,13 @@ func (p *parser) operator(start, colon int, w string) (node, error) {
 	val = strings.ToLower(strings.TrimSpace(val))
 	if val == "" {
 		return nil, p.errAt(valPos, "operator %s needs a value", name)
+	}
+	if isSet {
+		set, err := resolve(val)
+		if err != nil {
+			return nil, p.errAt(valPos, "%s: %v", name, err)
+		}
+		return setOp{name: name, val: val, set: set}, nil
 	}
 	switch name {
 	case "kind":

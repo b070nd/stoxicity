@@ -289,3 +289,62 @@ func TestCompanyNameIsEmptyWithoutAMaster(t *testing.T) {
 		t.Errorf("name = %q", got)
 	}
 }
+
+func TestUniverseHoldsTheTickersTheUserNames(t *testing.T) {
+	w := open(t, setup(t))
+	// No company list is cached, but the watchlist and the nvda watch name
+	// tickers, so the profile pages have something to show.
+	for _, tk := range []string{"KO", "NVDA"} {
+		if _, ok := w.Universe().Get(tk); !ok {
+			t.Errorf("%s is missing from the universe", tk)
+		}
+	}
+	if got := w.Following("nvda"); len(got) != 1 || got[0] != "Nvidia" {
+		t.Errorf("Following(nvda) = %v, want the watch named Nvidia", got)
+	}
+	if got := w.Following("KO"); len(got) != 0 {
+		t.Errorf("Following(KO) = %v", got)
+	}
+}
+
+func TestTagsAndListsPersistAndFeedSearch(t *testing.T) {
+	dir := setup(t)
+	w := open(t, dir)
+	ctx := context.Background()
+	if err := w.Tag(ctx, "nvda", "moat", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.SetListMember(ctx, "picks", "NVDA", true); err != nil {
+		t.Fatal(err)
+	}
+	p, _ := w.Universe().Get("NVDA")
+	if len(p.Tags) != 1 || p.Tags[0] != "moat" || len(p.Lists) != 1 || p.Lists[0] != "picks" {
+		t.Fatalf("profile = %+v", p)
+	}
+	for _, q := range []string{"tag:moat", "list:picks"} {
+		got, err := w.Search(ctx, "", q, time.Time{}, time.Time{}, 10)
+		if err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+		if !equal(ids(got), []string{"a1"}) {
+			t.Errorf("search %q = %v, want a1 (the secret memo stays hidden)", q, ids(got))
+		}
+	}
+	// A new session reads the same file.
+	w2 := open(t, dir)
+	if p, _ := w2.Universe().Get("NVDA"); len(p.Tags) != 1 || len(p.Lists) != 1 {
+		t.Errorf("after reopening: %+v", p)
+	}
+	if err := w.Tag(ctx, "NVDA", "moat", false); err != nil {
+		t.Fatal(err)
+	}
+	if p, _ := w.Universe().Get("NVDA"); len(p.Tags) != 0 {
+		t.Errorf("tags after removal = %v", p.Tags)
+	}
+	if err := w.Tag(ctx, "NVDA", "Not Valid", true); err == nil {
+		t.Error("an invalid tag should fail")
+	}
+	if _, err := w.Search(ctx, "", "list:nope", time.Time{}, time.Time{}, 10); err == nil {
+		t.Error("an unknown list should fail the search")
+	}
+}

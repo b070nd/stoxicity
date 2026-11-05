@@ -86,7 +86,8 @@ type FastRefresh struct {
 	WeekdaysOnly bool `yaml:"weekdays_only"`
 }
 
-// Company is the company master: the SEC's list of tickers, names and CIKs,
+// Company is the company master: the SEC's list of tickers, names, CIKs and
+// exchanges, with the Nasdaq symbol directory and the SEC's industry records,
 // cached under data_dir/company. See package company.
 type Company struct {
 	// Enabled makes fetch and run keep the cached list up to date. Off, the
@@ -97,6 +98,18 @@ type Company struct {
 	// URL replaces the SEC's address, for a mirror or a test. Empty means the
 	// SEC.
 	URL string `yaml:"url"`
+
+	// Listing keeps the Nasdaq Trader symbol directory next to the list, to
+	// tell ETFs from stocks and to show the market tier and financial status.
+	// Nasdaq allows one personal, non-commercial copy of its pages; the copy
+	// stays in the data folder.
+	Listing bool `yaml:"listing"`
+	// NasdaqURL, OtherURL and SubmissionsURL replace the addresses of the two
+	// directory files and of the SEC's per-company record (which must hold %s
+	// for the ten-digit CIK). Empty means the real ones; tests set them.
+	NasdaqURL      string `yaml:"nasdaq_url"`
+	OtherURL       string `yaml:"other_url"`
+	SubmissionsURL string `yaml:"submissions_url"`
 }
 
 // Laya points at a laya-serve sidecar used for the second scoring stage.

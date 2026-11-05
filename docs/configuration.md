@@ -65,23 +65,31 @@ by default.
 
 ## Company master
 
-`company:` in `config.yaml` controls a cached copy of the SEC's list of US-listed
-tickers (`https://www.sec.gov/files/company_tickers.json`: ticker, EDGAR
-conformed name, CIK). It does three things: news is matched to a company by its
-name as well as its ticker, EDGAR filings get their tickers (a filing names only
-a CIK), and `stoxicity stock TICKER` shows the company name.
+`company:` in `config.yaml` controls the cached lists behind the stock universe
+([universe.md](universe.md)): the SEC's list of US-listed tickers
+(`https://www.sec.gov/files/company_tickers_exchange.json`: ticker, EDGAR
+conformed name, CIK, exchange) and the Nasdaq symbol directory. They do four
+things: news is matched to a company by its name as well as its ticker, EDGAR
+filings get their tickers (a filing names only a CIK), `stoxicity stock TICKER`
+shows the company name, and every ticker gets a profile page.
 
 ```yaml
 company:
   enabled: true   # fetch and run refresh the cache when it is older than max_age
   max_age: 168h
   url: ""         # a mirror or a test server; empty means the SEC
+  listing: true   # also fetch the Nasdaq symbol directory (ETF flag, market tier, venue)
+  nasdaq_url: ""  # nasdaqlisted.txt; empty means Nasdaq Trader
+  other_url: ""   # otherlisted.txt
+  submissions_url: "" # the SEC record of one company; %s is the ten-digit CIK
 ```
 
 - The cache is `data/company/company_tickers.json` plus a small file with the
-  ETag and the time it was last checked. A refresh is one conditional request
-  (the SEC's 10 requests a second limit and the contact in the User-Agent apply
-  as for any SEC call); a `304` only renews the time.
+  ETag and the time it was last checked, and the same pair for each Nasdaq file.
+  A refresh is one conditional request per file (the SEC's 10 requests a second
+  limit and the contact in the User-Agent apply as for any SEC call); a `304`
+  only renews the time. The older `company_tickers.json` shape (no exchange) is
+  still read.
 - A new list replaces the old one only if it parses and holds at least half as
   many tickers, so a damaged answer cannot wipe a good cache.
 - The SEC says the file is updated "periodically" with no guarantee of accuracy
@@ -93,11 +101,14 @@ company:
   tickers keep their name for display and are found by ticker.
 - The watchlist and the tickers in watches are added, so a listing outside the
   SEC's list is found by its ticker.
+- The Nasdaq Trader files are for personal, non-commercial use, one local copy,
+  not passed on. Set `listing: false` to leave them out.
 
 ```
 stoxicity company status            # tickers cached, when it was checked
 stoxicity company update [-force]   # ask the SEC now
 stoxicity company find TEXT...      # search tickers and names
+stoxicity universe status|update|enrich|find|show|tag|list   # see universe.md
 ```
 
 ## Topics and sectors
