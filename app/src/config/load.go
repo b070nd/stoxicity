@@ -110,6 +110,9 @@ func defaults() Config {
 			Timeout:         "60s",
 			RelevanceWeight: 0.3,
 			BatchSize:       16,
+			Manage:          true,
+			Command:         "laya-serve",
+			StartTimeout:    "3m",
 		},
 		Company: Company{Enabled: true, MaxAge: "168h", Listing: true},
 		Tenancy: Tenancy{Dir: "tenants", Default: "default"},
@@ -123,6 +126,7 @@ func applyEnv(cfg *Config) {
 	override("STOXICITY_DATA_DIR", &cfg.DataDir)
 	override("STOXICITY_CONTACT", &cfg.Fetch.Contact)
 	override("STOXICITY_LAYA_URL", &cfg.Laya.URL)
+	override("STOXICITY_LAYA_COMMAND", &cfg.Laya.Command)
 	override("STOXICITY_TENANT", &cfg.Tenancy.Default)
 }
 
@@ -163,6 +167,7 @@ func validate(cfg Config) error {
 	checkDuration("fetch.timeout", cfg.Fetch.Timeout)
 	checkDuration("refresh.max_backoff", cfg.Refresh.MaxBackoff)
 	checkDuration("laya.timeout", cfg.Laya.Timeout)
+	checkDuration("laya.start_timeout", cfg.Laya.StartTimeout)
 	checkDuration("company.max_age", cfg.Company.MaxAge)
 
 	checkUnit := func(key string, v float64) {

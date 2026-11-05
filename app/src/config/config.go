@@ -131,6 +131,14 @@ type Laya struct {
 	RelevanceWeight float64 `yaml:"relevance_weight"`
 	// BatchSize is how many articles go into one request to the sidecar.
 	BatchSize int `yaml:"batch_size"`
+	// Manage lets "stoxicity run" start the server when nothing answers at URL
+	// and stop it when run ends. It only applies to a server on this machine.
+	Manage bool `yaml:"manage"`
+	// Command is the program that starts the server: a name in PATH or a path.
+	Command string `yaml:"command"`
+	// StartTimeout is how long run waits for a started server to answer; the
+	// first start loads the checkpoints.
+	StartTimeout string `yaml:"start_timeout"`
 }
 
 // LayaFields are the names Laya.Apply accepts.
@@ -196,6 +204,10 @@ func (c Config) CompanyMaxAge() time.Duration { return parseDuration(c.Company.M
 
 // LayaTimeout returns Laya.Timeout as a duration, or zero if it does not parse.
 func (c Config) LayaTimeout() time.Duration { return parseDuration(c.Laya.Timeout) }
+
+// LayaStartTimeout returns Laya.StartTimeout as a duration, or zero if it does
+// not parse.
+func (c Config) LayaStartTimeout() time.Duration { return parseDuration(c.Laya.StartTimeout) }
 
 // IntervalFor is the polling interval of a source at the time now, for
 // scheduler.Options.IntervalFor. It is the fast interval for a filings source

@@ -27,6 +27,7 @@ read. The loader is described in `app/src/envfile/envfile.go`.
 | `STOXICITY_DATA_DIR` | `.env` | no | Database and runtime state |
 | `STOXICITY_LOG_LEVEL` | `.env` | no | `debug`, `info`, `warn`, `error` |
 | `STOXICITY_LAYA_URL` | `.env` | no | laya-serve address |
+| `STOXICITY_LAYA_COMMAND` | `.env.local` | no | program that starts laya-serve (a path on your machine) |
 | `STOXICITY_FILE_DIR` | `.env` | no | Folder for the file channel (Markdown, one file per notification); relative paths start at the folder of `.env`. Unset: a watch that names `file` is reported on stderr and its alerts count as delivered |
 | `STOXICITY_FEED_PATH`, `_TITLE`, `_URL` | `.env` | no | Feed channel: the Atom file to write, its title and the address it is served from. All three are needed |
 | `STOXICITY_PUBLIC_URL` | `.env` | no | Base of links in feed and email; unset for now |
@@ -216,8 +217,26 @@ scored from then on, and `stoxicity rescore` adds a row with the new version
 for the older ones and keeps the old rows. `batch_size` is not part of the
 version because it does not change the answers.
 
-**Starting the server safely.** `laya-serve` listens on `0.0.0.0` unless told
-otherwise, so bind it to loopback and give it a key:
+**Started and stopped by `stoxicity run`.** With `laya.manage: true` (the
+default), `run` checks whether the server answers at `laya.url`. If it does, it
+is left alone, also at the end. If not, and the address is on this machine,
+`run` starts `laya.command` bound to that address with `STOXICITY_LAYA_API_KEY`
+as its key, waits up to `laya.start_timeout` for it to answer (the first start
+loads the models), and stops it again when `run` ends: SIGTERM to its whole
+process group, SIGKILL after ten seconds. Its output goes to `data/laya.log`.
+`run` records the server's process ID in `data/laya.pid`. If `run` is killed
+without a chance to clean up, the server keeps running; the next `run` finds it
+answering, takes it over (only if the recorded process still leads its own
+process group and its command line names `laya.command`, so a reused process ID
+is never signalled) and stops it at its end. If the command is missing or the
+server does not come up, `run` says so on stderr and carries on with the rules
+alone. `laya-serve` is not part of this repository: set `laya.command`, or
+`STOXICITY_LAYA_COMMAND` in `.env.local` for the path of your install (for
+example `.../laya/.venv/bin/laya-serve`). Only `run` does this; `fetch` and the
+other commands use a server that is already running.
+
+**Starting the server by hand, safely.** `laya-serve` listens on `0.0.0.0` unless
+told otherwise, so bind it to loopback and give it a key:
 
 ```
 LAYA_HOST=127.0.0.1 LAYA_API_KEY=<a long random value> laya-serve

@@ -200,6 +200,8 @@ func cmdRun(ctx context.Context, a *app, args []string) error {
 		return errors.New("no enabled sources: set enabled: true in sources.yaml")
 	}
 	a.refreshCompaniesQuietly(ctx)
+	stopLaya := a.startLaya(ctx)
+	defer stopLaya()
 	db, err := a.store()
 	if err != nil {
 		return err

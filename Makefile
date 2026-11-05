@@ -1,11 +1,7 @@
-VERSION ?= dev
-LDFLAGS := -X main.version=$(VERSION)
-
 .PHONY: build test vet fmt tidy clean
 
 build:
-	cd app && go build -ldflags "$(LDFLAGS)" -o ../bin/stoxicity ./src/cmd/stoxicity
-	cd app && go build -ldflags "$(LDFLAGS)" -o ../bin/stoxicity-tui ./src/cmd/stoxicity-tui
+	./build.sh local
 
 test:
 	cd app && go test ./...

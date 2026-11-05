@@ -89,6 +89,16 @@ laya:
   relevance_weight: 0.3
   # Articles per request to the server (1 to 64).
   batch_size: 16
+  # "stoxicity run" starts the server itself when nothing answers at `url`
+  # (only for an address on this machine), bound to loopback and with
+  # STOXICITY_LAYA_API_KEY as its key, and stops it when run ends. A server that
+  # is already running is left alone. Its output goes to data/laya.log.
+  # `command` is a name in PATH or a path; STOXICITY_LAYA_COMMAND overrides it
+  # (put the path of your install in .env.local).
+  manage: true
+  command: laya-serve
+  # The first start loads the checkpoints and can take minutes.
+  start_timeout: 3m
 
 # Long-term-investor filter (Lynch / Buffett): fundamentals in, noise out.
 # These words are a first guess and one feature among several, not a proven

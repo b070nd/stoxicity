@@ -1,5 +1,7 @@
 #!/bin/sh
-# Builds stoxicity and stoxicity-tui.
+# Builds everything in the project: every package is compiled, and every program
+# under app/src/cmd/ becomes an executable (today stoxicity and stoxicity-tui;
+# a new folder there is picked up without changing this script).
 #
 #   ./build.sh                local build into bin/, version dev-<commit>[-dirty]
 #   ./build.sh local          the same
@@ -44,7 +46,24 @@ tag)
 esac
 
 cd "$root/app"
-for name in stoxicity stoxicity-tui; do
+
+# Compile every package first, so that a library that no program imports yet
+# still has to build.
+echo "compiling all packages"
+CGO_ENABLED=0 go build ./...
+
+built=0
+for dir in src/cmd/*/; do
+  name=$(basename "$dir")
+  # Only folders that hold a main package are programs.
+  if [ "$(go list -f '{{.Name}}' "./$dir" 2>/dev/null)" != "main" ]; then
+    continue
+  fi
   echo "building $name ($version) -> $out/$name"
-  CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$version" -o "$out/$name" "./src/cmd/$name"
+  CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$version" -o "$out/$name" "./$dir"
+  built=$((built + 1))
 done
+if [ "$built" -eq 0 ]; then
+  echo "no program found under app/src/cmd" >&2
+  exit 1
+fi

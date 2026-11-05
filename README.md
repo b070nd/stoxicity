@@ -141,7 +141,7 @@ until it has been calibrated on your own labels.
 Build and check the installation:
 
 ```bash
-make build                  # bin/stoxicity and bin/stoxicity-tui
+make build                  # ./build.sh: every package, and every program under app/src/cmd into bin/
 ./bin/stoxicity version
 ./bin/stoxicity doctor      # OK/WARN/FAIL per check; exit 1 if any FAIL
 ```
@@ -150,7 +150,7 @@ Without a build, run from `app/`: `go run ./src/cmd/stoxicity doctor`.
 
 ```bash
 stoxicity fetch [source-id...]      # poll once, print new articles per source
-stoxicity run                       # poll until Ctrl-C, one line per poll
+stoxicity run                       # poll until Ctrl-C, one line per poll; starts and stops the laya server
 stoxicity digest [-day 2026-11-03]  # the day's top news, domains, candidates, trends
 stoxicity search [-from D] [-to D] [-limit N] 'free cash flow -rumor ticker:AAPL'
 stoxicity stock NVDA [-days 30] [-limit 10]   # one stock: summary, timeline, trend, domains, related topics
