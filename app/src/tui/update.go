@@ -197,6 +197,8 @@ func (m *Model) key(k tea.KeyPressMsg) tea.Cmd {
 		return m.filterKey(k)
 	case modeTag, modeMember:
 		return m.editKey(k)
+	case modeJump:
+		return m.jumpKey(k)
 	case modeHelp:
 		m.mode = modeList
 		return nil
@@ -283,6 +285,12 @@ func (m *Model) key(k tea.KeyPressMsg) tea.Cmd {
 				m.filter = append(m.filter, ' ')
 			}
 		}
+	case Jump:
+		if cur.Kind != nav.Companies {
+			m.fail("g jumps within the catalogue of companies (c)")
+			return nil
+		}
+		m.mode, m.filter = modeJump, nil
 	case Keep:
 		return m.label(true)
 	case Drop:
@@ -364,6 +372,67 @@ func (m *Model) filterKey(k tea.KeyPressMsg) tea.Cmd {
 		m.rebuild()
 	}
 	return nil
+}
+
+// jumpKey handles a key while the cursor jumps through the catalogue: what is
+// typed is the start of a ticker (or of a name when the list is ordered by
+// name), and the cursor goes to the first company that starts with it. The
+// list is not filtered, so the neighbours stay in view.
+func (m *Model) jumpKey(k tea.KeyPressMsg) tea.Cmd {
+	switch k.String() {
+	case "esc", "enter", "ctrl+c":
+		m.mode = modeList
+		return nil
+	case "backspace":
+		if n := len(m.filter); n > 0 {
+			m.filter = m.filter[:n-1]
+		}
+	case "ctrl+u":
+		m.filter = nil
+	case "up", "down", "pgup", "pgdown", "home", "end":
+		m.mode = modeList
+		return m.key(k)
+	default:
+		if t := k.Key().Text; t != "" {
+			m.filter = append(m.filter, []rune(t)...)
+		}
+	}
+	m.jumpTo(string(m.filter))
+	return nil
+}
+
+// jumpTo puts the cursor on the first row of the catalogue whose ticker (or
+// name, under sort:name) starts with prefix, and leaves it where it is when
+// none does.
+func (m *Model) jumpTo(prefix string) {
+	prefix = strings.ToLower(strings.TrimSpace(prefix))
+	if prefix == "" || m.data.Universe == nil {
+		return
+	}
+	byName := false
+	if q, err := universe.ParseQuery(m.stack.Current().Arg); err == nil {
+		key, _ := q.SortKey()
+		byName = key == "name"
+	}
+	m.status, m.failed = "", false
+	for i, at := range m.sel {
+		row := m.scr.Rows[at]
+		if row.Go == nil || row.Go.Kind != nav.Stock {
+			continue
+		}
+		have := strings.ToLower(row.Go.Arg)
+		if byName {
+			if p, ok := m.data.Universe.Get(row.Go.Arg); ok {
+				have = strings.ToLower(p.Name)
+			}
+		}
+		if strings.HasPrefix(have, prefix) {
+			m.cursor = i
+			m.follow()
+			return
+		}
+	}
+	m.fail("nothing starts with %q", prefix)
 }
 
 // stockUnderCursor is the ticker a tag or list edit applies to: the stock
@@ -546,7 +615,7 @@ func (m *Model) bodyHeight() int { return max(m.height-chromeLines, minHeight-ch
 
 // follow scrolls so that the cursor row is visible.
 func (m *Model) follow() {
-	h := m.bodyHeight()
+	h := m.bodyHeight() - 1 // the first line of the body is the title
 	at := 0
 	if m.cursor < len(m.sel) {
 		at = m.sel[m.cursor]

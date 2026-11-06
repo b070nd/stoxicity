@@ -36,7 +36,11 @@ const (
 const (
 	SourceSEC   = "sec"   // the SEC ticker list
 	SourceExtra = "extra" // your extra entries
-	SourceUser  = "user"  // only named in a list, tag or watch; nothing else is known
+	// SourceListing is a security only the Nasdaq Trader directory lists: most
+	// ETFs, preferred shares, warrants, test symbols. It has no CIK and so no
+	// SEC record.
+	SourceListing = "listing"
+	SourceUser    = "user" // only named in a list, tag or watch; nothing else is known
 )
 
 // Profile is everything known about one ticker.
@@ -147,6 +151,23 @@ func New(in Inputs) *Universe {
 			Ticker: Ticker(x.Ticker), Name: x.Name, Exchange: x.Exchange, ISIN: x.ISIN,
 			Sector: x.Sector, Aliases: slices.Clone(x.Aliases), Source: SourceExtra,
 		})
+	}
+	// Securities the exchanges list and the SEC list lacks complete the
+	// catalogue. The SEC's entry, and yours, win where both have a ticker.
+	for _, sec := range in.Listing.All() {
+		p := Profile{
+			Ticker: Ticker(sec.Symbol), Name: company.TidyName(sec.Name), Exchange: sec.Venue,
+			Venue: sec.Venue, Market: sec.Market, Status: sec.Status, Source: SourceListing,
+		}
+		switch {
+		case sec.Test:
+			p.Kind = KindTest
+		case sec.ETF:
+			p.Kind = KindETF
+		default:
+			p.Kind = KindStock
+		}
+		add(p)
 	}
 	named := func(t string) {
 		if t = Ticker(t); t != "" {

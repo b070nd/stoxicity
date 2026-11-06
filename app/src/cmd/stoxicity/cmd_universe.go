@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -23,7 +25,7 @@ const (
 	defaultEnrichMax = 300
 )
 
-const universeUsage = "expected: status | update [-force] | changes [-days N] [-limit N] | enrich [-all] [-max N] [TICKER...] | find [-limit N] [-days N] QUERY... | show TICKER | tag TICKER [-]TAG... | list [ID] | list add|remove ID TICKER..."
+const universeUsage = "expected: status | update [-force] | changes [-days N] [-limit N] | enrich [-all] [-max N] [TICKER...] | find [-limit N] [-days N] [-format table|tsv|json] QUERY... | show TICKER | tag TICKER [-]TAG... | list [ID] | list add|remove ID TICKER..."
 
 // cmdUniverse is the reference list of stocks: every company the program
 // knows, searched, tagged and grouped.
@@ -329,14 +331,18 @@ func interestingTickers(ctx context.Context, db *store.DB, known []string, layer
 
 func (a *app) universeFind(ctx context.Context, args []string) error {
 	fs := newFlags("universe find")
-	limit := fs.Int("limit", defaultUniverseLimit, "most rows to print")
+	limit := fs.Int("limit", defaultUniverseLimit, "most rows to print; 0 prints every match")
 	days := fs.Int("days", defaultNewsDays, "days of news that news: counts")
+	format := fs.String("format", "table", "table, tsv (tab-separated, with a header) or json (every field)")
 	words, err := parseMixed(fs, args)
 	if err != nil {
 		return err
 	}
-	if *limit < 1 || *days < 1 {
-		return usageErrorf("-limit and -days must be at least 1")
+	if *limit < 0 || *days < 1 {
+		return usageErrorf("-limit must be 0 or more and -days at least 1")
+	}
+	if !slices.Contains([]string{"table", "tsv", "json"}, *format) {
+		return usageErrorf("-format must be table, tsv or json")
 	}
 	q, err := universe.ParseQuery(strings.Join(words, " "))
 	if err != nil {
@@ -348,13 +354,23 @@ func (a *app) universeFind(ctx context.Context, args []string) error {
 	}
 	facts := a.facts(ctx, *days)
 	hits := u.Find(q, facts, 0)
+	shown := hits
+	if *limit > 0 && len(shown) > *limit {
+		shown = shown[:*limit]
+	}
+	switch *format {
+	case "json":
+		return writeHitsJSON(a.stdout, shown)
+	case "tsv":
+		return writeHitsTSV(a.stdout, shown)
+	}
 	if len(hits) == 0 {
 		fmt.Fprintln(a.stdout, "no company matches")
 		return nil
 	}
 	tw := tabwriter.NewWriter(a.stdout, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(tw, "TICKER\tNAME\tEXCHANGE\tKIND\tINDUSTRY\tNEWS\tLISTS\tTAGS")
-	for _, h := range hits[:min(len(hits), *limit)] {
+	for _, h := range shown {
 		p := h.Profile
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\n", p.Ticker, truncate(p.Name, 34), dash(p.Exchange), dash(p.Kind),
 			dash(truncate(p.Industry, 28)), h.News, dash(strings.Join(p.Lists, ",")), dash(strings.Join(p.Tags, ",")))
@@ -362,10 +378,39 @@ func (a *app) universeFind(ctx context.Context, args []string) error {
 	if err := tw.Flush(); err != nil {
 		return err
 	}
-	if len(hits) > *limit {
-		fmt.Fprintf(a.stdout, "%d more; narrow the query or raise -limit\n", len(hits)-*limit)
+	if len(hits) > len(shown) {
+		fmt.Fprintf(a.stdout, "%d of %d shown; narrow the query, raise -limit or use -limit 0 for all\n", len(shown), len(hits))
 	}
 	return nil
+}
+
+// writeHitsTSV prints the matches as tab-separated values with a header line,
+// every field complete (no truncation), for a spreadsheet or a script.
+func writeHitsTSV(w io.Writer, hits []universe.Hit) error {
+	cell := func(s string) string { return strings.NewReplacer("\t", " ", "\n", " ", "\r", " ").Replace(s) }
+	fmt.Fprintln(w, "ticker\tname\tcik\texchange\tvenue\tkind\tmarket\tstatus\tsic\tindustry\tsector\tstate\tfiscal_year\twebsite\tnews\tlists\ttags")
+	for _, h := range hits {
+		p := h.Profile
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\n",
+			p.Ticker, cell(p.Name), p.CIK, p.Exchange, p.Venue, p.Kind, p.Market, p.Status, p.SIC, cell(p.Industry), cell(p.Sector),
+			p.State, p.FiscalYear, cell(p.Website), h.News, strings.Join(p.Lists, ","), strings.Join(p.Tags, ","))
+	}
+	return nil
+}
+
+// writeHitsJSON prints the matches as a JSON array, one object per company.
+func writeHitsJSON(w io.Writer, hits []universe.Hit) error {
+	type row struct {
+		universe.Profile
+		News int `json:"news"`
+	}
+	out := make([]row, len(hits))
+	for i, h := range hits {
+		out[i] = row{Profile: *h.Profile, News: h.News}
+	}
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	return enc.Encode(out)
 }
 
 func dash(s string) string {

@@ -101,7 +101,7 @@ func find(t *testing.T, u *Universe, expr string, f Facts) []string {
 
 func TestNewJoinsTheSources(t *testing.T) {
 	u := build(t)
-	if u.Len() != 10 { // 8 SEC + NESN (extra) + MSFT (known only)
+	if u.Len() != 11 { // 8 SEC + SPY (Nasdaq directory only) + NESN (extra) + MSFT (known only)
 		t.Fatalf("Len = %d: %v", u.Len(), tickers(u.Find(Query{}, Facts{}, 0)))
 	}
 	a, ok := u.Get("AAPL")
@@ -199,8 +199,12 @@ func TestFindTieBreaksOnNewsThenTicker(t *testing.T) {
 	u := build(t)
 	f := Facts{News: map[string]int{"NVDA": 5, "KO": 9, "AAPL": 5}}
 	got := find(t, u, "tag:moat OR ticker:AAPL", f)
+	if !slices.Equal(got, []string{"AAPL", "KO", "NVDA"}) {
+		t.Errorf("got %v: without free text, the order of the tickers", got)
+	}
+	got = find(t, u, "tag:moat OR ticker:AAPL sort:news", f)
 	if !slices.Equal(got, []string{"KO", "AAPL", "NVDA"}) {
-		t.Errorf("got %v: news first, then ticker", got)
+		t.Errorf("got %v: sort:news is busiest first, then ticker", got)
 	}
 	got = find(t, u, "berkshire", Facts{News: map[string]int{"BRK-B": 1}})
 	if !slices.Equal(got, []string{"BRK-B", "BRK-A"}) {
@@ -223,7 +227,7 @@ func TestOperators(t *testing.T) {
 		"exchange:nyse":                  {"BRK-A", "BRK-B", "KO"},
 		"exchange:SIX":                   {"NESN"},
 		"exchange:otc":                   {"BADCO"},
-		"kind:etf":                       {"QQQ"},
+		"kind:etf":                       {"QQQ", "SPY"},
 		"kind:stock -exchange:otc":       {"AAPL", "BRK-B", "KO", "NVDA"},
 		"industry:software":              {"ACME"},
 		"industry:semi":                  {"NVDA"},
@@ -244,7 +248,7 @@ func TestOperators(t *testing.T) {
 		"news:>=2":                       {"NVDA"},
 		"news:<2 ticker:A*":              {"AAPL", "ACME"},
 		"news:0 ticker:a*":               {"ACME"},
-		"kind:etf OR kind:test":          {"QQQ"},
+		"kind:etf OR kind:test":          {"QQQ", "SPY"},
 		"apple | nvidia":                 {"AAPL", "NVDA"},
 		"tag:moat -nvidia":               {"KO"},
 	}
@@ -293,16 +297,65 @@ func TestParseQueryErrors(t *testing.T) {
 	}
 }
 
-func TestEmptyQueryListsEveryoneByNewsThenTicker(t *testing.T) {
+func TestEmptyQueryListsEveryoneByTicker(t *testing.T) {
 	u := build(t)
 	q, err := ParseQuery("   ")
 	if err != nil || !q.IsEmpty() {
 		t.Fatal(err)
 	}
-	hits := u.Find(q, Facts{News: map[string]int{"NVDA": 2}}, 3)
-	if got := tickers(hits); !slices.Equal(got, []string{"NVDA", "AAPL", "ACME"}) {
-		t.Errorf("got %v", got)
+	hits := u.Find(q, Facts{News: map[string]int{"NVDA": 2}}, 0)
+	got := tickers(hits)
+	if len(got) != u.Len() || !slices.IsSorted(got) {
+		t.Errorf("got %v, want all %d in the order of the tickers", got, u.Len())
 	}
+}
+
+func TestSortOperator(t *testing.T) {
+	u := build(t)
+	f := Facts{News: map[string]int{"NVDA": 2, "KO": 7}}
+	if got := find(t, u, "sort:news", f); !slices.Equal(got[:3], []string{"KO", "NVDA", "AAPL"}) {
+		t.Errorf("sort:news = %v", got)
+	}
+	if got := find(t, u, "sort:-news", f); got[len(got)-1] != "KO" {
+		t.Errorf("sort:-news = %v, want the busiest last", got)
+	}
+	all := find(t, u, "sort:-ticker", f)
+	if len(all) < 2 || all[0] < all[len(all)-1] {
+		t.Errorf("sort:-ticker = %v", all)
+	}
+	byName := u.Find(mustQuery(t, "sort:name"), f, 0)
+	for i := 1; i < len(byName); i++ {
+		if strings.ToLower(byName[i-1].Profile.Name) > strings.ToLower(byName[i].Profile.Name) {
+			t.Errorf("sort:name: %q before %q", byName[i-1].Profile.Name, byName[i].Profile.Name)
+		}
+	}
+	// A filter and an order together.
+	for _, tk := range find(t, u, "tag:moat sort:name", f) {
+		if p, _ := u.Get(tk); !slices.Contains(p.Tags, "moat") {
+			t.Errorf("%s is not tagged moat", tk)
+		}
+	}
+	key, desc := mustQuery(t, "apple sort:-industry").SortKey()
+	if key != "industry" || !desc {
+		t.Errorf("SortKey = %q, %v", key, desc)
+	}
+}
+
+func TestSortOperatorErrors(t *testing.T) {
+	for _, q := range []string{"sort:colour", "-sort:name", "apple | sort:name", "sort:"} {
+		if _, err := ParseQuery(q); err == nil {
+			t.Errorf("ParseQuery(%q) succeeded", q)
+		}
+	}
+}
+
+func mustQuery(t *testing.T, s string) Query {
+	t.Helper()
+	q, err := ParseQuery(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return q
 }
 
 func TestFacetsCountTheResult(t *testing.T) {
@@ -388,5 +441,20 @@ func TestFilterEnvTurnsCompaniesIntoTickersOfArticles(t *testing.T) {
 	}
 	if _, err := filter.ParseWith("list:x", (*Universe)(nil).FilterEnv()); err == nil || !strings.Contains(err.Error(), "no lists yet") {
 		t.Errorf("err = %v", err)
+	}
+}
+
+func TestSecuritiesOnlyTheDirectoryListsJoinTheCatalogue(t *testing.T) {
+	u := build(t)
+	spy, ok := u.Get("SPY")
+	if !ok {
+		t.Fatal("SPY, an ETF the SEC list lacks, is not in the catalogue")
+	}
+	if spy.Source != SourceListing || spy.Kind != KindETF || spy.CIK != "" || spy.Name == "" || spy.Exchange == "" {
+		t.Errorf("SPY = %+v", spy)
+	}
+	// Where both list a ticker the SEC's entry stands.
+	if a, _ := u.Get("AAPL"); a.Source != SourceSEC || a.CIK == "" {
+		t.Errorf("AAPL = %+v", a)
 	}
 }

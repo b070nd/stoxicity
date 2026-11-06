@@ -42,7 +42,7 @@ stoxicity-tui -root path/to/config  # default: the closest config folder above t
 |-----|--------|---------------|
 | `H` | Home | digest, top articles, stocks, domains, topic cloud, 14-day timeline |
 | `s` | Stocks | stocks in relevant news with mentions, materiality and tone; ★ marks your watchlist |
-| `c` | Companies | every known company, narrowed as you type, with counts by exchange, kind, industry, list and tag |
+| `c` | Companies | the catalogue of all stocks and ETFs (about 12,000), narrowed as you type, with counts by exchange, kind, industry, list and tag |
 | | Stock | profile (identity, listing, industry, links, your lists and tags, watches), then summary, weekly tone and materiality, timeline, what happened, domains, topics, articles |
 | `t` | Topics | tag cloud and a table with the lift over the window before |
 | | Topic | its stocks, domains, timeline, related topics, top articles |
@@ -62,8 +62,13 @@ stock profile it opens the company website or its EDGAR filings.
 
 ## Companies, tags and lists
 
-`c` opens the company list ([universe.md](universe.md) has the query language).
-`/` there filters the list as you type: `exchange:nyse tag:moat -etf`. `enter`
+`c` opens the catalogue of every company, not a shortlist: all of them are rows,
+by ticker, and the status line says where you are ("company 4,521 of 12,345").
+`home`, `end`, `pgup` and `pgdn` move through it, and `g` jumps: type the start
+of a ticker (or of a name, under `sort:name`) and the cursor lands on the first
+one that starts with it. `sort:name`, `sort:news`, `sort:industry`,
+`sort:exchange` and `sort:kind` change the order ([universe.md](universe.md) has
+the whole query language and the export). `/` there filters the list as you type: `exchange:nyse tag:moat -etf`. `enter`
 keeps the query as part of the breadcrumb, `esc` leaves the list as it was.
 `enter` on a company opens its profile, which also exists for stocks with no news
 in the window.

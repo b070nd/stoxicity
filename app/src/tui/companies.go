@@ -10,15 +10,15 @@ import (
 	"github.com/b070nd/stoxicity/app/src/universe"
 )
 
-// companyRows is how many companies the Companies screen lists; the counts
-// above them cover every match.
-const companyRows = 300
+// facetRows is how many entries the long facet lines (industry, lists, tags)
+// show; exchange and kind, which have few values, show up to shortFacets.
+const (
+	facetRows   = 6
+	shortFacets = 12
+)
 
-// facetRows is how many entries each facet line shows.
-const facetRows = 6
-
-// queryHint is what the Companies screen says about its query language.
-const queryHint = "type / to narrow: words match ticker, name and industry · exchange:nyse · industry:semi · list:picks · tag:moat · kind:etf · news:>0 · watched:yes · -word excludes"
+// queryHint is what the catalogue says about its query language and keys.
+const queryHint = "/ narrows as you type: words match ticker, name and industry · exchange:nyse · industry:semi · list:picks · tag:moat · kind:etf · news:>0 · watched:yes · -word excludes · sort:name|news|industry|exchange|kind (-news reverses) · g jumps to a letter · home/end/pgup/pgdn move"
 
 // edgarURL is the SEC's page of a company, by CIK.
 func edgarURL(cik string) string {
@@ -38,6 +38,10 @@ func webAddress(site string) string {
 	return site
 }
 
+// buildCompanies is the catalogue: every company the program knows, all of
+// them, in the order of the tickers unless the query says otherwise. The
+// screen holds one row per match, however many; only the rows in view are
+// drawn.
 func buildCompanies(q string, d Data) Screen {
 	title := "Companies"
 	if q != "" {
@@ -59,37 +63,61 @@ func buildCompanies(q string, d Data) Screen {
 		return s
 	}
 	var b builder
-	note := fmt.Sprintf("%d of %d companies", len(hits), d.Universe.Len())
-	if len(hits) > companyRows {
-		note += fmt.Sprintf(" (first %d shown)", companyRows)
-	}
+	note := fmt.Sprintf("%s of %s companies", thousands(len(hits)), thousands(d.Universe.Len()))
+	note += " · " + orderOf(query)
 	b.styled(Dim, note+" · news counts cover "+d.Params.Describe()+" · ★ = on your watchlist")
 	if q == "" {
 		b.styled(Dim, queryHint)
 	}
-	f := universe.FacetsOf(hits, facetRows)
+	f := universe.FacetsOf(hits, shortFacets)
+	long := universe.FacetsOf(hits, facetRows)
 	for _, line := range []struct {
 		name string
 		c    []universe.Count
-	}{{"exchange", f.Exchange}, {"kind", f.Kind}, {"industry", f.Industry}, {"lists", f.List}, {"tags", f.Tag}} {
+	}{{"exchange", f.Exchange}, {"kind", f.Kind}, {"industry", long.Industry}, {"lists", long.List}, {"tags", long.Tag}} {
 		if len(line.c) == 0 {
 			continue
 		}
 		parts := make([]string, len(line.c))
 		for i, c := range line.c {
-			parts[i] = fmt.Sprintf("%s %d", c.Name, c.Count)
+			parts[i] = fmt.Sprintf("%s %s", c.Name, thousands(c.Count))
 		}
 		b.styled(Dim, line.name+": "+strings.Join(parts, " · "))
 	}
 	b.blank()
+	b.styled(Heading, fmt.Sprintf("  %-7s %-30s %-7s %-5s %-24s %-7s %s", "TICKER", "NAME", "LISTED", "KIND", "INDUSTRY", "NEWS", "TAGS"))
 	watched := map[string]bool{}
 	for _, w := range d.Watchlist {
 		watched[universe.Ticker(w)] = true
 	}
-	for _, h := range hits[:min(len(hits), companyRows)] {
+	for _, h := range hits {
 		b.add(companyLine(h, watched[h.Profile.Ticker]))
 	}
 	s.Rows = b.rows
+	return s
+}
+
+// orderOf says in words how the query orders the list.
+func orderOf(q universe.Query) string {
+	if key, desc := q.SortKey(); key != "" {
+		dir := ""
+		if desc {
+			dir = ", reversed"
+		}
+		return "by " + key + dir
+	}
+	if q.HasText() {
+		return "best match first"
+	}
+	return "by ticker"
+}
+
+// thousands writes n with a comma between groups of three digits.
+func thousands(n int) string {
+	s := fmt.Sprint(n)
+	for i := len(s) - 3; i > 0; i -= 3 {
+		s = s[:i] + "," + s[i:]
+	}
 	return s
 }
 
@@ -163,6 +191,9 @@ func profileRows(b *builder, ticker string, d Data) (known bool) {
 	}
 	if p.Industry == "" && p.CIK != "" {
 		b.styled(Dim, "  industry and fiscal year are not loaded: run `stoxicity universe enrich "+p.Ticker+"`")
+	}
+	if p.Source == universe.SourceListing {
+		b.styled(Dim, "  listed by the exchanges only: the SEC list has no record of it, so no CIK, filings or industry")
 	}
 	if p.Source == universe.SourceUser {
 		b.styled(Dim, "  only your lists, tags or watches name this ticker; the SEC list does not")

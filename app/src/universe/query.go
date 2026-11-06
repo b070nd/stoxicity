@@ -35,13 +35,25 @@ import (
 //	tag:moat                 carries your tag
 //	watched:yes              on your watchlist or in a watch
 //	news:>=3  news:yes       relevant articles in the window the screen covers
+//	sort:name  sort:-news    the order (ticker, name, news, industry, exchange,
+//	                         kind); a leading - reverses it. Not a filter.
 //
-// A query that is only operators ranks by news, then ticker. Free text ranks by
-// how well it matches: a ticker, then the start of a name, then a word inside
-// it, then a former name, then the industry.
+// Free text ranks by how well it matches: a ticker, then the start of a name,
+// then a word inside it, then a former name, then the industry. A query without
+// free text lists in the order of the tickers, the order of a catalogue; sort:
+// picks another order whatever the query.
 type Query struct {
 	clauses [][]lit // all clauses must hold; a clause holds if any literal does
+	sortBy  string  // "" means the default order
+	desc    bool
 }
+
+// sortKeys are the orders sort: knows.
+var sortKeys = []string{"ticker", "name", "news", "industry", "exchange", "kind"}
+
+// SortKey is the order the query asks for with sort:, without the minus, and
+// whether it is reversed; empty when it asks for none.
+func (q Query) SortKey() (key string, desc bool) { return q.sortBy, q.desc }
 
 // QueryError is a problem in a query.
 type QueryError struct {
@@ -62,7 +74,7 @@ const (
 // queryOps is the list of operators, for the error message.
 var queryOps = []string{
 	"cik", "company", "exchange", "industry", "kind", "list", "market", "name",
-	"news", "sector", "sic", "state", "status", "tag", "ticker", "watched",
+	"news", "sector", "sic", "sort", "state", "status", "tag", "ticker", "watched",
 }
 
 type cmpKind int
@@ -158,6 +170,18 @@ func ParseQuery(expr string) (Query, error) {
 						return Query{}, err
 					}
 					val, valPos, i = s, i+1, n
+				}
+				if name == "sort" {
+					if neg || orPending {
+						return Query{}, &QueryError{Pos: start, Msg: "sort: orders the list; it cannot be negated or joined with OR"}
+					}
+					desc := strings.HasPrefix(val, "-")
+					key := strings.ToLower(strings.TrimPrefix(val, "-"))
+					if !slices.Contains(sortKeys, key) {
+						return Query{}, &QueryError{Pos: valPos, Msg: fmt.Sprintf("unknown order %q; use %s", val, strings.Join(sortKeys, ", "))}
+					}
+					q.sortBy, q.desc = key, desc
+					continue
 				}
 				var err error
 				if l, err = opLit(name, val, start, valPos); err != nil {
@@ -273,6 +297,19 @@ func yesNo(s string) (yes, ok bool) {
 // splitWords lower-cases s and cuts it into runs of letters and digits.
 func splitWords(s string) []string {
 	return strings.FieldsFunc(strings.ToLower(s), func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsNumber(r) })
+}
+
+// HasText reports whether the query has a free-text term, which ranks the
+// matches by how well they fit.
+func (q Query) HasText() bool {
+	for _, clause := range q.clauses {
+		for _, l := range clause {
+			if l.op == "" && !l.neg {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // IsEmpty reports whether the query has no terms and so matches everything.
@@ -453,26 +490,37 @@ type Hit struct {
 	News    int
 }
 
-// Find returns the profiles that match, best first: by text score, then by
-// news in the window, then by ticker. limit <= 0 means all.
+// Find returns the profiles that match. Free text ranks them best first, then
+// by news in the window, then by ticker; without free text they come in the
+// order of the tickers; sort: overrides both. limit <= 0 means all.
 func (u *Universe) Find(q Query, f Facts, limit int) []Hit {
 	if u == nil {
 		return nil
 	}
 	var hits []Hit
+	ranked := false
 	for i := range u.profiles {
 		p := &u.profiles[i]
 		if ok, s := q.eval(p, f); ok {
+			ranked = ranked || s > 0
 			hits = append(hits, Hit{Profile: p, Score: s, News: f.News[p.Ticker]})
 		}
 	}
 	sort.SliceStable(hits, func(i, j int) bool {
 		a, b := hits[i], hits[j]
-		if a.Score != b.Score {
-			return a.Score > b.Score
+		if q.sortBy != "" {
+			if c := compareBy(q.sortBy, a, b); c != 0 {
+				return (c < 0) != q.desc
+			}
+			return a.Profile.Ticker < b.Profile.Ticker
 		}
-		if a.News != b.News {
-			return a.News > b.News
+		if ranked {
+			if a.Score != b.Score {
+				return a.Score > b.Score
+			}
+			if a.News != b.News {
+				return a.News > b.News
+			}
 		}
 		return a.Profile.Ticker < b.Profile.Ticker
 	})
@@ -480,6 +528,37 @@ func (u *Universe) Find(q Query, f Facts, limit int) []Hit {
 		hits = hits[:limit]
 	}
 	return hits
+}
+
+// compareBy orders two hits by one sort key. News counts most-first when
+// ascending, so that sort:news lists the busiest companies first.
+func compareBy(key string, a, b Hit) int {
+	switch key {
+	case "name":
+		return strings.Compare(strings.ToLower(a.Profile.Name), strings.ToLower(b.Profile.Name))
+	case "news":
+		return b.News - a.News
+	case "industry":
+		return emptyLast(strings.ToLower(a.Profile.Industry), strings.ToLower(b.Profile.Industry))
+	case "exchange":
+		return strings.Compare(a.Profile.Exchange, b.Profile.Exchange)
+	case "kind":
+		return strings.Compare(a.Profile.Kind, b.Profile.Kind)
+	}
+	return strings.Compare(a.Profile.Ticker, b.Profile.Ticker)
+}
+
+// emptyLast compares two strings, an empty one after every other.
+func emptyLast(a, b string) int {
+	switch {
+	case a == b:
+		return 0
+	case a == "":
+		return 1
+	case b == "":
+		return -1
+	}
+	return strings.Compare(a, b)
 }
 
 // FilterEnv gives package filter the operators that turn a company, a list, a

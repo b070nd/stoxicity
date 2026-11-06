@@ -31,6 +31,33 @@ program keeps a single local copy and never passes it on. Turn it off with
 `company.listing: false`; the universe then has no ETF flag, market tier or
 venue.
 
+## The catalogue: every stock, no shortlist
+
+`c` in the interface opens the catalogue of **all** companies: every ticker of
+the SEC list, every security of the Nasdaq Trader directory the SEC list lacks
+(most ETFs, preferred shares, warrants, test symbols; they have no CIK), and
+what you added yourself. Nothing is cut off at a number: the list holds one row
+for each match, however many (about 12,000 with no query), and the screen draws
+only the rows in view, so it stays quick.
+
+- **Order.** Without free text, by ticker; with free text, best match first;
+  `sort:name`, `sort:news`, `sort:industry`, `sort:exchange` or `sort:kind`
+  (`sort:-news` reverses) overrides both and combines with any filter, for
+  example `exchange:nyse kind:etf sort:name`. The line under the title says which
+  order and how many of how many.
+- **Moving.** `home`, `end`, `pgup`, `pgdn`, and `g` to jump: type the start of a
+  ticker (of a name, under `sort:name`) and the cursor goes to the first one
+  that starts with it, without filtering the list. The status line says where
+  you are ("company 4,521 of 12,345").
+- **Narrowing.** `/` filters as you type with the query language below; the
+  lines under the title count the matches by exchange, kind, industry, list and
+  tag, so you can see what to narrow by.
+- **Exporting.** `stoxicity universe find -limit 0 [-format tsv|json] [QUERY...]`
+  prints every match, with every field for tsv and json, for a spreadsheet or a
+  script: `stoxicity universe find -limit 0 -format tsv kind:etf > etfs.tsv`.
+- **Test symbols** the exchanges publish are in the list and marked `test`;
+  `-kind:test` leaves them out.
+
 ## The reference database
 
 Everything above is stored in the shared `base.db` (tables `ref_source`,
@@ -130,6 +157,7 @@ list:compounders         member of one of your lists
 tag:moat                 carries your tag
 watched:yes              on your watchlist or in a watch
 news:>=3  news:yes       relevant articles in the window
+sort:name  sort:-news    the order: ticker, name, news, industry, exchange, kind
 ```
 
 Terms are ANDed; `|` or `OR` makes a choice; there are no parentheses. Free text

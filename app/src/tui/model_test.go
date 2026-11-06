@@ -1045,7 +1045,9 @@ func TestTagPromptAddsAndRemovesTags(t *testing.T) {
 func TestListPromptCreatesAListAndCompaniesCanBeFilteredByIt(t *testing.T) {
 	h := newHarness(t)
 	h.press("c")
-	// Move to NVDA: the list is ranked by news, NVDA has the most.
+	h.press("g") // the catalogue is in the order of the tickers: jump to NVDA
+	h.typeText("nv")
+	h.press("enter")
 	h.press("L")
 	h.typeText("picks")
 	h.press("enter")
@@ -1076,5 +1078,90 @@ func TestEscCancelsAnEditPrompt(t *testing.T) {
 	}
 	if p, _ := h.be.Universe().Get("NVDA"); len(p.Tags) != 0 {
 		t.Errorf("tags = %v", p.Tags)
+	}
+}
+
+// bigCatalogue gives the fake backend n companies, T0000 to T<n-1>.
+func (h *harness) bigCatalogue(n int) {
+	ents := make([]model.Entity, n)
+	for i := range ents {
+		ents[i] = model.Entity{Ticker: fmt.Sprintf("T%04d", i), Name: fmt.Sprintf("Company %04d Inc", n-i), CIK: fmt.Sprintf("%010d", i+1), Exchange: "NYSE"}
+	}
+	h.be.mu.Lock()
+	h.be.univ = universe.New(universe.Inputs{Master: company.Master{Entities: ents}})
+	h.be.mu.Unlock()
+}
+
+func TestCatalogueListsEveryCompanyNotAShortlist(t *testing.T) {
+	h := newHarness(t)
+	h.bigCatalogue(1500)
+	h.press("c")
+	h.mustContain("1,500 of 1,500 companies", "by ticker", "TICKER", "T0000", "company 1 of 1,500")
+	if len(h.m.sel) != 1500 {
+		t.Fatalf("%d selectable rows, want all 1500", len(h.m.sel))
+	}
+	h.press("end")
+	h.mustContain("T1499", "company 1,500 of 1,500")
+	h.press("home")
+	h.press("pgdown")
+	if h.m.cursor == 0 || h.m.cursor >= 100 {
+		t.Errorf("page down moved to %d, want about one screen", h.m.cursor)
+	}
+}
+
+func TestCatalogueJumpGoesToTheFirstMatchAndKeepsTheList(t *testing.T) {
+	h := newHarness(t)
+	h.bigCatalogue(1500)
+	h.press("c")
+	h.press("g")
+	if h.m.mode != modeJump {
+		t.Fatalf("mode = %v, want jump", h.m.mode)
+	}
+	h.typeText("t09")
+	h.mustContain("g jump to: t09", "T0900")
+	if h.m.cursor != 900 {
+		t.Fatalf("cursor = %d, want 900", h.m.cursor)
+	}
+	h.typeText("5")
+	if h.m.cursor != 950 {
+		t.Fatalf("cursor = %d after t095, want 950", h.m.cursor)
+	}
+	h.typeText("zz")
+	if !h.m.failed || h.m.cursor != 950 {
+		t.Errorf("no match should say so and stay put: failed=%v cursor=%d", h.m.failed, h.m.cursor)
+	}
+	h.press("esc")
+	if h.m.mode != modeList || len(h.m.sel) != 1500 {
+		t.Errorf("mode %v, %d rows: jumping must not filter", h.m.mode, len(h.m.sel))
+	}
+	// The jump is for the catalogue only.
+	h.press("t")
+	h.press("g")
+	if h.m.mode == modeJump || !h.m.failed {
+		t.Errorf("g outside the catalogue should refuse")
+	}
+}
+
+func TestCatalogueSortsByQuery(t *testing.T) {
+	h := newHarness(t)
+	h.bigCatalogue(300)
+	h.m.goTo(nav.Route{Kind: nav.Companies, Arg: "sort:-ticker"})
+	h.run(h.m.loadCmd(false))
+	h.mustContain("by ticker, reversed")
+	if got := h.m.scr.Rows[h.m.sel[0]].Go.Arg; got != "T0299" {
+		t.Errorf("first row %s, want T0299", got)
+	}
+	// The names run backwards against the tickers; sort:name puts the last ticker first.
+	h.m.goTo(nav.Route{Kind: nav.Companies, Arg: "sort:name"})
+	h.run(h.m.loadCmd(false))
+	h.mustContain("by name")
+	if got := h.m.scr.Rows[h.m.sel[0]].Go.Arg; got != "T0299" {
+		t.Errorf("first row by name %s, want T0299", got)
+	}
+	// Jumping follows the name under sort:name.
+	h.press("g")
+	h.typeText("company 0100")
+	if got := h.m.scr.Rows[h.m.sel[h.m.cursor]].Go.Arg; got != "T0200" {
+		t.Errorf("jump by name went to %s, want T0200", got)
 	}
 }

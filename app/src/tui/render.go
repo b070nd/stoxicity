@@ -9,6 +9,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/b070nd/stoxicity/app/src/labels"
+	"github.com/b070nd/stoxicity/app/src/nav"
 	"github.com/b070nd/stoxicity/app/src/sanitize"
 )
 
@@ -168,6 +169,8 @@ func (m *Model) filterLine() string {
 		return " # tag " + m.target + ": " + string(m.filter) + "█  (-name removes · enter saves · esc cancels)"
 	case modeMember:
 		return " L list for " + m.target + ": " + string(m.filter) + "█  (-name removes; a new name makes the list)"
+	case modeJump:
+		return " g jump to: " + string(m.filter) + "█  (type the start of a ticker or name · esc ends)"
 	}
 	return styleDim.Render(" / filter · ? help")
 }
@@ -178,6 +181,9 @@ func (m *Model) statusLine() string {
 		parts = append(parts, "loading…")
 	} else if !m.refreshed.IsZero() {
 		parts = append(parts, "refreshed "+m.refreshed.In(m.be.Zone()).Format("15:04"))
+	}
+	if m.stack.Current().Kind == nav.Companies && len(m.sel) > 0 && m.cursor < len(m.sel) {
+		parts = append(parts, fmt.Sprintf("company %s of %s", thousands(m.cursor+1), thousands(len(m.sel))))
 	}
 	parts = append(parts, m.be.Tenant())
 	line := " " + strings.Join(parts, " · ")

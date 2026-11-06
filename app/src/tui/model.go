@@ -32,6 +32,7 @@ const (
 	modeHelp
 	modeTag    // typing tags for a stock
 	modeMember // typing list names for a stock
+	modeJump   // typing the start of a ticker or name to jump to in the catalogue
 )
 
 // Model is the Bubble Tea model of the interface. All of its state is plain

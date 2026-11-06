@@ -41,10 +41,45 @@ func TestUniverseFindFiltersByExchangeKindAndText(t *testing.T) {
 	}
 
 	r = e.run(t, "universe", "find", "-limit", "1", "ticker:G*")
-	r.wantOut(t, "GLOB", "1 more")
+	r.wantOut(t, "GLOB", "1 of 2 shown")
 
 	r = e.run(t, "universe", "find", "nothing-like-this")
 	r.wantOut(t, "no company matches")
+}
+
+func TestUniverseFindCanListEveryCompanyAndExportThem(t *testing.T) {
+	e := newTestEnv(t)
+	e.run(t, "universe", "update").wantCode(t, exitOK)
+
+	// -limit 0 is the whole catalogue, in the order of the tickers.
+	r := e.run(t, "universe", "find", "-limit", "0")
+	r.wantCode(t, exitOK)
+	if strings.Contains(r.out, "shown") {
+		t.Errorf("-limit 0 should print everything:\n%s", r.out)
+	}
+
+	r = e.run(t, "universe", "find", "-limit", "0", "-format", "tsv", "sort:-ticker")
+	r.wantCode(t, exitOK)
+	lines := strings.Split(strings.TrimRight(r.out, "\n"), "\n")
+	if !strings.HasPrefix(lines[0], "ticker\tname\tcik\t") || len(lines) < 3 {
+		t.Fatalf("tsv:\n%s", r.out)
+	}
+	first, last := strings.SplitN(lines[1], "\t", 2)[0], strings.SplitN(lines[len(lines)-1], "\t", 2)[0]
+	if first < last {
+		t.Errorf("sort:-ticker gave %s first and %s last", first, last)
+	}
+	for _, l := range lines {
+		if n := strings.Count(l, "\t"); n != 16 {
+			t.Errorf("%d tabs in %q, want 16", n, l)
+		}
+	}
+
+	r = e.run(t, "universe", "find", "-format", "json", "acme")
+	r.wantCode(t, exitOK)
+	r.wantOut(t, `"Ticker": "ACME"`, `"news":`)
+
+	e.run(t, "universe", "find", "-format", "xml").wantCode(t, exitUsage)
+	e.run(t, "universe", "find", "-limit", "-1").wantCode(t, exitUsage)
 }
 
 func TestUniverseFindRejectsABadQuery(t *testing.T) {

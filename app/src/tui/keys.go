@@ -31,6 +31,7 @@ const (
 	Top          Action = "top"
 	Bottom       Action = "bottom"
 	FocusFilter  Action = "filter" // the Google-style filter bar
+	Jump         Action = "jump"   // move to the first company that starts with what you type
 	Keep         Action = "keep"   // label the selected article relevant
 	Drop         Action = "drop"   // label it noise
 	Refresh      Action = "refresh"
@@ -62,7 +63,7 @@ var DefaultKeys = []Binding{
 	{[]string{"H"}, GoHome, "dashboard"},
 	{[]string{"W"}, GoWatches, "manage watches"},
 	{[]string{"s"}, GoStocks, "stocks"},
-	{[]string{"c"}, GoCompanies, "all companies (/ narrows them as you type)"},
+	{[]string{"c"}, GoCompanies, "catalogue of all companies (/ narrows as you type, sort:name orders)"},
 	{[]string{"#"}, TagStock, "tag the stock (-tag removes)"},
 	{[]string{"L"}, ListStock, "put the stock in a list (-list removes)"},
 	{[]string{"t"}, GoTopics, "topics"},
@@ -76,6 +77,7 @@ var DefaultKeys = []Binding{
 	{[]string{"home"}, Top, "first row"},
 	{[]string{"end"}, Bottom, "last row"},
 	{[]string{"/"}, FocusFilter, "filter"},
+	{[]string{"g"}, Jump, "catalogue: jump to the first ticker or name that starts with what you type"},
 	{[]string{"k"}, Keep, "keep (relevant)"},
 	{[]string{"d"}, Drop, "drop (noise)"},
 	{[]string{"r"}, Refresh, "refresh now"},
