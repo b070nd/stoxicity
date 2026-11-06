@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
+	"net/url"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,7 +22,7 @@ import (
 const (
 	defaultInterval   = 15 * time.Minute
 	defaultMaxBackoff = 2 * time.Hour
-	defaultWorkers    = 4
+	defaultWorkers    = 16
 )
 
 const (
@@ -34,6 +36,14 @@ const (
 	successJitter    = 0.05 // of the interval, added to the next due time
 	backoffJitter    = 0.20 // either way around the backoff delay
 	saveTimeout      = 10 * time.Second
+
+	// A host that shows trouble is left alone for a while, whichever of its
+	// sources noticed: hostMinCooldown after a 429 or after the second failure
+	// in a row, doubling with each further failure up to hostMaxCooldown, and
+	// hostBlockedCooldown after a refusal (403).
+	hostMinCooldown     = time.Minute
+	hostMaxCooldown     = 30 * time.Minute
+	hostBlockedCooldown = 10 * time.Minute
 )
 
 // Options configures a Poller. Only Sources, Fetchers, Sink and States are
@@ -54,8 +64,18 @@ type Options struct {
 	// MaxBackoff caps the retry delay and is the pause between probes of an
 	// open circuit. Zero means 2 hours.
 	MaxBackoff time.Duration
-	// Workers is the number of polls that may run at once. Zero means 4.
+	// Workers is the number of polls that may run at once, over all hosts.
+	// Zero means 16.
 	Workers int
+	// PerHost is the number of polls of one host that may run at once; the
+	// sources of different hosts always run side by side, up to Workers. Zero
+	// means 1.
+	PerHost int
+	// HostOf names the host a source is fetched from, so that the sources
+	// that share one (or share a rate limit, like the SEC's hosts) are polled
+	// politely together. Nil, or an empty answer, uses the host name in the
+	// source's URL; a source with no URL is a host of its own.
+	HostOf func(src model.Source) string
 	// IntervalFor, when set, overrides the interval of a source at a given
 	// time, for example to poll EDGAR faster in US market hours. A result of
 	// zero or less falls back to the source's own interval.
@@ -77,6 +97,7 @@ type Options struct {
 // are guarded by Poller.mu.
 type entry struct {
 	src      model.Source
+	host     string // see Options.HostOf
 	state    feeds.State
 	health   Health // health.NextDue is the heap key
 	index    int    // position in the queue, -1 while a poll is in flight
@@ -85,7 +106,8 @@ type entry struct {
 }
 
 // Poller implements Scheduler: it keeps a min-heap of enabled sources by
-// next-due time and polls them on a bounded set of workers. (The name Scheduler
+// next-due time and polls them on a bounded set of workers, side by side for
+// different hosts and one at a time (PerHost) for one. (The name Scheduler
 // belongs to the interface.)
 type Poller struct {
 	opts   Options
@@ -96,12 +118,21 @@ type Poller struct {
 	entries []*entry // enabled sources, sorted by ID
 	byID    map[string]*entry
 	queue   queue
+	hosts   map[string]*hostState
 	running int // polls in flight
 	started bool
 	wg      sync.WaitGroup // in-flight polls
 }
 
 var _ Scheduler = (*Poller)(nil)
+
+// hostState is what the scheduler knows about one host, shared by all of its
+// sources. Guarded by Poller.mu.
+type hostState struct {
+	running  int       // polls of this host in flight
+	failures int       // failures in a row that point at the host, not at a source
+	until    time.Time // no poll of this host starts before this instant
+}
 
 // New checks opts and returns a Poller that has not started.
 func New(opts Options) (*Poller, error) {
@@ -119,6 +150,9 @@ func New(opts Options) (*Poller, error) {
 	}
 	if opts.Workers <= 0 {
 		opts.Workers = defaultWorkers
+	}
+	if opts.PerHost <= 0 {
+		opts.PerHost = 1
 	}
 	if opts.Now == nil {
 		opts.Now = time.Now
@@ -138,6 +172,7 @@ func New(opts Options) (*Poller, error) {
 		events: make(chan Event, eventBuffer),
 		wake:   make(chan struct{}, 1),
 		byID:   make(map[string]*entry),
+		hosts:  make(map[string]*hostState),
 	}
 	for _, src := range opts.Sources {
 		if !src.Enabled {
@@ -152,7 +187,10 @@ func New(opts Options) (*Poller, error) {
 		if opts.Fetchers[src.Kind] == nil {
 			return nil, fmt.Errorf("scheduler: source %q: no fetcher for kind %q", src.ID, src.Kind)
 		}
-		e := &entry{src: src, index: -1, health: Health{SourceID: src.ID}}
+		e := &entry{src: src, host: p.hostKey(src), index: -1, health: Health{SourceID: src.ID}}
+		if p.hosts[e.host] == nil {
+			p.hosts[e.host] = &hostState{}
+		}
 		p.entries = append(p.entries, e)
 		p.byID[src.ID] = e
 	}
@@ -262,22 +300,103 @@ func (p *Poller) load(ctx context.Context) error {
 }
 
 // dispatch starts every due poll that a worker is free for and returns how
-// long the run loop may sleep.
+// long the run loop may sleep. A due source whose host is busy (PerHost polls
+// in flight) or cooling down waits in its place; the others go on past it, so
+// one slow or throttled host never holds up the rest.
 func (p *Poller) dispatch(ctx context.Context) time.Duration {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	now := p.opts.Now()
-	for p.running < p.opts.Workers && len(p.queue) > 0 && !p.queue[0].health.NextDue.After(now) {
+	wait := maxSleep // a finished poll or RefreshNow wakes the loop
+	var held []*entry
+	for p.running < p.opts.Workers && len(p.queue) > 0 {
+		if due := p.queue[0].health.NextDue; due.After(now) {
+			wait = min(wait, due.Sub(now))
+			break
+		}
 		e := heap.Pop(&p.queue).(*entry)
+		hs := p.hosts[e.host]
+		if hs.until.After(now) {
+			wait = min(wait, hs.until.Sub(now))
+			held = append(held, e)
+			continue
+		}
+		if hs.running >= p.opts.PerHost {
+			held = append(held, e) // the end of a poll of this host wakes the loop
+			continue
+		}
 		e.inflight = true
+		hs.running++
 		p.running++
 		p.wg.Add(1)
 		go p.poll(ctx, e, e.state)
 	}
-	if p.running >= p.opts.Workers || len(p.queue) == 0 {
-		return maxSleep // a finished poll or RefreshNow wakes the loop
+	for _, e := range held {
+		heap.Push(&p.queue, e)
 	}
-	return min(p.queue[0].health.NextDue.Sub(now), maxSleep)
+	return wait
+}
+
+// hostKey is the host a source is polled with.
+func (p *Poller) hostKey(src model.Source) string {
+	if p.opts.HostOf != nil {
+		if k := p.opts.HostOf(src); k != "" {
+			return strings.ToLower(k)
+		}
+	}
+	if u, err := url.Parse(src.URL); err == nil && u.Hostname() != "" {
+		return strings.ToLower(u.Hostname())
+	}
+	return "source:" + src.ID
+}
+
+// hostResult tells the host what a poll of one of its sources came to, and
+// starts a cooldown when it points at the host: a 429, a refusal, or two
+// failures in a row of the network, a timeout or a 5xx. A 404 or a parse error
+// says something about one feed and nothing about the host, and an error of
+// our own (a full disk) nothing at all. It returns the end of the cooldown, or
+// the zero time. The caller holds p.mu.
+func (p *Poller) hostResult(host string, err error, now time.Time) time.Time {
+	hs := p.hosts[host]
+	if err == nil {
+		hs.failures = 0
+		hs.until = time.Time{}
+		return time.Time{}
+	}
+	var he *httpx.Error
+	if !errors.As(err, &he) || he.Class == httpx.Permanent {
+		return time.Time{}
+	}
+	hs.failures++
+	var d time.Duration
+	switch he.Class {
+	case httpx.Throttled:
+		d = max(he.RetryAfter, hostMinCooldown)
+	case httpx.Blocked:
+		d = hostBlockedCooldown
+	default:
+		if hs.failures < 2 {
+			return time.Time{}
+		}
+		d = hostMinCooldown
+		for i := 2; i < hs.failures && d < hostMaxCooldown; i++ {
+			d *= 2
+		}
+		d = min(d, hostMaxCooldown)
+	}
+	until := now.Add(d)
+	if until.After(hs.until) {
+		hs.until = until
+	}
+	// The host's other sources are not due before it is over.
+	for _, o := range p.entries {
+		if o.host != host || o.inflight || o.index < 0 || !o.health.NextDue.Before(hs.until) {
+			continue
+		}
+		o.health.NextDue = hs.until
+		heap.Fix(&p.queue, o.index)
+	}
+	return hs.until
 }
 
 // sleep waits for d, for ctx to end or for a wake-up, whichever is first.
@@ -324,6 +443,12 @@ func (p *Poller) poll(ctx context.Context, e *entry, prev feeds.State) {
 		e.state = next
 	} else {
 		p.fail(&h, iv, now, err)
+	}
+	if cool := p.hostResult(e.host, err, now); cool.After(now) {
+		if cool.After(h.NextDue) {
+			h.NextDue = cool
+		}
+		p.opts.Logger.Warn("scheduler: host cooling down", "host", e.host, "until", cool, "cause", err)
 	}
 	h.Level = level(h, iv, now)
 	e.health = h
@@ -374,6 +499,7 @@ func (p *Poller) finish(e *entry, requeue bool) {
 	p.mu.Lock()
 	e.inflight = false
 	p.running--
+	p.hosts[e.host].running--
 	if requeue {
 		if e.refresh {
 			e.health.NextDue = p.opts.Now()

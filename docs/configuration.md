@@ -59,6 +59,21 @@ once a minute for held alerts and for digests: a watch with
 per day (weekly: Mondays) at or after that time, covering the last 24 hours (7
 days).
 
+**Sources are separate resources, fetched in parallel by domain.** `run` polls
+sources whose domains differ at the same time (`refresh.workers`, default 16, is
+the most polls at once). Sources on one domain are polled at most
+`refresh.per_host` at a time (default 2), each domain has its own request rate
+limit (2 a second; the SEC's hosts share one limit of 10 a second), and a source
+that is waiting for its domain never holds up a source of another. A domain
+that shows trouble is left alone for a while, whichever of its sources saw
+it: after a `429` for what its `Retry-After` says (at least a minute), after a
+`403` for 10 minutes, and after the second failure in a row (network, timeout,
+5xx) for a minute, doubling with each further failure up to 30 minutes. Its
+other sources wait too (their next-due time moves), one source is tried when the
+rest period is over, and one success ends the caution. A `404` or a parse error
+concerns one feed and does not make the domain rest. Each source still has its
+own backoff and circuit breaker on top.
+
 `refresh.fast` in `config.yaml` polls sources of kind `filings` more often
 (`interval`, default 2m) on weekdays between `from` and `to` in `zone`
 (default 06:00-22:00 New York time, following its daylight saving). It is off

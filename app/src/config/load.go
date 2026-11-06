@@ -98,7 +98,7 @@ func defaults() Config {
 		},
 		Fetch: Fetch{Interval: "30m", Timeout: "20s"},
 		Refresh: Refresh{
-			Enabled: true, MaxBackoff: "6h", PerHost: 2,
+			Enabled: true, MaxBackoff: "6h", PerHost: 2, Workers: 16,
 			Fast: FastRefresh{
 				Interval: "2m", Zone: "America/New_York",
 				From: "06:00", To: "22:00", WeekdaysOnly: true,
@@ -216,6 +216,10 @@ func validate(cfg Config) error {
 
 	if cfg.Refresh.PerHost < 1 {
 		errs = append(errs, fmt.Errorf("config: refresh.per_host must be at least 1, got %d", cfg.Refresh.PerHost))
+	}
+
+	if cfg.Refresh.Workers < 1 || cfg.Refresh.Workers > 64 {
+		errs = append(errs, fmt.Errorf("config: refresh.workers must be between 1 and 64, got %d", cfg.Refresh.Workers))
 	}
 
 	errs = append(errs, checkFast(cfg.Refresh.Fast)...)

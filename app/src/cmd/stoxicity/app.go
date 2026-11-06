@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -802,6 +803,25 @@ func (a *app) universe() *universe.Universe {
 	return a.univ
 }
 
+// hostGroups joins the host names that share one limit. The SEC allows 10
+// requests a second per client across its hosts. The HTTP client and the
+// scheduler (which polls one group's sources politely together) both use it.
+var hostGroups = map[string]string{"www.sec.gov": "sec", "data.sec.gov": "sec"}
+
+// sourceHost is the group a source is fetched from; empty when its URL has no
+// host, which makes the source a host of its own.
+func sourceHost(src model.Source) string {
+	u, err := url.Parse(src.URL)
+	if err != nil || u.Hostname() == "" {
+		return ""
+	}
+	host := strings.ToLower(u.Hostname())
+	if g, ok := hostGroups[host]; ok {
+		return g
+	}
+	return host
+}
+
 // httpClient returns the client for fetching. It refuses to run without a
 // contact address, because the User-Agent must say who is asking.
 func (a *app) httpClient() (httpx.Client, error) {
@@ -819,8 +839,7 @@ func (a *app) httpClient() (httpx.Client, error) {
 		UserAgent: ua,
 		Timeout:   a.cfg.FetchTimeout(),
 		Burst:     a.cfg.Refresh.PerHost,
-		// The SEC allows 10 requests a second per client across its hosts.
-		Groups:    map[string]string{"www.sec.gov": "sec", "data.sec.gov": "sec"},
+		Groups:    hostGroups,
 		HostRates: map[string]float64{"sec": 10},
 	})
 	if err != nil {

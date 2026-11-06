@@ -30,7 +30,14 @@ tenancy:
 refresh:
   enabled: true
   max_backoff: 6h
+  # Sources are separate resources: those on different domains are fetched at the
+  # same time (up to `workers` polls), those on one domain at most `per_host` at a
+  # time, and each domain also has a request rate limit. A domain that answers
+  # 429 or 403, or fails twice in a row, is left alone for a while (1 minute,
+  # doubling to 30 minutes, or what its Retry-After says) before one source is
+  # tried again.
   per_host: 2
+  workers: 16
   # Faster polling of filings sources (SEC EDGAR) while the US market day is on,
   # because an 8-K can move a stock within minutes. It applies only to sources
   # of kind `filings`, inside from-to in `zone` (so it follows New York

@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -818,5 +820,199 @@ func TestRealClockDefaults(t *testing.T) {
 	cancel()
 	if err := <-done; err != nil {
 		t.Fatalf("Run = %v", err)
+	}
+}
+
+func hosted(id, rawURL string) model.Source {
+	s := source(id)
+	s.URL = rawURL
+	return s
+}
+
+// gateFetch holds every poll until the test lets it go.
+func gateFetch(h *harness) chan struct{} {
+	gate := make(chan struct{})
+	h.fetch.fn = func(ctx context.Context, _ model.Source, _ feeds.State) (feeds.Result, error) {
+		select {
+		case <-gate:
+		case <-ctx.Done():
+		}
+		return feeds.Result{}, nil
+	}
+	return gate
+}
+
+func TestDifferentHostsRunTogetherAndOneHostOneAtATime(t *testing.T) {
+	srcs := []model.Source{
+		hosted("a1", "https://a.example/1"), hosted("a2", "https://a.example/2"), hosted("a3", "https://a.example/3"),
+		hosted("b1", "https://b.example/1"), hosted("c1", "https://c.example/1"),
+	}
+	h := newHarness(t, srcs, func(o *Options) { o.Workers = 8 })
+	gate := gateFetch(h)
+	h.start()
+	// One poll for each of the three hosts, not three on the first.
+	waitFor(t, "a poll per host", func() bool { return h.fetch.inflight() == 3 })
+	settle()
+	if n := h.fetch.inflight(); n != 3 {
+		t.Fatalf("%d polls in flight, want 3 (one per host)", n)
+	}
+	got := map[string]int{}
+	for _, id := range h.fetch.callOrder() {
+		got[id[:1]]++
+	}
+	if got["a"] != 1 || got["b"] != 1 || got["c"] != 1 {
+		t.Fatalf("polls by host = %v, want one each", got)
+	}
+	// The end of one poll of host a lets the next source of host a start.
+	for range 5 {
+		gate <- struct{}{}
+	}
+	waitFor(t, "all five polls", func() bool { return h.fetch.calls() == 5 })
+}
+
+func TestBusyHostDoesNotHoldUpOtherHosts(t *testing.T) {
+	// Three sources of one host are first in line; with two workers the other
+	// host must still get one of them.
+	srcs := []model.Source{
+		hosted("a1", "https://a.example/1"), hosted("a2", "https://a.example/2"), hosted("a3", "https://a.example/3"),
+		hosted("z1", "https://z.example/1"),
+	}
+	h := newHarness(t, srcs, func(o *Options) { o.Workers = 2 })
+	gateFetch(h)
+	h.start()
+	waitFor(t, "two polls", func() bool { return h.fetch.inflight() == 2 })
+	order := h.fetch.callOrder() // the two polls record themselves in either order
+	slices.Sort(order)
+	if !slices.Equal(order, []string{"a1", "z1"}) {
+		t.Fatalf("polled %v first, want a1 and z1", order)
+	}
+}
+
+func TestHostGroupsShareOneHost(t *testing.T) {
+	srcs := []model.Source{hosted("x", "https://www.one.example/x"), hosted("y", "https://data.one.example/y")}
+	h := newHarness(t, srcs, func(o *Options) {
+		o.Workers = 4
+		o.HostOf = func(model.Source) string { return "one" }
+	})
+	gate := gateFetch(h)
+	h.start()
+	waitFor(t, "first poll", func() bool { return h.fetch.inflight() == 1 })
+	settle()
+	if n := h.fetch.inflight(); n != 1 {
+		t.Fatalf("%d polls of one host group at once, want 1", n)
+	}
+	gate <- struct{}{}
+	gate <- struct{}{}
+	waitFor(t, "both polled", func() bool { return h.fetch.calls() == 2 })
+}
+
+func TestPerHostAllowsMoreThanOne(t *testing.T) {
+	srcs := []model.Source{hosted("x", "https://a.example/x"), hosted("y", "https://a.example/y"), hosted("z", "https://a.example/z")}
+	h := newHarness(t, srcs, func(o *Options) { o.Workers = 4; o.PerHost = 2 })
+	gateFetch(h)
+	h.start()
+	waitFor(t, "two polls", func() bool { return h.fetch.inflight() == 2 })
+	settle()
+	if n := h.fetch.inflight(); n != 2 {
+		t.Fatalf("%d polls of one host at once, want 2", n)
+	}
+}
+
+func TestThrottledHostCoolsDownWhileOthersGoOn(t *testing.T) {
+	srcs := []model.Source{
+		hosted("a1", "https://a.example/1"), hosted("a2", "https://a.example/2"), hosted("b1", "https://b.example/1"),
+	}
+	h := newHarness(t, srcs, func(o *Options) { o.Workers = 4 })
+	var throttled atomic.Bool
+	h.fetch.fn = func(_ context.Context, src model.Source, _ feeds.State) (feeds.Result, error) {
+		if src.ID == "a1" && !throttled.Swap(true) {
+			return feeds.Result{}, &httpx.Error{Class: httpx.Throttled, RetryAfter: 20 * time.Minute}
+		}
+		return feeds.Result{}, nil
+	}
+	h.start()
+	h.event()
+	h.event()
+	waitFor(t, "a1 and b1 polled", func() bool { return h.fetch.calls() >= 2 })
+	// a2 was waiting behind a1 (one poll per host) and is now held until the
+	// 20 minutes are over; b1 is not held at all.
+	settle()
+	for _, id := range h.fetch.callOrder() {
+		if id == "a2" {
+			t.Fatalf("a2 was polled while its host was cooling down: %v", h.fetch.callOrder())
+		}
+	}
+	if d := h.untilNextDue("a2"); d < 19*time.Minute {
+		t.Fatalf("a2 due in %v, want after the host's 20 minute cooldown", d)
+	}
+	h.clock.Advance(21 * time.Minute)
+	waitFor(t, "a2 polled after the cooldown", func() bool {
+		return slices.Contains(h.fetch.callOrder(), "a2")
+	})
+}
+
+func TestTwoFailuresInARowCoolTheHost(t *testing.T) {
+	srcs := []model.Source{hosted("a1", "https://a.example/1"), hosted("a2", "https://a.example/2"), hosted("a3", "https://a.example/3")}
+	h := newHarness(t, srcs, nil)
+	h.rnd.queued = []float64{0, 0, 0} // due at once; later, no jitter
+	h.rnd.def = 0.5
+	h.fetch.fn = failWith(&httpx.Error{Class: httpx.Retryable, Status: 503})
+	h.start()
+	h.event()
+	// One failure is the source's own business: the next source goes at once.
+	h.event()
+	// The second makes the host rest for a minute, whatever the source's own
+	// (longer) backoff, so the third is held back by it.
+	settle()
+	if n := h.fetch.calls(); n != 2 {
+		t.Fatalf("%d polls, want 2 before the host rests", n)
+	}
+	if d := h.untilNextDue("a3"); d < 50*time.Second {
+		t.Fatalf("a3 due in %v, want after the host's cooldown", d)
+	}
+	h.clock.Advance(2 * time.Minute)
+	h.event()
+	if n := h.fetch.calls(); n != 3 {
+		t.Fatalf("%d polls after the cooldown, want 3", n)
+	}
+}
+
+func TestErrorsOfOneSourceDoNotCoolTheHost(t *testing.T) {
+	for name, err := range map[string]error{
+		"not found": &httpx.Error{Class: httpx.Permanent, Status: 404},
+		"our own":   errBoom,
+	} {
+		t.Run(name, func(t *testing.T) {
+			srcs := []model.Source{hosted("a1", "https://a.example/1"), hosted("a2", "https://a.example/2"), hosted("a3", "https://a.example/3")}
+			h := newHarness(t, srcs, nil)
+			h.fetch.fn = failWith(err)
+			h.start()
+			h.event()
+			h.event()
+			h.event()
+			if n := h.fetch.calls(); n != 3 {
+				t.Fatalf("%d polls, want 3: the host should not rest", n)
+			}
+		})
+	}
+}
+
+func TestHostRecoversAfterASuccess(t *testing.T) {
+	srcs := []model.Source{hosted("a1", "https://a.example/1"), hosted("a2", "https://a.example/2")}
+	h := newHarness(t, srcs, nil)
+	fail := true
+	h.fetch.fn = func(_ context.Context, _ model.Source, _ feeds.State) (feeds.Result, error) {
+		if fail {
+			fail = false
+			return feeds.Result{}, &httpx.Error{Class: httpx.Retryable}
+		}
+		return feeds.Result{}, nil
+	}
+	h.start()
+	h.event()
+	h.event()
+	// One failure and then a success: nothing rests.
+	if d := h.untilNextDue("a2"); d < 5*time.Minute {
+		t.Fatalf("a2 due in %v, want its normal interval", d)
 	}
 }

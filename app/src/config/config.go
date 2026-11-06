@@ -65,7 +65,8 @@ type Tenancy struct {
 type Refresh struct {
 	Enabled    bool        `yaml:"enabled"`
 	MaxBackoff string      `yaml:"max_backoff"` // longest wait after repeated failures
-	PerHost    int         `yaml:"per_host"`    // concurrent requests allowed per host
+	PerHost    int         `yaml:"per_host"`    // polls of one host (one domain) at once
+	Workers    int         `yaml:"workers"`     // polls at once over all hosts
 	Fast       FastRefresh `yaml:"fast"`
 }
 

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/b070nd/stoxicity/app/src/model"
 )
 
 // writeWatch writes a watch file for the default tenant of a test environment.
@@ -194,6 +196,19 @@ digest:
 			if !strings.Contains(body, want) {
 				t.Errorf("digest lacks %q:\n%s", want, body)
 			}
+		}
+	}
+}
+
+func TestSourceHostGroupsTheSECHostsAndLowercases(t *testing.T) {
+	for url, want := range map[string]string{
+		"https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent": "sec",
+		"https://data.sec.gov/submissions/CIK0000320193.json":        "sec",
+		"https://WWW.FederalReserve.gov/feeds/press_all.xml":         "www.federalreserve.gov",
+		"": "", "not a url": "",
+	} {
+		if got := sourceHost(model.Source{URL: url}); got != want {
+			t.Errorf("sourceHost(%q) = %q, want %q", url, got, want)
 		}
 	}
 }
