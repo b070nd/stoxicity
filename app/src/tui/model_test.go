@@ -275,6 +275,13 @@ func (h *harness) press(keys ...string) {
 	}
 }
 
+// openStocks opens the screen of the stocks in the news (the Home heading's
+// target); the s key opens the full catalogue instead.
+func (h *harness) openStocks() {
+	h.t.Helper()
+	h.run(h.m.goTo(nav.Route{Kind: nav.Stocks}))
+}
+
 func (h *harness) typeText(s string) {
 	for _, r := range s {
 		h.press(string(r))
@@ -339,7 +346,7 @@ func TestWatchBarShowsUnreadOfOtherWatches(t *testing.T) {
 
 func TestTabSwitchesWatchAndKeepsTheScreen(t *testing.T) {
 	h := newHarness(t)
-	h.press("s")
+	h.openStocks()
 	if h.crumbs() != "Home > Stocks" {
 		t.Fatalf("crumbs = %q", h.crumbs())
 	}
@@ -388,7 +395,7 @@ func TestLoadingAWatchMarksItSeen(t *testing.T) {
 
 func TestStocksRowOpensTheStockPage(t *testing.T) {
 	h := newHarness(t)
-	h.press("s")
+	h.openStocks()
 	h.mustContain("Stocks", "NVDA", "Nvidia Corp", "★")
 	h.press("enter")
 	if h.crumbs() != "Home > Stocks > NVDA" {
@@ -531,7 +538,8 @@ func (h *harness) selectArticleID(id string) {
 
 func TestArticleDetailShowsWhyAndLabels(t *testing.T) {
 	h := newHarness(t)
-	h.press("s", "enter") // NVDA
+	h.openStocks()
+	h.press("enter") // NVDA
 	h.selectArticle("Nvidia beats estimates")
 	h.press("enter")
 	h.mustContain("Nvidia beats estimates", "Why this score", "matched earnings", "primary source", "your label: none")
@@ -1169,7 +1177,7 @@ func TestCatalogueSortsByQuery(t *testing.T) {
 
 func TestStocksSortByAnotherColumnKeepsTheCursorOnItsStock(t *testing.T) {
 	h := newHarness(t)
-	h.press("s")
+	h.openStocks()
 	h.mustContain("Stocks", "NEWS▼") // mentions, largest first: NVDA, KO
 	if row, _ := h.m.row(); row.Go.Arg != "NVDA" {
 		t.Fatalf("cursor on %v, want NVDA first", row.Go)
@@ -1188,7 +1196,8 @@ func TestStocksSortByAnotherColumnKeepsTheCursorOnItsStock(t *testing.T) {
 		t.Errorf("inverted, NVDA is first again: %d", h.m.vp.Cursor())
 	}
 	// The choice belongs to the kind of screen: leaving and coming back keeps it.
-	h.press("H", "s")
+	h.press("H")
+	h.openStocks()
 	h.mustContain("NAME▼")
 	h.press("S")
 	h.mustContain("HEALTH▲")
@@ -1465,5 +1474,17 @@ func TestFreshRowsFadeWithTime(t *testing.T) {
 	h.m.fresh["k:source:newcomer"] = now.Add(-time.Second)
 	if h.m.isFresh(row) {
 		t.Error("still fresh after its time")
+	}
+}
+
+func TestSKeyListsEveryStockWithTheOnesInTheNewsFirst(t *testing.T) {
+	h := newHarness(t)
+	h.press("s")
+	h.mustContain("Companies: sort:news", "4 of 4 companies")
+	if row, _ := h.m.row(); row.Go == nil || row.Go.Arg != "NVDA" {
+		t.Errorf("the stock with most news comes first, got %+v", row)
+	}
+	if h.m.vp.Len() != 4 {
+		t.Errorf("all %d stocks are rows, not only those in the news", h.m.vp.Len())
 	}
 }

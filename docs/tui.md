@@ -79,7 +79,8 @@ marks. Marks stay while you move between screens.
 | Key | Screen | What it shows |
 |-----|--------|---------------|
 | `H` | Home | digest, top articles, stocks, domains, topic cloud, 14-day timeline |
-| `s` | Stocks | stocks in relevant news with mentions, materiality and tone; ★ marks your watchlist |
+| `s` | All stocks | every stock and ETF (about 16,000), those with news first: the catalogue below, opened with `sort:news` |
+| | Stocks in the news | opened from the Home heading "Stocks ›": only the stocks in relevant news, with mentions, materiality and tone; ★ marks your watchlist |
 | `c` | Companies | the catalogue of all stocks and ETFs (about 12,000), narrowed as you type, with counts by exchange, kind, industry, list and tag |
 | | Stock | profile (identity, listing, industry, links, your lists and tags, watches), then summary, weekly tone and materiality, timeline, what happened, domains, topics, articles |
 | `t` | Topics | tag cloud and a table with the lift over the window before |

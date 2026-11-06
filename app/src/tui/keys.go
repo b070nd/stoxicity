@@ -162,7 +162,7 @@ var DefaultKeys = []Binding{
 	{Keys: []string{"]"}, Action: Forward, Help: "forward"},
 	{Keys: []string{"H"}, Action: GoHome, Help: "dashboard"},
 	{Keys: []string{"W"}, Action: GoWatches, Help: "manage watches"},
-	{Keys: []string{"s"}, Action: GoStocks, Help: "stocks"},
+	{Keys: []string{"s"}, Action: GoStocks, Help: "all stocks, news first"},
 	{Keys: []string{"c"}, Action: GoCompanies, Help: "all companies (/ narrows)"},
 	{Keys: []string{"/"}, Action: FocusFilter, Help: "filter", Bar: "filter"},
 	{Keys: []string{"g"}, Action: Jump, Help: "catalogue: jump to a ticker or name", Bar: "jump", Screens: []nav.Kind{nav.Companies}},

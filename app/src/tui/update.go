@@ -251,7 +251,8 @@ func (m *Model) key(k tea.KeyPressMsg) tea.Cmd {
 	case GoHome:
 		return m.goTo(nav.Route{Kind: nav.Home})
 	case GoStocks:
-		return m.goTo(nav.Route{Kind: nav.Stocks})
+		// Every stock, those in the news first: the same list as the catalogue.
+		return m.goTo(nav.Route{Kind: nav.Companies, Arg: "sort:news"})
 	case GoCompanies:
 		return m.goTo(nav.Route{Kind: nav.Companies})
 	case TagStock:
