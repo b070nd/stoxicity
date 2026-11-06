@@ -16,3 +16,5 @@
 # stray binaries from "go build" run inside app/
 /app/stoxicity
 /app/stoxicity-tui
+/app/src/cmd/stoxicity/stoxicity
+/app/src/cmd/stoxicity-tui/stoxicity-tui

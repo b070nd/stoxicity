@@ -21,11 +21,11 @@ func TestRenderBoardShowsElapsedTimeAndWhatIsWaiting(t *testing.T) {
 			{SourceID: "boe-news", State: scheduler.Late, Since: boardNow.Add(-20 * time.Second)},
 			{SourceID: "ecb-press", State: scheduler.Resting, Host: "www.ecb.europa.eu", Until: boardNow.Add(2*time.Minute + 5*time.Second)},
 		},
-		Idle: 12, Next: "snb-press", NextDue: boardNow.Add(4*time.Minute + 12*time.Second),
+		Idle: 12, Workers: 16, Next: "snb-press", NextDue: boardNow.Add(4*time.Minute + 12*time.Second),
 	}
 	got := strings.Join(renderBoard(b, time.UTC, 200, 14), "\n")
 	for _, want := range []string{
-		"13:44:47  2 polling · 3 waiting · 12 idle · next snb-press in 4:12",
+		"13:44:47  2/16 polling · 3 waiting · 12 idle · next snb-press in 4:12",
 		"sec-edgar", "polling   0:07",
 		"boe-news                 polling   1:15",
 		"late      0:20",

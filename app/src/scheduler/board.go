@@ -52,6 +52,8 @@ type Board struct {
 	At   time.Time
 	Rows []Activity
 	Idle int // how many of the rows are idle
+	// Workers is the most polls that may run at once (Options.Workers).
+	Workers int
 	// Next and NextDue are the idle source that is due soonest.
 	Next    string
 	NextDue time.Time
@@ -63,7 +65,7 @@ func (p *Poller) Board() Board {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	now := p.opts.Now()
-	b := Board{At: now}
+	b := Board{At: now, Workers: p.opts.Workers}
 	for _, e := range p.entries {
 		hs := p.hosts[e.host]
 		row := func(state State, since time.Time) Activity {

@@ -303,45 +303,61 @@ func (p *Poller) load(ctx context.Context) error {
 		}
 		h.Level = level(h, iv, now)
 		e.state, e.health = states[i], h
+		e.started = h.LastOK // so that a restart goes on in the same order
 		heap.Push(&p.queue, e)
 	}
 	return nil
 }
 
 // dispatch starts every due poll that a worker is free for and returns how
-// long the run loop may sleep. A due source whose host is busy (PerHost polls
-// in flight) or cooling down waits in its place; the others go on past it, so
-// one slow or throttled host never holds up the rest.
+// long the run loop may sleep.
+//
+// Among the sources that are due the one that was polled longest ago goes
+// first, and one never polled before any, so every source is polled before
+// any of them is polled again, however short its interval and however long the
+// backlog. A due source whose host is busy (PerHost polls in flight) or cooling
+// down waits in its place; the others go on past it, so one slow or throttled
+// host never holds up the rest.
 func (p *Poller) dispatch(ctx context.Context) time.Duration {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	now := p.opts.Now()
 	wait := maxSleep // a finished poll or RefreshNow wakes the loop
-	var held []*entry
-	for p.running < p.opts.Workers && len(p.queue) > 0 {
-		if due := p.queue[0].health.NextDue; due.After(now) {
-			wait = min(wait, due.Sub(now))
-			break
-		}
-		e := heap.Pop(&p.queue).(*entry)
-		hs := p.hosts[e.host]
-		if hs.until.After(now) {
-			wait = min(wait, hs.until.Sub(now))
-			held = append(held, e)
-			continue
-		}
-		if hs.running >= p.opts.PerHost {
-			held = append(held, e) // the end of a poll of this host wakes the loop
-			continue
-		}
-		e.inflight = true
-		e.started = now
-		hs.running++
-		p.running++
-		p.wg.Add(1)
-		go p.poll(ctx, e, e.state)
+	var due []*entry
+	for len(p.queue) > 0 && !p.queue[0].health.NextDue.After(now) {
+		due = append(due, heap.Pop(&p.queue).(*entry))
 	}
-	for _, e := range held {
+	if len(p.queue) > 0 {
+		wait = min(wait, p.queue[0].health.NextDue.Sub(now))
+	}
+	sort.SliceStable(due, func(i, j int) bool {
+		a, b := due[i], due[j]
+		if !a.started.Equal(b.started) {
+			return a.started.Before(b.started)
+		}
+		if !a.health.NextDue.Equal(b.health.NextDue) {
+			return a.health.NextDue.Before(b.health.NextDue)
+		}
+		return a.src.ID < b.src.ID
+	})
+	for _, e := range due {
+		hs := p.hosts[e.host]
+		switch {
+		case p.running >= p.opts.Workers:
+			// a finished poll wakes the loop
+		case hs.until.After(now):
+			wait = min(wait, hs.until.Sub(now))
+		case hs.running >= p.opts.PerHost:
+			// the end of a poll of this host wakes the loop
+		default:
+			e.inflight = true
+			e.started = now
+			hs.running++
+			p.running++
+			p.wg.Add(1)
+			go p.poll(ctx, e, e.state)
+			continue
+		}
 		heap.Push(&p.queue, e)
 	}
 	return wait

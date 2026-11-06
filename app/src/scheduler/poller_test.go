@@ -1134,3 +1134,38 @@ func TestStartTogetherMakesOverdueSourcesDueAtOnce(t *testing.T) {
 	h.start()
 	waitFor(t, "all three polling at once", func() bool { return h.fetch.inflight() == 3 })
 }
+
+func TestEverySourceIsPolledBeforeAnyIsPolledAgain(t *testing.T) {
+	srcs := sources("a", "b", "c", "d")
+	srcs[0].Interval = "1m" // a short interval, and a backlog longer than it
+	h := newHarness(t, srcs, nil)
+	// a is overdue; b, c and d come due 20s, 40s and 65s after the start.
+	for i, id := range []string{"b", "c", "d"} {
+		due := []time.Duration{20 * time.Second, 40 * time.Second, 65 * time.Second}[i]
+		h.store.put(id, feeds.State{}, Health{SourceID: id, NextDue: t0.Add(due)})
+	}
+	h.fetch.fn = func(_ context.Context, _ model.Source, _ feeds.State) (feeds.Result, error) {
+		h.clock.Advance(30 * time.Second) // every poll takes 30s, one worker
+		return feeds.Result{}, nil
+	}
+	h.start()
+	waitFor(t, "five polls", func() bool { return h.fetch.calls() >= 5 })
+	// By due time alone a would be polled again (due after 60s) before d
+	// (due after 65s) was polled at all.
+	if got, want := fmt.Sprint(h.fetch.callOrder()[:5]), "[a b c d a]"; got != want {
+		t.Fatalf("poll order = %s, want %s: every source once before a second poll of any", got, want)
+	}
+}
+
+func TestRestartKeepsTheRoundRobinOrder(t *testing.T) {
+	h := newHarness(t, sources("a", "b", "c"), func(o *Options) { o.StartTogether = true })
+	// Nothing was polled for a long time; c was polled longest ago, then a, then b.
+	h.store.put("a", feeds.State{}, Health{SourceID: "a", LastOK: t0.Add(-2 * time.Hour)})
+	h.store.put("b", feeds.State{}, Health{SourceID: "b", LastOK: t0.Add(-time.Hour)})
+	h.store.put("c", feeds.State{}, Health{SourceID: "c", LastOK: t0.Add(-3 * time.Hour)})
+	h.start()
+	waitFor(t, "three polls", func() bool { return h.fetch.calls() == 3 })
+	if got, want := fmt.Sprint(h.fetch.callOrder()), "[c a b]"; got != want {
+		t.Fatalf("poll order = %s, want %s", got, want)
+	}
+}

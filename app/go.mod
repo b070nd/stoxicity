@@ -3,6 +3,9 @@ module github.com/b070nd/stoxicity/app
 go 1.27
 
 require (
+	charm.land/bubbletea/v2 v2.1.1
+	charm.land/lipgloss/v2 v2.0.6
+	github.com/charmbracelet/x/term v0.2.2
 	go.yaml.in/yaml/v3 v3.0.6
 	golang.org/x/text v0.43.0
 	golang.org/x/time v0.16.0
@@ -10,12 +13,9 @@ require (
 )
 
 require (
-	charm.land/bubbletea/v2 v2.1.1 // indirect
-	charm.land/lipgloss/v2 v2.0.6 // indirect
 	github.com/charmbracelet/colorprofile v0.4.3 // indirect
 	github.com/charmbracelet/ultraviolet v0.0.0-20261008173134-6b8d4baf91b4 // indirect
 	github.com/charmbracelet/x/ansi v0.11.9 // indirect
-	github.com/charmbracelet/x/term v0.2.2
 	github.com/charmbracelet/x/termios v0.1.1 // indirect
 	github.com/charmbracelet/x/windows v0.2.2 // indirect
 	github.com/clipperhouse/displaywidth v0.11.0 // indirect

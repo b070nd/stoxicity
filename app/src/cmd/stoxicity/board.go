@@ -31,7 +31,11 @@ func renderBoard(b scheduler.Board, zone *time.Location, width, maxRows int) []s
 			waiting++
 		}
 	}
-	sum := fmt.Sprintf("%s  %d polling · %d waiting · %d idle", b.At.In(zone).Format(time.TimeOnly), running, waiting, b.Idle)
+	polling := fmt.Sprint(running)
+	if b.Workers > 0 {
+		polling = fmt.Sprintf("%d/%d", running, b.Workers) // of the most that may run at once
+	}
+	sum := fmt.Sprintf("%s  %s polling · %d waiting · %d idle", b.At.In(zone).Format(time.TimeOnly), polling, waiting, b.Idle)
 	if b.Next != "" {
 		sum += fmt.Sprintf(" · next %s in %s", b.Next, clock(b.NextDue.Sub(b.At)))
 	}

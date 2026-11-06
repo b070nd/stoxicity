@@ -74,13 +74,21 @@ rest period is over, and one success ends the caution. A `404` or a parse error
 concerns one feed and does not make the domain rest. Each source still has its
 own backoff and circuit breaker on top.
 
+**Every source before any again.** When several sources are due, the one polled
+longest ago goes first and one never polled goes before any, so each source is
+polled once before any is polled a second time, however short its interval and
+however long the backlog (a slow start, a busy domain, few workers). After a
+restart the order continues where it stopped, by the time of each source's last
+good poll. A source whose domain is cooling down does not hold the others up;
+it simply keeps its place.
+
 **The live board.** When `stoxicity run` has a terminal, it keeps every source
 on a board at the bottom of the screen while the result lines scroll above it.
 All sources start together (each domain within its limits above), not one after
 the other:
 
 ```
-13:44:47  2 polling · 1 waiting · 14 idle · next snb-press in 4:12
+13:44:47  2/16 polling · 1 waiting · 14 idle · next snb-press in 4:12
    ▶ sec-edgar                polling   0:07
    ▶ boe-news                 polling   1:15
    ◷ boe-news                 late      0:20  (timer ran out while polling; starts again when it ends)
@@ -89,7 +97,9 @@ the other:
    ! ecb-press                idle      retry in 2:30 · failed 2× · httpx: throttled ...
 ```
 
-Sources with work come first, with the time they have been at it (polling), have
+The first line counts the polls running against `refresh.workers`, the most
+that may run at once over all domains (1 to 64, default 16; lower it on a slow
+machine or connection). Sources with work come first, with the time they have been at it (polling), have
 been due (waiting) or have been late; the idle ones follow in the order their
 timers run out, with the last good poll. A source's timer runs from the *start*
 of its poll, so the cadence holds however long polls take. A poll that outlasts
