@@ -15,8 +15,8 @@ stoxicity-tui -refresh 10s          # reload every 10 seconds (default: a minute
 ## Layout
 
 ```
- All news  1 Tech (2)  2 Buffett core         <- watches, unread badge
- sources 21 ok 2 stale 1 failing · next fetch sec-edgar in 0:42 · news 1,204 articles, 87 relevant · 5 unread
+ All news  1 Tech (2)  2 Buffett core │ H Home  s Stocks  c Companies …   <- watches, then screens
+ all exchanges · sources 21 ok 2 stale 1 failing · next fetch sec-edgar in 0:42 · news 1,204 articles, 87 relevant · 5 unread
  Home › Stocks › NVDA                          <- breadcrumbs
  Stock NVDA · Nvidia Corp                      <- the screen
  ...
@@ -24,6 +24,13 @@ stoxicity-tui -refresh 10s          # reload every 10 seconds (default: a minute
  refreshed 09:41 · default
 ```
 
+- **Screen tabs.** After the watches the bar lists the screens that stand on their
+  own: Home, Stocks, Companies, Topics, Domains, Exchanges, Sources and Watches. The
+  one you are in is lit, and so is the one a detail sits under (a stock opened from
+  Stocks lights Stocks, an exchange lights Exchanges). The key of each is its first
+  letter (`s` Stocks, `S` Sources) and is written on the tab when the terminal is
+  wide enough. The screens that need something to show (a stock, a topic, a domain,
+  a day, a search, one exchange) are not tabs; they open from the lists.
 - **Watch bar.** `tab` and `shift+tab` go to the next and previous watch, a digit
   goes to that watch, `W` (or `w`) opens the list of watches. Switching keeps the
   screen: Home › Topics › AI infrastructure for one watch becomes the same topic
@@ -31,7 +38,8 @@ stoxicity-tui -refresh 10s          # reload every 10 seconds (default: a minute
   "All news" shows every article the tenant may see, with no watch applied.
 - **Breadcrumbs.** `esc` or `backspace` goes back, `]` forward. Going back puts
   the cursor on the row you left.
-- **Meters.** The line under the watch bar is always there: how many sources are
+- **Meters.** The line under the watch bar is always there: the exchange every
+  screen is narrowed to (see Exchanges below), how many sources are
   healthy (`ok`), have not worked for more than two polling intervals or failed
   once or twice (`stale`), or are failing (`failing`); when the next source is
   due, or how long overdue it is (a long "overdue" means nothing is running
@@ -82,13 +90,15 @@ marks. Marks stay while you move between screens.
 | `s` | All stocks | every stock and ETF (about 16,000), those with news first: the catalogue below, opened with `sort:news` |
 | | Stocks in the news | opened from the Home heading "Stocks ›": only the stocks in relevant news, with mentions, materiality and tone; ★ marks your watchlist |
 | `c` | Companies | the catalogue of all stocks and ETFs (about 12,000), narrowed as you type, with counts by exchange, kind, industry, list and tag |
-| | Stock | profile (identity, listing, industry, links, your lists and tags, watches), then summary, weekly tone and materiality, timeline, what happened, domains, topics, articles |
+| | Stock | profile (identity, listing, industry, links, feeds, your lists and tags, watches), the latest news about it (any age, loaded when the page opens), then summary, weekly tone and materiality, timeline, what happened, domains, topics, articles |
 | `t` | Topics | tag cloud and a table with the lift over the window before |
 | | Topic | its stocks, domains, timeline, related topics, top articles |
 | `D` | Domains | relevant against total per domain |
 | | Domain | its output, your precision on it (kept against dropped), timeline, articles |
 | | Day | one day's digest, relevant articles first |
 | | Search | results with domain and event counts |
+| `E` | Exchanges | the markets stocks are listed on, whether each trades now, its regular hours, companies, stocks, ETFs, news and operator; `enter` opens one, `u` narrows every screen to it |
+| | Exchange | about it (operator, place, market ID, website), opening hours, statistics, the types of stocks it lists, the newest news about its stocks, and a table of its stocks |
 | `S` | Sources | state of every source: health, what it is doing, last good poll, next due, failures, last error; failing ones first |
 | `W` | Watches | the tenant's watches with unread counts; `enter` shows one |
 
@@ -178,3 +188,54 @@ was last read and how many articles that gave, or `failing (n×)` with the reaso
 `o` on a feed row opens it (the SEC record opens the company's page on EDGAR). The
 rows come from `Backend.StockFeeds`; where none is recorded yet the page says how
 to get them (`stoxicity universe feeds`).
+
+## Exchanges
+
+`X` narrows **every screen** to one exchange, and `ctrl+x` goes back the other way:
+the order is all exchanges, then each exchange the companies are listed on,
+the one with most companies first. The line under the watch bar says which is
+chosen. From the chosen exchange on:
+
+- the news is the news that names a stock listed there, and its tickers are cut
+  down to those stocks, so the stock list, mentions, tone, topics, domains, the
+  timeline, days, search results and the meters all speak of that exchange only;
+- the catalogue (`c`, `s`) lists only its companies, grouped by kind rather than
+  by exchange;
+- screens that would be pointless narrowed are left whole: a stock's own page, the
+  list of exchanges, the sources and the watches; and one exchange's page is always
+  about that exchange, whatever is chosen.
+
+`E` opens the list of exchanges (NOW is `open` in the regular session, `extended`
+before and after it, `closed` otherwise; ● marks the chosen one), and `u` on a row, or
+on an exchange's page, chooses it (again: back to all). The page of an exchange has:
+
+- **About.** Full name, operator, place, market ID (ISO 10383), currency, website
+  (`o` opens it) and what kind of market it is.
+- **Opening hours.** Whether it trades now and until when, each session in the market's
+  clock and in yours (`Regular 09:30–16:00 EST = 15:30–22:00 CET`), today's calendar
+  (closed, early close at 13:00, or a full day) and the next three market holidays.
+  The US calendar is built in: the ten holidays with their observed dates (a Saturday
+  holiday is taken on the Friday, a Sunday one on the Monday), Good Friday and the
+  three early closes. Extended hours are the exchange's; brokers open them for their
+  customers at their own times.
+- **Statistics.** How many of the companies the program knows are listed there, how
+  many are stocks and ETFs, how many have an SEC record, the market tiers (Nasdaq),
+  the main industries, how many of the stocks you watch are there, and the news of
+  the window: articles, relevant ones, stocks named, average materiality and tone.
+- **Types of stocks.** What the exchange lists (large established companies, growth
+  companies, ETFs, small caps, over-the-counter) with the counts of stocks and ETFs.
+- **Latest news** about its stocks, newest first, and **the stocks** themselves in the
+  catalogue's table: sort with `>` and `<`, open one with `enter`.
+
+The reference facts (operator, hours, what each exchange lists) are in
+`app/src/exchange`; an exchange the companies name but that package does not know is
+shown with the counts only.
+
+## The stock page loads the latest news
+
+Opening a stock asks the backend for the newest articles that name it (and the other
+tickers of the same company, such as GOOG and GOOGL), of any age and relevance, and
+lists them under "Latest news" right after the profile, newest first; the dim ones are
+below the relevance threshold. This is not limited to the window of the other
+screens, so a stock that has been quiet for a month still shows what was last said of
+it. The window's summary, timeline and charts follow when it holds anything.

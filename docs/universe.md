@@ -210,3 +210,12 @@ leading `-` removes.
 - The SEC list holds US-listed issuers. It does not cover other markets.
 - SIC codes are the SEC's, not a modern sector classification; use the
   `sectors:` rules in `config.yaml` for that.
+
+## Exchanges
+
+`Profile.Exchange` is the grouping key of the catalogue and of the exchange screens of
+the TUI. `Universe.Exchanges` counts the companies of each (the biggest first),
+`Universe.ResolveExchange` finds one by its name or an unambiguous prefix, and
+`Universe.ScopeNews` narrows articles to the news of one exchange (see
+[tui.md](tui.md#exchanges)). `exchange:nyse` in a query matches the whole name, so
+it does not take in NYSE Arca; write `exchange:nyse*` for both.

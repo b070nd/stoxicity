@@ -323,6 +323,15 @@ func keyMsg(k string) tea.KeyPressMsg {
 
 func (h *harness) view() string { return h.m.render() }
 
+// rows is the text of every row of the screen, including those out of view.
+func (h *harness) rows() string {
+	var lines []string
+	for _, r := range h.m.scr.Rows {
+		lines = append(lines, r.Text)
+	}
+	return strings.Join(lines, "\n")
+}
+
 func (h *harness) crumbs() string {
 	var parts []string
 	for _, c := range h.m.stack.Crumbs() {
@@ -1562,4 +1571,198 @@ func TestAGroupHeadingOpensItsGroup(t *testing.T) {
 	if strings.Contains(ansi.Strip(h.view()), "NVDA") {
 		t.Error("the other exchange is gone")
 	}
+}
+
+func TestScreensStandAfterTheWatchesAndTheOneYouAreInIsLit(t *testing.T) {
+	h := newHarness(t)
+	order := func(tabs ...string) {
+		t.Helper()
+		bar := strings.Split(h.view(), "\n")[0]
+		last := strings.Index(bar, "Buffett core")
+		for _, tab := range tabs {
+			at := strings.Index(bar, tab)
+			if at < 0 || at < last {
+				t.Fatalf("tab %q is not after the watches in %q", tab, bar)
+			}
+			last = at
+		}
+	}
+	order("Home", "Stocks", "Companies", "Topics", "Domains", "Exchanges", "Sources", "Watches")
+	h.m.Update(tea.WindowSizeMsg{Width: 200, Height: 40})
+	order("H Home", "s Stocks", "c Companies", "t Topics", "D Domains", "E Exchanges", "S Sources", "W Watches")
+	h.m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	for key, want := range map[string]string{"t": "Topics", "E": "Exchanges", "s": "Stocks", "c": "Companies", "S": "Sources", "H": "Home"} {
+		h.press(key)
+		if got := h.m.litTab(); got != want {
+			t.Errorf("after %s the lit tab is %q, want %q", key, got, want)
+		}
+	}
+	// Screens that need something to show sit under the one they come from.
+	h.press("H")
+	h.run(h.m.goTo(nav.Route{Kind: nav.Stock, Arg: "NVDA"}))
+	if got := h.m.litTab(); got != "Stocks" {
+		t.Errorf("a stock opened from Home is under %q", got)
+	}
+	h.press("H")
+	h.run(h.m.goTo(nav.Route{Kind: nav.Exchange, Arg: "NYSE"}))
+	if got := h.m.litTab(); got != "Exchanges" {
+		t.Errorf("an exchange is under %q", got)
+	}
+}
+
+func TestExchangeSelectorNarrowsEveryScreen(t *testing.T) {
+	h := newHarness(t)
+	h.mustContain("all exchanges", "Nvidia beats estimates", "Coca-Cola raises dividend")
+	h.press("X")
+	if h.m.exchange != "Nasdaq" {
+		t.Fatalf("first X chose %q, want the exchange with most companies", h.m.exchange)
+	}
+	h.mustContain("exchange Nasdaq", "Home · ", "Nvidia beats estimates")
+	if strings.Contains(h.view(), "Coca-Cola raises dividend") {
+		t.Error("Home still shows news about a NYSE stock")
+	}
+	// The meters count the news of the exchange only.
+	if h.m.counts.articles != 2 {
+		t.Errorf("meters count %d articles, want the 2 about Nasdaq stocks", h.m.counts.articles)
+	}
+	// Every list is narrowed: topics, stocks, the catalogue.
+	h.press("s")
+	h.mustContain("NVDA", "GOOG", "exchange Nasdaq")
+	if strings.Contains(h.view(), "Coca-Cola Co") {
+		t.Error("the stock list shows a NYSE stock")
+	}
+	h.press("t")
+	h.mustContain("ai-infra")
+	if strings.Contains(h.view(), "dividends") {
+		t.Error("topics of NYSE news are shown")
+	}
+	h.press("X")
+	if h.m.exchange != "NYSE" {
+		t.Fatalf("second X chose %q", h.m.exchange)
+	}
+	h.press("H")
+	h.mustContain("Coca-Cola raises dividend")
+	h.press("X")
+	if h.m.exchange != "" {
+		t.Errorf("after the last exchange X chooses all, got %q", h.m.exchange)
+	}
+	h.press("ctrl+x")
+	if h.m.exchange != "NYSE" {
+		t.Errorf("ctrl+x from all goes to the last exchange, got %q", h.m.exchange)
+	}
+}
+
+func TestChosenExchangeDoesNotHideAStockYouOpen(t *testing.T) {
+	h := newHarness(t)
+	h.press("X", "X") // NYSE
+	h.run(h.m.goTo(nav.Route{Kind: nav.Stock, Arg: "NVDA"}))
+	h.run(h.m.loadCmd(true))
+	h.mustContain("Stock NVDA", "Nvidia beats estimates")
+}
+
+func TestExchangesListShowsMarketsAndOpensOne(t *testing.T) {
+	h := newHarness(t)
+	h.press("E")
+	h.mustContain("Exchanges", "Nasdaq", "NYSE", "Intercontinental Exchange", "09:30–16:00", "COMPANIES")
+	// It is 06:00 in New York on a Wednesday: the extended session.
+	h.mustContain("extended")
+	h.press("enter")
+	if cur := h.m.stack.Current(); cur.Kind != nav.Exchange || cur.Arg != "Nasdaq" {
+		t.Fatalf("enter opened %+v", cur)
+	}
+	h.mustContain("Exchange Nasdaq · Nasdaq Stock Market", "About", "Opening hours")
+	text := h.rows()
+	for _, want := range []string{
+		"Opening hours", "Statistics", "Types of stocks", "Stocks · 3 listed", // the sections
+		"Nasdaq, Inc.", "XNAS", "New York, United States", // about
+		"open · Pre-market, ends in 3h30m", "Pre-market   04:00–09:30 EST   = 10:00–15:30 CET", // 06:00 in New York
+		"Regular      09:30–16:00 EST   = 15:30–22:00 CET   regular session", "today        a full day",
+		"Thanksgiving Day", "Christmas Day", "New Year's Day", // the next holidays
+		"3 of the 4 companies", "news         2 articles, 2 relevant, naming 1 of its stocks", // statistics
+		"Global Select", // what it lists
+		"Latest news about its stocks", "Nvidia beats estimates", "NVDA", "GOOG", "GOOGL",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the Nasdaq page lacks %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "Coca-Cola") {
+		t.Error("the Nasdaq page lists a NYSE stock")
+	}
+}
+
+func TestUseKeyNarrowsToTheExchangeOnScreen(t *testing.T) {
+	h := newHarness(t)
+	h.press("E", "down") // Nasdaq is first, NYSE second
+	h.press("u")
+	if h.m.exchange != "NYSE" {
+		t.Fatalf("u on the second row chose %q", h.m.exchange)
+	}
+	h.mustContain("●")
+	h.press("u")
+	if h.m.exchange != "" {
+		t.Errorf("u again should show all, got %q", h.m.exchange)
+	}
+	h.press("H")
+	h.press("u")
+	if !strings.Contains(h.m.status, "works on the") {
+		t.Errorf("u outside the exchanges screens: %q", h.m.status)
+	}
+}
+
+func TestExchangeDetailShowsItsOwnNewsWhateverTheChoice(t *testing.T) {
+	h := newHarness(t)
+	h.press("X") // Nasdaq
+	h.run(h.m.goTo(nav.Route{Kind: nav.Exchange, Arg: "NYSE"}))
+	h.mustContain("Exchange NYSE")
+	text := h.rows()
+	for _, want := range []string{"Coca-Cola raises dividend", "KO"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the NYSE page lacks %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "Nvidia beats estimates") {
+		t.Error("the NYSE page shows Nasdaq news")
+	}
+}
+
+func TestUnknownExchangeSaysSo(t *testing.T) {
+	h := newHarness(t)
+	h.run(h.m.goTo(nav.Route{Kind: nav.Exchange, Arg: "Tokyo"}))
+	h.mustContain("No exchange called Tokyo")
+}
+
+func TestStockPageLoadsTheLatestNewsEvenWhenTheWindowIsEmpty(t *testing.T) {
+	h := newHarness(t)
+	h.be.arts = append(h.be.arts, art("old", "Coca-Cola retires a bottle", "example.com", 90*24*time.Hour, 0.3, 1, []string{"KO"}, nil))
+	h.run(h.m.goTo(nav.Route{Kind: nav.Stock, Arg: "KO"}))
+	h.mustContain("Stock KO", "Latest news", "Coca-Cola raises dividend", "Coca-Cola retires a bottle")
+	if !slices.Contains(h.be.searchCalls, "|ticker:KO") {
+		t.Errorf("search calls: %v, want the stock's own search", h.be.searchCalls)
+	}
+	// Newest first.
+	v := h.view()
+	if strings.Index(v, "raises dividend") > strings.Index(v, "retires a bottle") {
+		t.Errorf("latest news is not newest first:\n%s", v)
+	}
+}
+
+func TestStockWithOnlyOldNewsStillShowsIt(t *testing.T) {
+	h := newHarness(t)
+	h.be.arts = []model.Article{art("old", "Alphabet old news", "example.com", 90*24*time.Hour, 0.3, 1, []string{"GOOG"}, nil)}
+	h.run(h.m.goTo(nav.Route{Kind: nav.Stock, Arg: "GOOG"}))
+	h.mustContain("Latest news", "Alphabet old news", "only older news is shown")
+}
+
+func TestStockWithNoNewsAtAllSaysSo(t *testing.T) {
+	h := newHarness(t)
+	h.run(h.m.goTo(nav.Route{Kind: nav.Stock, Arg: "GOOG"}))
+	h.mustContain("No article names GOOG, in ")
+}
+
+func TestLatestNewsOfASiblingTickerIsIncluded(t *testing.T) {
+	h := newHarness(t)
+	h.be.arts = []model.Article{art("g", "Alphabet class A news", "example.com", 3*24*time.Hour, 0.9, 3, []string{"GOOGL"}, nil)}
+	h.run(h.m.goTo(nav.Route{Kind: nav.Stock, Arg: "GOOG"}))
+	h.mustContain("Alphabet class A news")
 }

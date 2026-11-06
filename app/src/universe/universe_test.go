@@ -477,3 +477,54 @@ func TestGroupOperatorIsAnArrangementNotAFilter(t *testing.T) {
 		t.Errorf("Hit.Group wrong: %+v", h)
 	}
 }
+
+func TestExchangesCountCompaniesAndResolveNames(t *testing.T) {
+	u := build(t)
+	got := u.Exchanges()
+	if len(got) == 0 || got[0].Count < got[len(got)-1].Count {
+		t.Fatalf("Exchanges = %v: the biggest comes first", got)
+	}
+	total := 0
+	for _, c := range got {
+		total += c.Count
+	}
+	if total > u.Len() {
+		t.Errorf("%d companies counted of %d", total, u.Len())
+	}
+	for in, want := range map[string]string{"nasdaq": "Nasdaq", "NYSE": "NYSE", " nas ": "Nasdaq"} {
+		if name, ok := u.ResolveExchange(in); !ok || name != want {
+			t.Errorf("ResolveExchange(%q) = %q, %v; want %q", in, name, ok, want)
+		}
+	}
+	if _, ok := u.ResolveExchange("zzz"); ok {
+		t.Error("an unknown exchange must not resolve")
+	}
+	if _, ok := u.ResolveExchange(""); ok {
+		t.Error("an empty name is no exchange")
+	}
+}
+
+func TestScopeNewsKeepsOnlyThatExchangesStocks(t *testing.T) {
+	u := build(t)
+	nasdaq, _ := u.Get("AAPL")
+	nyse, _ := u.Get("KO")
+	if nasdaq.Exchange == nyse.Exchange {
+		t.Fatalf("the fixture needs two exchanges: %q %q", nasdaq.Exchange, nyse.Exchange)
+	}
+	arts := []model.Article{
+		{ID: "1", Tickers: []string{"AAPL", "KO"}},
+		{ID: "2", Tickers: []string{"KO"}},
+		{ID: "3", Tickers: []string{"NOSUCH"}},
+		{ID: "4"},
+	}
+	got := u.ScopeNews(arts, nasdaq.Exchange)
+	if len(got) != 1 || got[0].ID != "1" || !slices.Equal(got[0].Tickers, []string{"AAPL"}) {
+		t.Errorf("scoped = %+v", got)
+	}
+	if !slices.Equal(arts[0].Tickers, []string{"AAPL", "KO"}) {
+		t.Errorf("the articles given were changed: %+v", arts[0])
+	}
+	if all := u.ScopeNews(arts, ""); len(all) != len(arts) {
+		t.Errorf("no exchange keeps everything, got %d", len(all))
+	}
+}

@@ -66,6 +66,9 @@ func buildCompanies(q string, d Data) Screen {
 		query = query.WithSort(s.Sort.Key, s.Sort.Desc != (s.Sort.Key == "news"))
 	}
 	hits := d.Universe.Find(query, universe.FactsFrom(d.Articles, d.Params.Threshold, d.Watchlist), 0)
+	if d.Exchange != "" {
+		hits = slices.DeleteFunc(hits, func(h universe.Hit) bool { return !h.Profile.OnExchange(d.Exchange) })
+	}
 	if len(hits) == 0 {
 		s.Notice = fmt.Sprintf("No company matches (of %d). Press / to change the query.", d.Universe.Len())
 		return s
@@ -103,6 +106,9 @@ func buildCompanies(q string, d Data) Screen {
 	}
 	if group == "" {
 		group = "exchange"
+		if d.Exchange != "" {
+			group = "kind" // one exchange would make a single group
+		}
 	}
 	s.Group = group
 	if group == "none" {

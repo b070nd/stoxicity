@@ -115,6 +115,7 @@ app/
     entity/                 company mentions to tickers
     company/                SEC and Nasdaq ticker lists, industry records
     universe/               every known stock: profiles, lists, tags, queries
+    exchange/               the exchanges: operator, hours, holidays, open now?
     refdata/                the self-refreshing reference database of stocks
     cluster/                group syndicated copies of one story
     store/                  persistence: shared Base + tenant-bound TenantStore

@@ -106,6 +106,16 @@ type Data struct {
 	Following func(ticker string) []string
 	// Feeds lists the feeds recorded for a ticker; it may be missing.
 	Feeds func(ticker string) []FeedInfo
+	// Chosen is the exchange the user narrowed everything to with X, even where
+	// the screen shows more (the list of exchanges marks it).
+	Chosen string
+	// Exchange is the exchange the screen is narrowed to; Articles holds the news
+	// of its stocks only. Empty for none.
+	Exchange string
+	// Latest is the newest news of the stock whose page is built, of any age,
+	// newest first; LatestOK says it has been asked for.
+	Latest   []model.Article
+	LatestOK bool
 	// Sort is the order the user chose for the screen's table; the zero Sort
 	// leaves it in its default order.
 	Sort Sort
@@ -129,6 +139,14 @@ const cloudWidth = 76
 
 // Build makes the screen of a route. It is a pure function of its inputs.
 func Build(r nav.Route, d Data) Screen {
+	s := build(r, d)
+	if d.Exchange != "" && r.Kind != nav.Exchange && s.Notice != "loading…" {
+		s.Title += " · exchange " + d.Exchange
+	}
+	return s
+}
+
+func build(r nav.Route, d Data) Screen {
 	switch r.Kind {
 	case nav.Home:
 		return buildHome(d)
@@ -138,6 +156,10 @@ func Build(r nav.Route, d Data) Screen {
 		return buildStock(r.Arg, d)
 	case nav.Companies:
 		return buildCompanies(r.Arg, d)
+	case nav.Exchanges:
+		return buildExchanges(d)
+	case nav.Exchange:
+		return buildExchange(r.Arg, d)
 	case nav.Topics:
 		return buildTopics(d)
 	case nav.Topic:
@@ -423,20 +445,33 @@ func buildStock(ticker string, d Data) Screen {
 	s := Screen{Title: title}
 	var b builder
 	known := profileRows(&b, ticker, d)
-	if page.Total == 0 {
+	if page.Total == 0 && len(d.Latest) == 0 {
 		if !known {
 			s.Notice = "No article names " + ticker + " in this window, and no company list knows it. Run `stoxicity universe update`, or tag it with # to keep it."
 			return s
 		}
 		b.blank()
 		b.heading("News", nil)
-		b.styled(Dim, "  No article names "+ticker+" in "+d.Params.Describe()+".")
+		switch {
+		case !d.LatestOK:
+			b.styled(Dim, "  Loading the latest news…")
+		default:
+			b.styled(Dim, "  No article names "+ticker+", in "+d.Params.Describe()+" or before.")
+		}
 		s.Rows = b.rows
 		return s
 	}
 	if known {
 		b.blank()
 	}
+	latestRows(&b, ticker, d)
+	if page.Total == 0 {
+		b.blank()
+		b.styled(Dim, "No article names "+ticker+" in "+d.Params.Describe()+": only older news is shown.")
+		s.Rows = b.rows
+		return s
+	}
+	b.blank()
 	b.styled(Dim, fmt.Sprintf("%d articles, %d relevant · %s", page.Total, page.Relevant, d.Params.Describe()))
 	if len(page.Summary.Lines) > 0 {
 		b.blank()
@@ -812,4 +847,24 @@ func buildWatches(d Data) Screen {
 	}
 	s.Rows = b.rows
 	return s
+}
+
+// latestShown is how many of the newest articles the stock page lists.
+const latestShown = 12
+
+// latestRows lists the newest news about a stock, whatever its age and whether
+// or not it passed the relevance threshold (the dim ones did not).
+func latestRows(b *builder, ticker string, d Data) {
+	b.heading("Latest news", nil)
+	switch {
+	case len(d.Latest) > 0:
+		b.articles(pages.Head(d.Latest, latestShown), d)
+		if more := len(d.Latest) - latestShown; more > 0 {
+			b.styled(Dim, fmt.Sprintf("  and %d older: search ticker:%s", more, ticker))
+		}
+	case !d.LatestOK:
+		b.styled(Dim, "  loading…")
+	default:
+		b.styled(Dim, "  nothing yet")
+	}
 }

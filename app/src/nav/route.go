@@ -9,6 +9,8 @@
 //	/stocks                all stocks seen in relevant news
 //	/companies             every known company, with a filter: /companies?q=exchange:nyse
 //	/stock/NVDA            one stock
+//	/exchanges             the markets stocks are listed on
+//	/exchange/NYSE         one exchange: facts, hours, statistics, its stocks
 //	/topics                all topics
 //	/topic/ai-infra        one topic
 //	/domains               relevant news per domain
@@ -40,6 +42,10 @@ const (
 	// filter, written as in universe.ParseQuery.
 	Companies Kind = "companies"
 	Stock     Kind = "stock"
+	// Exchanges lists the markets stocks are listed on; Exchange is one of them
+	// (Arg is its name as the universe writes it).
+	Exchanges Kind = "exchanges"
+	Exchange  Kind = "exchange"
 	Topics    Kind = "topics"
 	Topic     Kind = "topic"
 	Domains   Kind = "domains"
@@ -66,7 +72,7 @@ func (r Route) Scoped() bool { return r.Kind != Sources && r.Kind != Watches }
 // Section reports whether the route is a top-level list that starts a new trail.
 func (r Route) Section() bool {
 	switch r.Kind {
-	case Home, Stocks, Companies, Topics, Domains, Sources, Watches, Search:
+	case Home, Stocks, Companies, Exchanges, Topics, Domains, Sources, Watches, Search:
 		return true
 	}
 	return false
@@ -81,6 +87,8 @@ func (r Route) Parent() (Route, bool) {
 		return Route{Kind: Topics, Watch: r.Watch}, true
 	case Domain:
 		return Route{Kind: Domains, Watch: r.Watch}, true
+	case Exchange:
+		return Route{Kind: Exchanges, Watch: r.Watch}, true
 	}
 	return Route{}, false
 }
@@ -96,6 +104,8 @@ func (r Route) Label() string {
 		return "Topics"
 	case Domains:
 		return "Domains"
+	case Exchanges:
+		return "Exchanges"
 	case Sources:
 		return "Sources"
 	case Watches:
@@ -124,7 +134,7 @@ func (r Route) String() string {
 			return "/"
 		}
 		return prefix
-	case Stocks, Topics, Domains, Sources, Watches:
+	case Stocks, Topics, Domains, Exchanges, Sources, Watches:
 		return prefix + "/" + string(r.Kind)
 	case Search:
 		return prefix + "/search?q=" + url.QueryEscape(r.Arg)
@@ -169,12 +179,12 @@ func parsePath(s, path, query string) (Route, error) {
 	}
 	head, arg, hasArg := strings.Cut(path, "/")
 	switch Kind(head) {
-	case Stocks, Topics, Domains, Sources, Watches:
+	case Stocks, Topics, Domains, Exchanges, Sources, Watches:
 		if hasArg {
 			return Route{}, fmt.Errorf("nav: %q takes no argument", s)
 		}
 		return Route{Kind: Kind(head)}, nil
-	case Stock, Topic, Domain:
+	case Stock, Topic, Domain, Exchange:
 		if !hasArg || arg == "" {
 			return Route{}, fmt.Errorf("nav: %q needs an argument", s)
 		}

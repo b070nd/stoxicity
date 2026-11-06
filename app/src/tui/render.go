@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -100,7 +101,59 @@ func (m *Model) render() string {
 	return strings.Join(lines, "\n")
 }
 
-// watchBar is one tab per watch with its unread badge.
+// screenTabs are the screens that stand on their own, after the watches: each
+// is one key away, and the one the user is in (or is under, for a stock, a topic
+// or an exchange opened from it) is lit. The screens that need something to show
+// (a stock, a topic, a domain, a day, a search) are reached from these.
+var screenTabs = []struct {
+	label string
+	key   string
+	kinds []nav.Kind
+}{
+	{"Home", "H", []nav.Kind{nav.Home}},
+	{"Stocks", "s", []nav.Kind{nav.Stocks}},
+	{"Companies", "c", []nav.Kind{nav.Companies}},
+	{"Topics", "t", []nav.Kind{nav.Topics}},
+	{"Domains", "D", []nav.Kind{nav.Domains}},
+	{"Exchanges", "E", []nav.Kind{nav.Exchanges}},
+	{"Sources", "S", []nav.Kind{nav.Sources}},
+	{"Watches", "W", []nav.Kind{nav.Watches}},
+}
+
+// stocksQuery is what the s key and the Stocks tab open: every stock, those in
+// the news first.
+const stocksQuery = "sort:news group:none"
+
+// litTab is the screen tab the user is in: the section of the trail.
+func (m *Model) litTab() string {
+	trail := m.stack.Crumbs()
+	r := trail[0].Route
+	if len(trail) > 1 {
+		r = trail[1].Route
+	}
+	if r.Kind == nav.Companies && r.Arg == stocksQuery {
+		return "Stocks"
+	}
+	for _, t := range screenTabs {
+		if slices.Contains(t.kinds, r.Kind) {
+			return t.label
+		}
+	}
+	if r.Kind == nav.Companies {
+		return "Companies"
+	}
+	// A detail opened straight from Home belongs to the list it normally sits under.
+	if p, ok := r.Parent(); ok {
+		for _, t := range screenTabs {
+			if slices.Contains(t.kinds, p.Kind) {
+				return t.label
+			}
+		}
+	}
+	return ""
+}
+
+// watchBar is one tab per watch with its unread badge, then one per screen.
 func (m *Model) watchBar() string {
 	cur := m.stack.Watch()
 	tab := func(label string, active bool) string {
@@ -120,6 +173,24 @@ func (m *Model) watchBar() string {
 		}
 		parts = append(parts, tab(label, w.ID == cur))
 	}
+	parts = append(parts, styleDim.Render(" │"))
+	lit := m.litTab()
+	screens := func(hints bool) []string {
+		var out []string
+		for _, t := range screenTabs {
+			label := t.label
+			if hints { // the key is the first letter of the label, but its case matters: s Stocks, S Sources
+				label = t.key + " " + label
+			}
+			out = append(out, tab(label, t.label == lit))
+		}
+		return out
+	}
+	// The keys are shown when the bar has room for them.
+	if with := append(slices.Clone(parts), screens(true)...); lipgloss.Width(strings.Join(with, "")) <= m.width {
+		return strings.Join(with, "")
+	}
+	parts = append(parts, screens(false)...)
 	return strings.Join(parts, "")
 }
 
@@ -127,6 +198,11 @@ func (m *Model) watchBar() string {
 // due, how much news the window holds and what is unread.
 func (m *Model) meterLine() string {
 	var parts []string
+	if m.exchange != "" {
+		parts = append(parts, styleBold.Render("exchange "+clean(m.exchange)))
+	} else {
+		parts = append(parts, styleDim.Render("all exchanges"))
+	}
 	if m.haveSources {
 		mt := status.Summarise(m.sources)
 		if mt.Total == 0 {

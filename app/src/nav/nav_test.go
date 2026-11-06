@@ -10,7 +10,7 @@ import (
 func TestParseRoundTrip(t *testing.T) {
 	for _, s := range []string{
 		"/", "/stocks", "/stock/NVDA", "/topics", "/topic/ai-infra",
-		"/domains", "/domain/sec.gov", "/day/2026-11-03", "/sources",
+		"/domains", "/domain/sec.gov", "/exchanges", "/exchange/NYSE American", "/day/2026-11-03", "/sources",
 		"/search?q=%22free+cash+flow%22+-rumor",
 	} {
 		r, err := Parse(s)
@@ -224,5 +224,19 @@ func TestStockOpenedFromCompaniesOrSearchSitsUnderThem(t *testing.T) {
 		if !slices.Equal(labels, want) {
 			t.Errorf("from %v: crumbs = %v, want %v", list.Kind, labels, want)
 		}
+	}
+}
+
+func TestExchangeSitsUnderExchanges(t *testing.T) {
+	s := New()
+	s.Go(Route{Kind: Exchange, Arg: "NYSE"})
+	if got, want := labels(s), "Home > Exchanges > NYSE"; got != want {
+		t.Errorf("crumbs = %q, want %q", got, want)
+	}
+	if !(Route{Kind: Exchanges}).Section() || (Route{Kind: Exchange}).Section() {
+		t.Error("the list of exchanges is a section, one exchange is not")
+	}
+	if _, err := Parse("/exchanges/NYSE"); err == nil {
+		t.Error("the list takes no argument")
 	}
 }

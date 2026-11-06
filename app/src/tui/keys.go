@@ -29,6 +29,10 @@ const (
 	TagStock     Action = "tag"       // tag the stock under the cursor
 	ListStock    Action = "list"      // put the stock under the cursor in a list
 	GoTopics     Action = "topics"
+	GoExchanges  Action = "exchanges"     // the markets stocks are listed on
+	NextExchange Action = "next-exchange" // the exchange every screen is narrowed to: the next one, ending with all
+	PrevExchange Action = "prev-exchange"
+	UseExchange  Action = "use-exchange" // narrow every screen to the exchange on this screen
 	GoDomains    Action = "domains"
 	GoSources    Action = "sources"
 	OpenURL      Action = "open-url" // the selected article in the browser
@@ -182,6 +186,10 @@ var DefaultKeys = []Binding{
 	{Keys: []string{"d"}, Action: Drop, Help: "drop (noise)", Bar: "drop", Needs: OnArticle, Detail: true},
 	{Keys: []string{"o"}, Action: OpenURL, Help: "open article, site or filing", Bar: "browser", Needs: OnLink, Detail: true},
 	{Keys: []string{"t"}, Action: GoTopics, Help: "topics"},
+	{Keys: []string{"E"}, Action: GoExchanges, Help: "exchanges: hours, statistics, stocks"},
+	{Keys: []string{"X"}, Action: NextExchange, Help: "next exchange (narrows every screen)", Bar: "exchange"},
+	{Keys: []string{"ctrl+x"}, Action: PrevExchange, Help: "previous exchange (all comes between)"},
+	{Keys: []string{"u"}, Action: UseExchange, Help: "narrow every screen to this exchange", Screens: []nav.Kind{nav.Exchanges, nav.Exchange}},
 	{Keys: []string{"D"}, Action: GoDomains, Help: "domains"},
 	{Keys: []string{"S"}, Action: GoSources, Help: "source health"},
 	{Keys: []string{"up", "ctrl+p"}, Action: Up, Help: "move up"},

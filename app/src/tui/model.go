@@ -12,6 +12,7 @@ import (
 	"github.com/b070nd/stoxicity/app/src/nav"
 	"github.com/b070nd/stoxicity/app/src/pages"
 	"github.com/b070nd/stoxicity/app/src/status"
+	"github.com/b070nd/stoxicity/app/src/universe"
 )
 
 const (
@@ -62,6 +63,17 @@ type Model struct {
 	sorts map[nav.Kind]Sort
 	// group is the grouping the user chose for the catalogue with x.
 	group string
+	// exchange is the exchange every screen is narrowed to (X); empty shows all.
+	exchange string
+	// scoped is the last narrowing of the news, kept while nothing it came from
+	// changes.
+	scoped scopedNews
+	// metered is the same for the meters, which count the shared window while a
+	// Day or a Search screen is built from something else.
+	metered scopedNews
+	// latest is the newest news of each stock opened (any age), by ticker; the
+	// stock page lists it. latestOK says it was asked for.
+	latest map[string][]model.Article
 	// marks are the tickers marked with space.
 	marks map[string]bool
 	// diffNext: the next rebuild follows a reload, so the rows that are new or
@@ -129,6 +141,13 @@ type (
 		keep bool
 		err  error
 	}
+	// latestMsg is the newest news of one stock.
+	latestMsg struct {
+		ticker string
+		watch  string
+		arts   []model.Article
+		err    error
+	}
 	openedMsg struct{ err error }
 	seenMsg   struct{}
 	editedMsg struct { // a tag or list change finished
@@ -145,7 +164,7 @@ func New(ctx context.Context, opts Options) *Model {
 		be: be, opts: opts, ctx: ctx, stack: nav.New(),
 		width: 100, height: 30, cursors: map[string]int{},
 		sorts: map[nav.Kind]Sort{}, marks: map[string]bool{}, fresh: map[string]time.Time{},
-		verdicts: map[string]labels.Verdict{},
+		verdicts: map[string]labels.Verdict{}, latest: map[string][]model.Article{},
 	}
 	watch := opts.Watch
 	if watch == "" {
@@ -194,10 +213,46 @@ func needsShared(k nav.Kind) bool {
 	return true
 }
 
-// loadCmd fetches what the current screen is built from. With force false, a
+// loadCmd fetches what the current screen is built from, and for a stock the
+// newest news about it. See loadWindow.
+func (m *Model) loadCmd(force bool) tea.Cmd {
+	return tea.Batch(m.loadWindow(force), m.latestCmd())
+}
+
+// latestLimit is how many articles the stock page asks for, newest first.
+const latestLimit = 40
+
+// latestCmd asks for the newest news about the stock whose page is open, of any
+// age: the window of the other screens can be empty for a stock that has been
+// quiet for a month. It is nil on every other screen.
+func (m *Model) latestCmd() tea.Cmd {
+	r := m.stack.Current()
+	if r.Kind != nav.Stock {
+		return nil
+	}
+	ticker, watch, be, ctx := strings.ToUpper(r.Arg), m.stack.Watch(), m.be, m.ctx
+	terms := []string{"ticker:" + ticker}
+	if p, ok := be.Universe().Get(ticker); ok {
+		for _, sib := range p.Siblings { // the other tickers of the same company
+			terms = append(terms, "ticker:"+sib)
+		}
+	}
+	query := terms[0]
+	if len(terms) > 1 {
+		query = "(" + strings.Join(terms, " OR ") + ")"
+	}
+	return func() tea.Msg {
+		c, cancel := context.WithTimeout(ctx, loadTimeout)
+		defer cancel()
+		arts, err := be.Search(c, watch, query, time.Time{}, time.Time{}, latestLimit)
+		return latestMsg{ticker: ticker, watch: watch, arts: arts, err: err}
+	}
+}
+
+// loadWindow fetches what the current screen is built from. With force false, a
 // screen built from the shared window that is already loaded for this watch
 // needs no fetch.
-func (m *Model) loadCmd(force bool) tea.Cmd {
+func (m *Model) loadWindow(force bool) tea.Cmd {
 	r := m.stack.Current()
 	watch := m.stack.Watch()
 	if needsShared(r.Kind) && !force && m.sharedOK && m.sharedWatch == watch {
@@ -277,10 +332,14 @@ func (m *Model) rebuild() {
 		Watches: m.watches, WatchID: m.stack.Watch(), Now: m.be.Now(), Truncated: m.truncated,
 		Universe: m.be.Universe(), Following: m.be.Following, Feeds: m.be.StockFeeds,
 	}
+	d.Exchange, d.Chosen = m.scopeOf(r), m.exchange
 	if needsShared(r.Kind) {
-		d.Articles = m.shared
+		d.Articles = m.scoped.news(d.Universe, m.shared, d.Exchange)
 	} else {
-		d.Articles = m.routeArts
+		d.Articles = m.scoped.news(d.Universe, m.routeArts, d.Exchange)
+	}
+	if r.Kind == nav.Stock {
+		d.Latest, d.LatestOK = m.latest[strings.ToUpper(r.Arg)], m.latestKnown(r.Arg)
 	}
 	if !filtering { // the query being typed may say sort: or group: itself
 		d.Sort = m.sorts[r.Kind]
@@ -371,7 +430,7 @@ func (m *Model) countNews() newsCounts {
 		return m.counts
 	}
 	p := m.params()
-	window := pages.InWindow(m.shared, p)
+	window := pages.InWindow(m.metered.news(m.be.Universe(), m.shared, m.exchange), p)
 	return newsCounts{articles: len(window), relevant: len(pages.RelevantNewest(window, p.Threshold)), ok: true}
 }
 
@@ -427,4 +486,47 @@ func (m *Model) companyPos() int {
 		}
 	}
 	return n
+}
+
+// scopeOf is the exchange the screen of a route is narrowed to: the one chosen
+// with X, except where that would defeat the screen. A stock is shown whatever
+// its exchange; the list of exchanges shows them all; one exchange's page is
+// about that exchange.
+func (m *Model) scopeOf(r nav.Route) string {
+	switch r.Kind {
+	case nav.Stock, nav.Exchanges, nav.Sources, nav.Watches:
+		return ""
+	case nav.Exchange:
+		return r.Arg
+	}
+	return m.exchange
+}
+
+// latestKnown reports whether the newest news of the stock was asked for.
+func (m *Model) latestKnown(ticker string) bool {
+	_, ok := m.latest[strings.ToUpper(ticker)]
+	return ok
+}
+
+// scopedNews remembers the articles narrowed to an exchange, so that drawing
+// again (every second) or typing in a filter does not narrow them again.
+type scopedNews struct {
+	exchange string
+	univ     *universe.Universe
+	src      *model.Article // the first article of what was narrowed
+	n        int
+	out      []model.Article
+}
+
+// news is arts narrowed to the exchange (all of them for none).
+func (c *scopedNews) news(u *universe.Universe, arts []model.Article, exchange string) []model.Article {
+	if exchange == "" || len(arts) == 0 {
+		return arts
+	}
+	if c.exchange == exchange && c.univ == u && c.src == &arts[0] && c.n == len(arts) {
+		return c.out
+	}
+	c.exchange, c.univ, c.src, c.n = exchange, u, &arts[0], len(arts)
+	c.out = u.ScopeNews(arts, exchange)
+	return c.out
 }

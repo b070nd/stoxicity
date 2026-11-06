@@ -34,6 +34,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.rebuild()
 	case loadedMsg:
 		return m, m.loaded(msg)
+	case latestMsg:
+		if msg.watch != m.stack.Watch() {
+			break // the user changed watch meanwhile
+		}
+		if msg.err != nil {
+			m.fail("latest news of %s: %v", msg.ticker, msg.err)
+			break
+		}
+		slices.SortStableFunc(msg.arts, func(a, b model.Article) int { return b.Published.Compare(a.Published) })
+		m.latest[msg.ticker] = msg.arts
+		m.rebuild()
 	case tickMsg:
 		return m, tea.Batch(m.tickCmd(), m.watchesCmd(), m.loadCmd(true))
 	case clockMsg:
@@ -89,6 +100,7 @@ func (m *Model) checkWatch() {
 	}
 	m.stack.SwitchWatch("")
 	m.sharedOK = false
+	clear(m.latest)
 	m.fail("watch %q not found; showing all news", cur)
 }
 
@@ -150,6 +162,7 @@ func (m *Model) switchWatch(id string) tea.Cmd {
 	}
 	m.stack.SwitchWatch(id)
 	m.sharedOK = false
+	clear(m.latest) // what the watch lets through is another set
 	m.detail = nil
 	m.ok("watch: %s", m.watchName(id))
 	m.showLoading()
@@ -185,11 +198,11 @@ func (m *Model) entered() tea.Cmd {
 		m.rebuild()
 		return m.watchesCmd()
 	}
-	cmd := m.loadCmd(false)
+	cmd := m.loadWindow(false)
 	if cmd != nil {
 		m.showLoading()
 	}
-	return cmd
+	return tea.Batch(cmd, m.latestCmd())
 }
 
 // showLoading replaces the screen with a placeholder until the load answers.
@@ -252,7 +265,7 @@ func (m *Model) key(k tea.KeyPressMsg) tea.Cmd {
 		return m.goTo(nav.Route{Kind: nav.Home})
 	case GoStocks:
 		// Every stock, those in the news first: the same list as the catalogue.
-		return m.goTo(nav.Route{Kind: nav.Companies, Arg: "sort:news group:none"})
+		return m.goTo(nav.Route{Kind: nav.Companies, Arg: stocksQuery})
 	case GoCompanies:
 		return m.goTo(nav.Route{Kind: nav.Companies})
 	case TagStock:
@@ -261,6 +274,14 @@ func (m *Model) key(k tea.KeyPressMsg) tea.Cmd {
 		return m.startEdit(modeMember)
 	case GoTopics:
 		return m.goTo(nav.Route{Kind: nav.Topics})
+	case GoExchanges:
+		return m.goTo(nav.Route{Kind: nav.Exchanges})
+	case NextExchange:
+		m.cycleExchange(1)
+	case PrevExchange:
+		m.cycleExchange(-1)
+	case UseExchange:
+		m.useExchange(cur)
 	case GoDomains:
 		return m.goTo(nav.Route{Kind: nav.Domains})
 	case GoSources:
@@ -701,3 +722,56 @@ func clipURL(s string) string { return clip(oneLine(s), 60) }
 
 // bodyHeight is how many rows the body shows.
 func (m *Model) bodyHeight() int { return max(m.height-chromeLines, minHeight-chromeLines) }
+
+// setExchange narrows every screen to an exchange ("" for all of them).
+func (m *Model) setExchange(name string) {
+	m.exchange = name
+	if name == "" {
+		m.ok("exchange: all")
+	} else {
+		m.ok("exchange: %s (X for the next, ctrl+x for the previous)", name)
+	}
+	m.rebuild()
+}
+
+// cycleExchange steps the exchange all screens are narrowed to along the
+// exchanges the companies are listed on, the biggest first, with "all" before
+// the first and after the last.
+func (m *Model) cycleExchange(dir int) {
+	names := []string{""}
+	for _, c := range m.be.Universe().Exchanges() {
+		names = append(names, c.Name)
+	}
+	if len(names) == 1 {
+		m.fail("no company has an exchange yet: run `stoxicity universe update`")
+		return
+	}
+	i := slices.Index(names, m.exchange)
+	if i < 0 {
+		i = 0
+	}
+	m.setExchange(names[((i+dir)%len(names)+len(names))%len(names)])
+}
+
+// useExchange narrows every screen to the exchange the cursor is on in the list
+// of exchanges, or the one whose page is open; asked again for the exchange that
+// is already chosen, it shows all.
+func (m *Model) useExchange(cur nav.Route) {
+	name := ""
+	switch cur.Kind {
+	case nav.Exchange:
+		name = cur.Arg
+	case nav.Exchanges:
+		if row, ok := m.row(); ok && row.Go != nil && row.Go.Kind == nav.Exchange {
+			name = row.Go.Arg
+		}
+	}
+	switch {
+	case name == "":
+		m.fail("put the cursor on an exchange first")
+	case strings.EqualFold(name, m.exchange):
+		m.setExchange("")
+	default:
+		m.setExchange(name)
+	}
+}
