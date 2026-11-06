@@ -31,6 +31,7 @@ import (
 	"github.com/b070nd/stoxicity/app/src/company"
 	"github.com/b070nd/stoxicity/app/src/httpx"
 	"github.com/b070nd/stoxicity/app/src/model"
+	"github.com/b070nd/stoxicity/app/src/stockfeeds"
 	"github.com/b070nd/stoxicity/app/src/store"
 	"github.com/b070nd/stoxicity/app/src/universe"
 )
@@ -52,6 +53,10 @@ type Settings struct {
 	// IndustryMaxAge is how old a company record may get; zero means
 	// company.DefaultIndustryAge.
 	IndustryMaxAge time.Duration
+	// FeedSearch is how many company websites one cycle reads to find the
+	// company's own news feed. Zero reads none; the SEC filing record of every
+	// stock is written down either way when Refresher.Feeds is set.
+	FeedSearch int
 }
 
 // Refresher brings the database up to date.
@@ -65,6 +70,10 @@ type Refresher struct {
 	// ones you follow, list, tag, or that are in the news. They are fetched
 	// before the rest. May be nil.
 	Interesting func(ctx context.Context) []string
+	// Feeds, when set, keeps the feeds of each stock: after the sync it writes
+	// down the SEC filing record of every stock with a CIK and searches the
+	// websites of Settings.FeedSearch companies for theirs.
+	Feeds *stockfeeds.Keeper
 	// Logf receives one line per notable thing; may be nil.
 	Logf func(format string, args ...any)
 }
@@ -73,6 +82,10 @@ type Refresher struct {
 type Report struct {
 	Tickers, Listing, Companies store.RefDiff
 	Enriched                    company.EnrichResult
+	// FeedsSeeded is how many SEC filing records of stocks are new; Feeds is
+	// what the search of company websites did.
+	FeedsSeeded int
+	Feeds       stockfeeds.Report
 	// Problems are the steps that failed; the others still ran.
 	Problems []error
 }
@@ -142,6 +155,9 @@ func (r *Refresher) Cycle(ctx context.Context, force bool) Report {
 	for _, source := range slices.Sorted(maps.Keys(failed)) {
 		_ = r.Ref.RefConfirm(sctx, source, "", "", r.now(), failed[source].Error())
 	}
+	if r.Feeds != nil && ctx.Err() == nil {
+		r.keepFeeds(ctx, &rep, problem)
+	}
 	if rep.Tickers.Added+rep.Tickers.Removed+rep.Tickers.Changed > 0 {
 		r.logf("reference: tickers %+d -%d ~%d", rep.Tickers.Added, rep.Tickers.Removed, rep.Tickers.Changed)
 	}
@@ -149,6 +165,32 @@ func (r *Refresher) Cycle(ctx context.Context, force bool) Report {
 		r.logf("reference: companies %+d ~%d", rep.Companies.Added, rep.Companies.Changed)
 	}
 	return rep
+}
+
+// keepFeeds writes down the feed of each stock and looks for more.
+func (r *Refresher) keepFeeds(ctx context.Context, rep *Report, problem func(string, error)) {
+	stocks, err := stockfeeds.Stocks(ctx, r.Ref)
+	if err != nil {
+		problem("stock feeds", err)
+		return
+	}
+	if rep.FeedsSeeded, err = r.Feeds.Seed(ctx, stocks); err != nil {
+		problem("stock feeds", err)
+		return
+	}
+	if rep.FeedsSeeded > 0 {
+		r.logf("stock feeds: %d SEC filing records", rep.FeedsSeeded)
+	}
+	if r.Set.FeedSearch <= 0 {
+		return
+	}
+	var first []string
+	if r.Interesting != nil {
+		first = r.Interesting(ctx)
+	}
+	if rep.Feeds, err = r.Feeds.Discover(ctx, stocks, first, r.Set.FeedSearch); err != nil && ctx.Err() == nil {
+		problem("stock feeds", err)
+	}
 }
 
 // enrich fetches up to budget company records: first those of interesting

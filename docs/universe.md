@@ -45,6 +45,9 @@ only the rows in view, so it stays quick.
   (`sort:-news` reverses) overrides both and combines with any filter, for
   example `exchange:nyse kind:etf sort:name`. The line under the title says which
   order and how many of how many.
+- **Groups.** Under a heading per exchange by default, the biggest first; `x`
+  cycles exchange, kind, industry and none, and `group:kind` in a query sets it.
+  Sorting applies inside each group.
 - **Moving.** `home`, `end`, `pgup`, `pgdn`, and `g` to jump: type the start of a
   ticker (of a name, under `sort:name`) and the cursor goes to the first one
   that starts with it, without filtering the list. The status line says where
@@ -71,8 +74,10 @@ filled from them the first time it is needed.
   `company.refresh_every` (6h; `off` disables): the ticker list, the Nasdaq
   files, then the industry data of up to `company.enrich_per_cycle` companies
   (those you follow, list or tag first, then the rest in CIK order, so it covers
-  everything over a few cycles), then the sync. `universe update` and
-  `universe enrich` do the same by hand.
+  everything over a few cycles), then the sync, then the feeds of each stock
+  (the SEC filing record of every stock with a CIK, and the websites of up to
+  `company.feed_search_per_cycle` companies searched for their own news feed).
+  `universe update`, `universe enrich` and `universe feeds` do the same by hand.
 - **Deterministic.** A source is compared by a hash of its parsed rows sorted by
   key, not of the bytes, so the same content in another order or fetched at
   another time changes nothing and writes nothing but the time it was checked.
@@ -158,6 +163,9 @@ tag:moat                 carries your tag
 watched:yes              on your watchlist or in a watch
 news:>=3  news:yes       relevant articles in the window
 sort:name  sort:-news    the order: ticker, name, news, industry, exchange, kind
+group:exchange|kind|industry|none
+                         how the catalogue arranges the list under headings; the
+                         default is by exchange. Not a filter.
 ```
 
 Terms are ANDed; `|` or `OR` makes a choice; there are no parentheses. Free text

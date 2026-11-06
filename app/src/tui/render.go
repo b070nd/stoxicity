@@ -277,7 +277,11 @@ func (m *Model) statusLine() string {
 		parts = append(parts, "refreshed "+m.refreshed.In(m.be.Zone()).Format("15:04"))
 	}
 	if m.stack.Current().Kind == nav.Companies && m.vp.Len() > 0 {
-		parts = append(parts, fmt.Sprintf("company %s of %s", thousands(m.vp.Cursor()+1), thousands(m.vp.Len())))
+		if pos := m.companyPos(); pos > 0 {
+			parts = append(parts, fmt.Sprintf("company %s of %s", thousands(pos), thousands(m.companies)))
+		} else {
+			parts = append(parts, "enter opens the group")
+		}
 	}
 	if n := len(m.marks); n > 0 {
 		parts = append(parts, fmt.Sprintf("%d marked", n))

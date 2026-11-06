@@ -458,3 +458,22 @@ func TestSecuritiesOnlyTheDirectoryListsJoinTheCatalogue(t *testing.T) {
 		t.Errorf("AAPL = %+v", a)
 	}
 }
+
+func TestGroupOperatorIsAnArrangementNotAFilter(t *testing.T) {
+	q := mustQuery(t, "moat group:Exchange")
+	if q.GroupKey() != "exchange" {
+		t.Errorf("GroupKey = %q", q.GroupKey())
+	}
+	if got := mustQuery(t, "moat").GroupKey(); got != "" {
+		t.Errorf("no group: asks for none, got %q", got)
+	}
+	for _, bad := range []string{"group:colour", "-group:kind", "tag:a OR group:kind"} {
+		if _, err := ParseQuery(bad); err == nil {
+			t.Errorf("%q should not parse", bad)
+		}
+	}
+	h := Hit{Profile: &Profile{Exchange: "NYSE", Kind: "etf", Industry: "Software"}}
+	if h.Group("exchange") != "NYSE" || h.Group("kind") != "etf" || h.Group("industry") != "Software" || h.Group("none") != "" {
+		t.Errorf("Hit.Group wrong: %+v", h)
+	}
+}

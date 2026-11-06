@@ -17,6 +17,18 @@ type WatchInfo struct {
 	Unread int
 }
 
+// FeedInfo is one feed of a stock as its profile shows it: the company's filing
+// record at the SEC or the news feed its website points to.
+type FeedInfo struct {
+	Kind      string // "sec" or "site"
+	Title     string
+	URL       string // the feed's address; for the SEC, the company's page on EDGAR
+	LastOK    time.Time
+	LastNew   int
+	Failures  int
+	LastError string
+}
+
 // Backend is everything the interface reads and writes. The workspace package
 // implements it over the stores; tests use a fake. Every article it returns has
 // passed the tenant's licence visibility, so a view never filters for it.
@@ -40,6 +52,9 @@ type Backend interface {
 	Universe() *universe.Universe
 	// Following lists the names of the watches whose scope names the ticker.
 	Following(ticker string) []string
+	// StockFeeds lists the feeds recorded for a ticker (not those of the other
+	// tickers of its company), the SEC record first.
+	StockFeeds(ticker string) []FeedInfo
 
 	Watches(ctx context.Context) ([]WatchInfo, error)
 	// Articles are the visible articles published in [from, to). With a watch

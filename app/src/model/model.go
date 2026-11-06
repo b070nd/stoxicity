@@ -11,6 +11,11 @@ const (
 	KindRSS     Kind = "rss"     // RSS or Atom feed
 	KindFilings Kind = "filings" // regulator filings, such as SEC EDGAR
 	KindAPI     Kind = "api"     // JSON API
+	// KindStockFeeds is a pool: one source that stands for the feeds of every
+	// stock (their SEC filing records, or their companies' own news feeds). The
+	// feeds are rows of the database with a schedule of their own, so thousands
+	// of them are one line on the board. See Source.Pool.
+	KindStockFeeds Kind = "stockfeeds"
 )
 
 // Tier says how much a source is trusted. Primary sources (filings, company

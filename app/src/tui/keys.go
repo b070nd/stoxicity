@@ -43,6 +43,7 @@ const (
 	SortNext     Action = "sort-next"   // sort by the next column
 	SortPrev     Action = "sort-prev"   // sort by the previous column
 	SortInvert   Action = "sort-invert" // turn the order round
+	GroupNext    Action = "group"       // group the catalogue by exchange, kind, industry, or not
 	Mark         Action = "mark"        // mark the stock under the cursor and move down
 	Unmark       Action = "unmark"      // clear every mark
 	Keep         Action = "keep"        // label the selected article relevant
@@ -99,6 +100,9 @@ type Context struct {
 	Table  bool
 	// Article is the article under the cursor or open.
 	Article bool
+	// Marked: some stocks are marked, so # and L have something to apply to
+	// wherever the cursor is.
+	Marked bool
 }
 
 // Applies reports whether the binding does anything in the context.
@@ -115,7 +119,7 @@ func (b Binding) Applies(c Context) bool {
 	case OnArticle:
 		return c.Article
 	case OnStock:
-		return c.Kind == nav.Stock || (c.HasRow && markable(c.Row) != "")
+		return c.Marked || c.Kind == nav.Stock || (c.HasRow && markable(c.Row) != "")
 	case OnLink:
 		return c.Article || (c.HasRow && c.Row.URL != "")
 	case OnColumns:
@@ -169,6 +173,7 @@ var DefaultKeys = []Binding{
 	{Keys: []string{">"}, Action: SortNext, Help: "sort by the next column", Bar: "sort", Needs: OnColumns},
 	{Keys: []string{"<"}, Action: SortPrev, Help: "sort by the previous column", Needs: OnColumns},
 	{Keys: []string{"I"}, Action: SortInvert, Help: "turn the sort order round", Bar: "invert", Needs: OnColumns},
+	{Keys: []string{"x"}, Action: GroupNext, Help: "group by exchange, kind, industry, none", Bar: "group", Screens: []nav.Kind{nav.Companies}},
 	{Keys: []string{"space"}, Action: Mark, Help: "mark the stock, move down", Bar: "mark", Needs: OnStock},
 	{Keys: []string{"U"}, Action: Unmark, Help: "clear all marks"},
 	{Keys: []string{"#"}, Action: TagStock, Help: "tag stock or marked (-tag removes)", Bar: "tag", Needs: OnStock},

@@ -82,7 +82,7 @@ func (a *app) poller(srcs []model.Source, pipe *pipeline.Pipeline, now bool) (*s
 	var states scheduler.StateStore = db
 	opts := scheduler.Options{
 		Sources:         srcs,
-		Fetchers:        registry.New(client, registry.Options{Now: a.opts.now, Tickers: edgar.TickersByCIK(a.companies().Entities)}),
+		Fetchers:        registry.New(client, registry.Options{Now: a.opts.now, Tickers: edgar.TickersByCIK(a.companies().Entities), StockFeeds: db}),
 		Sink:            pipe,
 		DefaultInterval: a.cfg.FetchInterval(),
 		MaxBackoff:      a.cfg.MaxBackoff(),

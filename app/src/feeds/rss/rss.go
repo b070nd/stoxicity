@@ -479,3 +479,17 @@ func parseDate(s string) (time.Time, bool) {
 	}
 	return time.Time{}, false
 }
+
+// Check reports how many entries body holds if it is an RSS or Atom feed, and
+// why it is not one otherwise. It is how a feed found on a web page is
+// confirmed before anything is stored for it.
+func Check(body []byte) (entries int, err error) {
+	if looksLikeHTML(body) {
+		return 0, errors.New("rss: an HTML page, not a feed")
+	}
+	items, err := parse(body)
+	if err != nil {
+		return 0, err
+	}
+	return len(items), nil
+}

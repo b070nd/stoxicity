@@ -221,6 +221,20 @@ func (w *Workspace) rebuildLocked() {
 	}
 }
 
+// StockFeeds lists the feeds recorded for a ticker, the SEC record first.
+func (w *Workspace) StockFeeds(ticker string) []tui.FeedInfo {
+	list, err := w.db.StockFeedsOf(context.Background(), universe.Ticker(ticker))
+	if err != nil {
+		return nil
+	}
+	out := make([]tui.FeedInfo, len(list))
+	for i, f := range list {
+		out[i] = tui.FeedInfo{Kind: f.Kind, Title: f.Title, URL: f.URL, LastOK: f.LastOK,
+			LastNew: f.LastNew, Failures: f.Failures, LastError: f.LastError}
+	}
+	return out
+}
+
 // Following lists the names of the tenant's watches whose scope names the
 // ticker.
 func (w *Workspace) Following(ticker string) []string {

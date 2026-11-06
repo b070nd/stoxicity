@@ -404,3 +404,22 @@ func TestUniverseFollowsTheReferenceDatabase(t *testing.T) {
 		t.Errorf("ZZZZ = %+v, %v after the database changed", p, ok)
 	}
 }
+
+func TestStockFeedsAreTheOnesRecordedForTheTicker(t *testing.T) {
+	w := open(t, setup(t))
+	at := time.Date(2026, 11, 6, 9, 0, 0, 0, time.UTC)
+	if _, err := w.db.PutStockFeeds(context.Background(), []store.StockFeed{
+		{Ticker: "NVDA", Kind: store.FeedSite, URL: "https://nvidianews.nvidia.com/rss", Title: "NVIDIA newsroom"},
+		{Ticker: "NVDA", Kind: store.FeedSEC, URL: "https://data.sec.gov/submissions/CIK0001045810.json", Title: "SEC filings"},
+		{Ticker: "KO", Kind: store.FeedSEC, URL: "https://data.sec.gov/submissions/CIK0000021344.json"},
+	}, at); err != nil {
+		t.Fatal(err)
+	}
+	got := w.StockFeeds("nvda")
+	if len(got) != 2 || got[0].Kind != store.FeedSEC || got[1].Title != "NVIDIA newsroom" {
+		t.Errorf("StockFeeds(nvda) = %+v, want the SEC record first, then the company feed", got)
+	}
+	if got := w.StockFeeds("ZZZ"); len(got) != 0 {
+		t.Errorf("StockFeeds(ZZZ) = %+v", got)
+	}
+}

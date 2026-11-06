@@ -123,6 +123,11 @@ type Company struct {
 	// the rest in CIK order, so the whole list fills in over a few days. Zero
 	// fetches none.
 	EnrichPerCycle int `yaml:"enrich_per_cycle"`
+	// FeedSearchPerCycle is how many company websites one background cycle
+	// reads to find the company's own news feed (the SEC filing record of each
+	// stock needs no search). The ones you follow come first. A website is read
+	// again only after a month. Zero looks for none.
+	FeedSearchPerCycle int `yaml:"feed_search_per_cycle"`
 }
 
 // Laya points at a laya-serve sidecar used for the second scoring stage.

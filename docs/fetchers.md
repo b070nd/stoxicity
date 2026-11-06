@@ -63,6 +63,7 @@ source-specific cursor. Rules:
 | `feeds/rss` | `rss` | RSS 2.0 and Atom: central banks, regulators, company IR | ETag, Last-Modified; `Seen` as a backstop |
 | `feeds/edgar` | `filings` | SEC EDGAR (section 7) | `Seen` (accession numbers), `Cursor` (back-fill date) |
 | `feeds/api` | `api` | Licensed JSON APIs, optional | Cursor or `since` token; daily request budget |
+| `feeds/pool` | `stockfeeds` | The feeds of every stock (section 12) | Nothing of its own: each feed keeps its state in the database |
 
 Source definitions live in `app/config/sources.yaml`. A file in a user's
 `sources/` folder that reuses a shipped `id` overrides only the fields it names
@@ -175,6 +176,7 @@ app/src/feeds/
   feeds.go            Fetcher, State, Result
   rss/rss.go          RSS and Atom
   api/api.go          licensed JSON APIs (optional)
+  pool/pool.go        the feeds of every stock, a batch per poll (section 12)
   edgar/
     edgar.go          package overview
     current.go        live feed, paged
@@ -215,3 +217,44 @@ the numbers.
 
 Windows (see [configuration](configuration.md)); scraping sites whose
 `robots.txt` or terms forbid it; EDGAR full-text search.
+
+## 12. The feeds of every stock
+
+Most companies publish their own feed, and every US-listed one has a filing
+record at the SEC. Thousands of feeds cannot each be a source (the board would
+list them all and the scheduler would keep a timer for each), so they are rows of
+the table `stock_feed` in `base.db` and are read by two *pool* sources of kind
+`stockfeeds` (`pool: sec`, `pool: site`):
+
+| Pool | Feed | Where it comes from | Read with |
+|---|---|---|---|
+| `sec` (`stock-feeds-sec`) | `data.sec.gov/submissions/CIK##########.json`, one per company | written down for every stock with a CIK (tickers of one company share one) | `edgar.Submissions` |
+| `site` (`stock-feeds-sites`) | the news or investor feed the company's website announces | found by `stockfeeds.Keeper.Discover` | `rss` |
+
+- **A poll is a batch.** The pool's `interval` is how often a batch is read,
+  `batch` how many feeds it holds and `cycle` how long a feed rests before it is
+  read again. A poll takes the feeds that have waited longest (index
+  `stock_feed(kind, next_due_ms)`), reads them a few at a time, and stores each
+  one's validators, newest IDs and next due time. The scheduler sees one source.
+- **Failures are per feed.** A feed that fails rests one cycle, doubling each
+  time up to a week, a feed that is gone (404, not a feed) a week, and one whose
+  site blocked us a day at least. The SEC is a single host, so when it blocks or
+  throttles, the batch stops, the feeds stay due and the scheduler's cooldown
+  applies to the pool.
+- **Only news.** Articles older than 14 days are dropped, so reading a feed for
+  the first time does not load years of history. Articles carry the stock's
+  ticker (`Article.Tickers`); SEC articles use the accession number as their ID,
+  so a filing also seen in the current-filings feed is stored once.
+- **Finding the site feed** (`app/src/stockfeeds`). The company's website (from
+  its SEC record) is read for `<link rel="alternate" type="application/rss+xml">`
+  or `atom+xml`; if the home page names none, up to three news, press or
+  investor pages it links to are read the same way. A candidate is kept only if
+  it is on the company's own site (same registered domain), is not a comments or
+  search feed, and parses as a feed with entries. `robots.txt` of each host is
+  honoured; a missing one allows everything. A company is searched again after
+  30 days (a week if its site could not be read), those you follow first.
+  Feeds are the company's own words, shipped as `internal` licence.
+- **Who writes the rows.** The background refresh of `stoxicity run`
+  (`company.feed_search_per_cycle` websites per cycle) and
+  `stoxicity universe feeds [-search N]`, which also prints how many feeds there
+  are. The stock page of the TUI lists the feeds of a stock and how they are doing.

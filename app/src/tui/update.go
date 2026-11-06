@@ -252,7 +252,7 @@ func (m *Model) key(k tea.KeyPressMsg) tea.Cmd {
 		return m.goTo(nav.Route{Kind: nav.Home})
 	case GoStocks:
 		// Every stock, those in the news first: the same list as the catalogue.
-		return m.goTo(nav.Route{Kind: nav.Companies, Arg: "sort:news"})
+		return m.goTo(nav.Route{Kind: nav.Companies, Arg: "sort:news group:none"})
 	case GoCompanies:
 		return m.goTo(nav.Route{Kind: nav.Companies})
 	case TagStock:
@@ -296,6 +296,12 @@ func (m *Model) key(k tea.KeyPressMsg) tea.Cmd {
 		m.sortBy(-1)
 	case SortInvert:
 		m.sortBy(0)
+	case GroupNext:
+		keys := universe.GroupKeys()
+		next := keys[(slices.Index(keys, m.scr.Group)+1)%len(keys)]
+		m.group = next
+		m.ok("grouped by %s", next)
+		m.rebuild()
 	case Mark:
 		m.mark()
 	case Unmark:
@@ -383,7 +389,8 @@ func (m *Model) filterEvent(ev PromptEvent) tea.Cmd {
 				m.rebuild()
 				return nil
 			}
-			delete(m.sorts, nav.Companies) // the new query's own sort: applies
+			delete(m.sorts, nav.Companies) // the new query's own sort: and group: apply
+			m.group = ""
 			return m.goTo(nav.Route{Kind: nav.Companies, Arg: q})
 		}
 		if q == "" {
@@ -455,7 +462,7 @@ func (m *Model) context() Context {
 	row, ok := m.row()
 	return Context{
 		Kind: m.stack.Current().Kind, Detail: m.detail != nil,
-		Row: row, HasRow: ok, Table: m.scr.Table != nil, Article: m.selected() != nil,
+		Row: row, HasRow: ok, Table: m.scr.Table != nil, Article: m.selected() != nil, Marked: len(m.marks) > 0,
 	}
 }
 
@@ -634,6 +641,9 @@ func (m *Model) openRow() tea.Cmd {
 	case row.Article != nil:
 		m.detail = row.Article
 	case row.Go != nil:
+		if row.Go.Kind == nav.Companies {
+			m.group = "" // the group opened is the query's now, not x's
+		}
 		return m.goTo(*row.Go)
 	case row.HasWatch:
 		m.cursors[m.stack.Current().String()] = m.vp.Cursor()

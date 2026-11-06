@@ -109,6 +109,15 @@ one that starts with it. `sort:name`, `sort:news`, `sort:industry`,
 `sort:exchange` and `sort:kind` change the order ([universe.md](universe.md) has
 the whole query language and the export). `/` there filters the list as you type: `exchange:nyse tag:moat -etf`. `enter`
 keeps the query as part of the breadcrumb, `esc` leaves the list as it was.
+The catalogue is grouped under a heading per exchange ("Exchange Nasdaq · 5,608"),
+the biggest first, then the stocks the SEC lists but no exchange does; inside a
+group the order is the one you sort by. `x` cycles the grouping through exchange,
+kind, industry and none, and `group:kind` (and so on) in the query sets it for
+that query. The exchange comes from the Nasdaq symbol directory; a code it does
+not explain is shown as it is. `s` opens the same list flat, news first.
+Headings are rows too: `enter` on "Exchange NYSE · 2,894" opens the list narrowed
+to that exchange (`exchange:"NYSE"`), flat. The catalogue starts on its first
+stock, and the status line counts stocks only.
 `enter` on a company opens its profile, which also exists for stocks with no news
 in the window.
 
@@ -160,3 +169,12 @@ The pieces behind the keys, each with a small interface of its own:
   the live board of `stoxicity run`, and `status.Summarise` adds them up. The
   level is graded when read, so a source nothing polls any more turns yellow
   instead of staying green.
+
+## Feeds on the stock page
+
+The profile of a stock lists its feeds under `feeds`: the SEC filing record and,
+where the company's website announces one, its own news feed, each with when it
+was last read and how many articles that gave, or `failing (n×)` with the reason.
+`o` on a feed row opens it (the SEC record opens the company's page on EDGAR). The
+rows come from `Backend.StockFeeds`; where none is recorded yet the page says how
+to get them (`stoxicity universe feeds`).

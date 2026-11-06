@@ -80,6 +80,9 @@ type Screen struct {
 	// by which columns they can be (Table holds no items).
 	Table *Table
 	Sort  Sort
+	// Group is how the rows are arranged in groups ("exchange", "kind",
+	// "industry" or "none"); empty for a screen that has none.
+	Group string
 	// Empty is shown when there are no rows besides the title.
 	Notice string
 }
@@ -101,9 +104,14 @@ type Data struct {
 	// a ticker. Either may be missing.
 	Universe  *universe.Universe
 	Following func(ticker string) []string
+	// Feeds lists the feeds recorded for a ticker; it may be missing.
+	Feeds func(ticker string) []FeedInfo
 	// Sort is the order the user chose for the screen's table; the zero Sort
 	// leaves it in its default order.
 	Sort Sort
+	// Group is the grouping the user chose for the catalogue; empty leaves it to
+	// the query and then to the default, by exchange.
+	Group string
 }
 
 func (d Data) name(t string) string {

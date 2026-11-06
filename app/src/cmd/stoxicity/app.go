@@ -32,6 +32,7 @@ import (
 	"github.com/b070nd/stoxicity/app/src/pipeline"
 	"github.com/b070nd/stoxicity/app/src/refdata"
 	"github.com/b070nd/stoxicity/app/src/sources"
+	"github.com/b070nd/stoxicity/app/src/stockfeeds"
 	"github.com/b070nd/stoxicity/app/src/store"
 	"github.com/b070nd/stoxicity/app/src/tenant"
 	"github.com/b070nd/stoxicity/app/src/universe"
@@ -746,9 +747,10 @@ func (a *app) referenceKeeper(db *store.DB, client httpx.Client) *refdata.Refres
 		Set: refdata.Settings{
 			Dir: a.companyDir(), MasterURL: c.URL, NasdaqURL: c.NasdaqURL, OtherURL: c.OtherURL,
 			SubmissionsURL: c.SubmissionsURL, MaxAge: a.cfg.CompanyMaxAge(), Listing: c.Listing,
-			PerCycle: c.EnrichPerCycle,
+			PerCycle: c.EnrichPerCycle, FeedSearch: c.FeedSearchPerCycle,
 		},
-		Logf: func(format string, args ...any) { fmt.Fprintf(a.stdout, format+"\n", args...) },
+		Feeds: &stockfeeds.Keeper{Store: db, Client: client, Now: a.now},
+		Logf:  func(format string, args ...any) { fmt.Fprintf(a.stdout, format+"\n", args...) },
 	}
 	// What the background cycle needs from the app is taken here, on the
 	// command's own goroutine: the settings and the tickers the watches name.

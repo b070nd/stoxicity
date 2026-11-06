@@ -6,10 +6,12 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/b070nd/stoxicity/app/src/feeds"
 	"github.com/b070nd/stoxicity/app/src/httpx"
 	"github.com/b070nd/stoxicity/app/src/model"
+	"github.com/b070nd/stoxicity/app/src/store"
 )
 
 // scriptedClient returns the same answer to every request and records the URLs.
@@ -32,9 +34,20 @@ func TestNewHasEveryKind(t *testing.T) {
 		}
 	}
 	if len(m) != 3 {
-		t.Errorf("got %d fetchers, want 3", len(m))
+		t.Errorf("got %d fetchers, want 3: the pools need a store", len(m))
+	}
+	if m := New(&scriptedClient{}, Options{StockFeeds: poolStore{}}); m[model.KindStockFeeds] == nil || len(m) != 4 {
+		t.Errorf("with a store the pools have a fetcher: %d fetchers", len(m))
 	}
 }
+
+// poolStore is a store with nothing in it.
+type poolStore struct{}
+
+func (poolStore) DueStockFeeds(context.Context, string, time.Time, int) ([]store.StockFeed, error) {
+	return nil, nil
+}
+func (poolStore) SaveStockFeed(context.Context, store.StockFeed) error { return nil }
 
 func TestDispatch(t *testing.T) {
 	const atom = `<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom"></feed>`

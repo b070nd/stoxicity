@@ -3,10 +3,13 @@ package tui
 import (
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
+	"time"
 
 	"github.com/b070nd/stoxicity/app/src/nav"
 	"github.com/b070nd/stoxicity/app/src/pages"
+	"github.com/b070nd/stoxicity/app/src/store"
 	"github.com/b070nd/stoxicity/app/src/universe"
 )
 
@@ -94,12 +97,85 @@ func buildCompanies(q string, d Data) Screen {
 	for _, w := range d.Watchlist {
 		watched[universe.Ticker(w)] = true
 	}
-	for _, h := range hits {
-		t.Items = append(t.Items, companyItem(h, watched[h.Profile.Ticker]))
+	group := d.Group
+	if group == "" {
+		group = query.GroupKey()
 	}
-	b.rows = append(b.rows, t.Rows(s.Sort)...)
+	if group == "" {
+		group = "exchange"
+	}
+	s.Group = group
+	if group == "none" {
+		group = ""
+	}
+	keys := make([]string, len(hits))
+	for i, h := range hits {
+		t.Items = append(t.Items, companyItem(h, watched[h.Profile.Ticker]))
+		keys[i] = h.Group(group)
+	}
+	drill := func(value string) *nav.Route {
+		if value == "" || strings.ContainsAny(value, `"*`) {
+			return nil
+		}
+		return route(nav.Companies, strings.TrimSpace(q+" "+group+`:"`+value+`" group:none`))
+	}
+	b.rows = append(b.rows, groupRows(t, keys, group, s.Sort, drill)...)
 	s.Rows = b.rows
 	return s
+}
+
+// groupRows is the table's rows arranged under a heading for each value of the
+// group (keys holds one per item): the biggest group first, the items with no
+// value last. A heading opens the list narrowed to its group (enter). Inside a group the items keep the order they came in. Without a
+// group it is the table as it is.
+func groupRows(t Table, keys []string, group string, sort Sort, drill func(value string) *nav.Route) []Row {
+	if group == "" {
+		return t.Rows(sort)
+	}
+	items := map[string][]Item{}
+	for i, it := range t.Items {
+		items[keys[i]] = append(items[keys[i]], it)
+	}
+	order := make([]string, 0, len(items))
+	for k := range items {
+		order = append(order, k)
+	}
+	slices.SortFunc(order, func(a, b string) int {
+		switch {
+		case (a == "") != (b == ""):
+			if a == "" {
+				return 1
+			}
+			return -1
+		case len(items[a]) != len(items[b]):
+			return len(items[b]) - len(items[a])
+		}
+		return strings.Compare(a, b)
+	})
+	head := t
+	head.Items = nil
+	rows := head.Rows(sort) // the header alone
+	for _, k := range order {
+		part := t
+		part.Items = items[k]
+		rows = append(rows, Row{Text: fmt.Sprintf("%s · %s", groupName(group, k), thousands(len(part.Items))), Style: Heading, Go: drill(k)})
+		rows = append(rows, part.Body(sort)...)
+	}
+	return rows
+}
+
+// groupName is what a group is called in its heading.
+func groupName(group, value string) string {
+	if value != "" {
+		return strings.ToUpper(group[:1]) + group[1:] + " " + value
+	}
+	switch group {
+	case "exchange":
+		return "No exchange (SEC list only)"
+	case "industry":
+		return "No industry recorded yet"
+	}
+	return "No " + group
 }
 
 // companyTable is the columns of the catalogue. The list is ordered by the
@@ -241,6 +317,8 @@ func profileRows(b *builder, ticker string, d Data) (known bool) {
 		b.add(Row{Text: "  SEC filings on EDGAR   (o opens)", URL: edgarURL(p.CIK)})
 	}
 
+	feedRows(b, p, d)
+
 	b.blank()
 	b.heading("Yours", nil)
 	if d.watched(p.Ticker) {
@@ -275,4 +353,68 @@ func (d Data) watched(ticker string) bool {
 		}
 	}
 	return false
+}
+
+// feedRows lists the feeds of a stock: the SEC filing record and the news feed
+// of the company's website, with when each was last read. The tickers of one
+// company share its records, so the siblings are asked too.
+func feedRows(b *builder, p universe.Profile, d Data) {
+	if d.Feeds == nil {
+		return
+	}
+	var list []FeedInfo
+	seen := map[string]bool{}
+	for _, t := range append([]string{p.Ticker}, p.Siblings...) {
+		for _, f := range d.Feeds(t) {
+			if !seen[f.URL] {
+				seen[f.URL] = true
+				list = append(list, f)
+			}
+		}
+	}
+	if len(list) == 0 {
+		if p.CIK != "" || p.Website != "" {
+			b.styled(Dim, "  feeds      none recorded yet: the background refresh of `stoxicity run` (or `stoxicity universe feeds`) finds them")
+		}
+		return
+	}
+	for i, f := range list {
+		label := "feeds"
+		if i > 0 {
+			label = ""
+		}
+		kind := "company site"
+		url := f.URL
+		if f.Kind == store.FeedSEC {
+			kind, url = "SEC filings", edgarURL(p.CIK)
+		}
+		state := "not read yet"
+		switch {
+		case f.Failures > 0:
+			state = fmt.Sprintf("failing (%d×): %s", f.Failures, clip(f.LastError, 50))
+		case !f.LastOK.IsZero():
+			state = "read " + shortAgo(d.Now.Sub(f.LastOK))
+			if f.LastNew > 0 {
+				state += fmt.Sprintf(", %d new", f.LastNew)
+			}
+		}
+		text := fmt.Sprintf("  %-10s %-12s %s", label, kind, state)
+		if f.Kind != store.FeedSEC && f.Title != "" {
+			text += " · " + clip(f.Title, 40)
+		}
+		b.add(Row{Text: text + "   (o opens)", URL: url})
+	}
+}
+
+// shortAgo says how long ago in the biggest unit: "5m ago", "3h ago", "2d ago".
+func shortAgo(d time.Duration) string {
+	switch d = max(d, 0); {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d/time.Minute))
+	case d < 48*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d/time.Hour))
+	}
+	return fmt.Sprintf("%dd ago", int(d/(24*time.Hour)))
 }

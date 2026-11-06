@@ -99,6 +99,16 @@ func (f *fake) Following(t string) []string {
 	return nil
 }
 
+func (f *fake) StockFeeds(t string) []FeedInfo {
+	if t != "NVDA" {
+		return nil
+	}
+	return []FeedInfo{
+		{Kind: "sec", Title: "SEC filings", URL: "https://data.sec.gov/submissions/CIK0001045810.json", LastOK: f.Now().Add(-3 * time.Hour), LastNew: 2},
+		{Kind: "site", Title: "NVIDIA newsroom", URL: "https://nvidianews.nvidia.com/rss", Failures: 2, LastError: "timeout"},
+	}
+}
+
 func (f *fake) Tag(_ context.Context, ticker, tag string, add bool) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -1010,9 +1020,22 @@ func TestOpenKeyOnAProfileRowOpensWebsiteAndFilingPages(t *testing.T) {
 			got = append(got, h.opened[len(h.opened)-1])
 		}
 	}
-	if len(got) != 2 || got[0] != "https://www.nvidia.com" || !strings.Contains(got[1], "sec.gov/cgi-bin/browse-edgar") || !strings.Contains(got[1], "CIK=0001045810") {
+	// The website, the filing page, then the two feeds the stock has: the SEC
+	// record opens the same filing page, the company's feed opens the feed.
+	if len(got) != 4 || got[0] != "https://www.nvidia.com" || !strings.Contains(got[1], "sec.gov/cgi-bin/browse-edgar") ||
+		!strings.Contains(got[1], "CIK=0001045810") || got[2] != got[1] || got[3] != "https://nvidianews.nvidia.com/rss" {
 		t.Errorf("opened %v", got)
 	}
+}
+
+func TestStockProfileListsItsFeedsAndHowTheyAreDoing(t *testing.T) {
+	h := newHarness(t)
+	h.m.goTo(nav.Route{Kind: nav.Stock, Arg: "NVDA"})
+	h.run(h.m.loadCmd(true))
+	h.mustContain("feeds", "SEC filings", "read 3h ago, 2 new", "company site", "failing (2×): timeout", "NVIDIA newsroom")
+	h.m.goTo(nav.Route{Kind: nav.Stock, Arg: "GOOG"})
+	h.run(h.m.loadCmd(true))
+	h.mustContain("none recorded yet")
 }
 
 func TestUnknownTickerWithNoNewsSaysSo(t *testing.T) {
@@ -1106,8 +1129,8 @@ func TestCatalogueListsEveryCompanyNotAShortlist(t *testing.T) {
 	h.bigCatalogue(1500)
 	h.press("c")
 	h.mustContain("1,500 of 1,500 companies", "by ticker", "TICKER", "T0000", "company 1 of 1,500")
-	if h.m.vp.Len() != 1500 {
-		t.Fatalf("%d selectable rows, want all 1500", h.m.vp.Len())
+	if h.m.companies != 1500 || h.m.vp.Len() != 1501 {
+		t.Fatalf("%d companies in %d rows to stop on, want all 1500 under one heading", h.m.companies, h.m.vp.Len())
 	}
 	h.press("end")
 	h.mustContain("T1499", "company 1,500 of 1,500")
@@ -1128,19 +1151,19 @@ func TestCatalogueJumpGoesToTheFirstMatchAndKeepsTheList(t *testing.T) {
 	}
 	h.typeText("t09")
 	h.mustContain("g jump to: t09", "T0900")
-	if h.m.vp.Cursor() != 900 {
-		t.Fatalf("cursor = %d, want 900", h.m.vp.Cursor())
+	if h.m.vp.Cursor() != 901 {
+		t.Fatalf("cursor = %d, want 901", h.m.vp.Cursor())
 	}
 	h.typeText("5")
-	if h.m.vp.Cursor() != 950 {
-		t.Fatalf("cursor = %d after t095, want 950", h.m.vp.Cursor())
+	if h.m.vp.Cursor() != 951 {
+		t.Fatalf("cursor = %d after t095, want 951", h.m.vp.Cursor())
 	}
 	h.typeText("zz")
-	if !h.m.failed || h.m.vp.Cursor() != 950 {
+	if !h.m.failed || h.m.vp.Cursor() != 951 {
 		t.Errorf("no match should say so and stay put: failed=%v cursor=%d", h.m.failed, h.m.vp.Cursor())
 	}
 	h.press("esc")
-	if h.m.mode != modeList || h.m.vp.Len() != 1500 {
+	if h.m.mode != modeList || h.m.companies != 1500 {
 		t.Errorf("mode %v, %d rows: jumping must not filter", h.m.mode, h.m.vp.Len())
 	}
 	// The jump is for the catalogue only.
@@ -1154,14 +1177,14 @@ func TestCatalogueJumpGoesToTheFirstMatchAndKeepsTheList(t *testing.T) {
 func TestCatalogueSortsByQuery(t *testing.T) {
 	h := newHarness(t)
 	h.bigCatalogue(300)
-	h.m.goTo(nav.Route{Kind: nav.Companies, Arg: "sort:-ticker"})
+	h.m.goTo(nav.Route{Kind: nav.Companies, Arg: "sort:-ticker group:none"})
 	h.run(h.m.loadCmd(false))
 	h.mustContain("by ticker, reversed")
 	if got := h.m.scr.Rows[h.m.vp.At(0)].Go.Arg; got != "T0299" {
 		t.Errorf("first row %s, want T0299", got)
 	}
 	// The names run backwards against the tickers; sort:name puts the last ticker first.
-	h.m.goTo(nav.Route{Kind: nav.Companies, Arg: "sort:name"})
+	h.m.goTo(nav.Route{Kind: nav.Companies, Arg: "sort:name group:none"})
 	h.run(h.m.loadCmd(false))
 	h.mustContain("by name")
 	if got := h.m.scr.Rows[h.m.vp.At(0)].Go.Arg; got != "T0299" {
@@ -1242,12 +1265,12 @@ func TestCompaniesSortWithTheColumnKeysAndTheQueryWinsWhenTyped(t *testing.T) {
 		t.Fatalf("sort = %+v", got)
 	}
 	first := func() string { row, _ := h.m.row(); return row.Go.Arg }
-	h.press("home")
+	h.press("home", "down") // the heading of the first group, then its first stock
 	if first() != "GOOG" {
 		t.Errorf("by name Alphabet comes first: %s", first())
 	}
 	h.press("I")
-	h.press("home")
+	h.press("home", "down")
 	if first() != "NVDA" {
 		t.Errorf("by name reversed, Nvidia comes first: %s", first())
 	}
@@ -1256,7 +1279,7 @@ func TestCompaniesSortWithTheColumnKeysAndTheQueryWinsWhenTyped(t *testing.T) {
 	h.typeText("sort:-ticker")
 	h.press("enter")
 	h.mustContain("TICKER▼")
-	h.press("home")
+	h.press("home", "down")
 	if first() != "NVDA" {
 		t.Errorf("sort:-ticker lists NVDA first: %s", first())
 	}
@@ -1264,16 +1287,16 @@ func TestCompaniesSortWithTheColumnKeysAndTheQueryWinsWhenTyped(t *testing.T) {
 
 func TestMarkStocksThenTagThemAllAtOnce(t *testing.T) {
 	h := newHarness(t)
-	h.press("c")
-	h.press("space", "space", "space") // GOOG, GOOGL, KO; the cursor ends on NVDA
-	if len(h.m.marks) != 3 || !h.m.marks["KO"] {
+	h.press("c")                       // grouped by exchange: Nasdaq (GOOG, GOOGL, NVDA), then NYSE (KO)
+	h.press("space", "space", "space") // GOOG, GOOGL, NVDA; the cursor ends on the NYSE heading
+	if len(h.m.marks) != 3 || !h.m.marks["NVDA"] {
 		t.Fatalf("marks = %v", h.m.marks)
 	}
 	h.mustContain("●", "3 marked")
-	h.press("space") // NVDA, the last row: marked, the cursor stays
-	h.press("up")    // KO
-	h.press("space") // KO unmarked again
-	if got := slices.Sorted(maps.Keys(h.m.marks)); !slices.Equal(got, []string{"GOOG", "GOOGL", "NVDA"}) {
+	h.press("down", "space") // past the NYSE heading to KO, the last row: marked, the cursor stays
+	h.press("up", "up")      // the heading, then NVDA
+	h.press("space")         // NVDA unmarked again
+	if got := slices.Sorted(maps.Keys(h.m.marks)); !slices.Equal(got, []string{"GOOG", "GOOGL", "KO"}) {
 		t.Fatalf("marks = %v", got)
 	}
 	h.press("#")
@@ -1281,7 +1304,7 @@ func TestMarkStocksThenTagThemAllAtOnce(t *testing.T) {
 	h.typeText("watchlist")
 	h.press("enter")
 	h.mustContain("3 marked stocks tags +watchlist")
-	for tk, want := range map[string]bool{"GOOG": true, "GOOGL": true, "NVDA": true, "KO": false} {
+	for tk, want := range map[string]bool{"GOOG": true, "GOOGL": true, "KO": true, "NVDA": false} {
 		p, _ := h.be.Universe().Get(tk)
 		if slices.Contains(p.Tags, "watchlist") != want {
 			t.Errorf("%s tags %v, tagged should be %v", tk, p.Tags, want)
@@ -1329,7 +1352,7 @@ func (h *harness) barLine() string {
 
 func TestKeyBarOffersOnlyTheKeysThatWorkHere(t *testing.T) {
 	h := newHarness(t)
-	h.m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	h.m.Update(tea.WindowSizeMsg{Width: 150, Height: 40})
 	for _, w := range []string{"filter", "help", "quit"} {
 		if !strings.Contains(h.barLine(), w) {
 			t.Errorf("home bar %q lacks %q", h.barLine(), w)
@@ -1480,11 +1503,63 @@ func TestFreshRowsFadeWithTime(t *testing.T) {
 func TestSKeyListsEveryStockWithTheOnesInTheNewsFirst(t *testing.T) {
 	h := newHarness(t)
 	h.press("s")
-	h.mustContain("Companies: sort:news", "4 of 4 companies")
+	h.mustContain("Companies: sort:news group:none", "4 of 4 companies")
 	if row, _ := h.m.row(); row.Go == nil || row.Go.Arg != "NVDA" {
 		t.Errorf("the stock with most news comes first, got %+v", row)
 	}
 	if h.m.vp.Len() != 4 {
 		t.Errorf("all %d stocks are rows, not only those in the news", h.m.vp.Len())
+	}
+}
+
+func TestCatalogueIsGroupedByExchangeAndXChangesTheGrouping(t *testing.T) {
+	h := newHarness(t)
+	h.press("c")
+	h.mustContain("Exchange Nasdaq · 3", "Exchange NYSE · 1")
+	v := ansi.Strip(h.view())
+	if strings.Index(v, "Exchange Nasdaq") > strings.Index(v, "GOOG ") || strings.Index(v, "Exchange NYSE") < strings.Index(v, "NVDA") {
+		t.Errorf("each stock sits under its exchange, the bigger first:\n%s", v)
+	}
+	if h.m.vp.Len() != 6 || h.m.companies != 4 {
+		t.Errorf("4 stocks and 2 headings to stop on: %d rows, %d companies", h.m.vp.Len(), h.m.companies)
+	}
+	h.press("x")
+	h.mustContain("grouped by kind", "No kind · 4")
+	h.press("x", "x")
+	if h.m.scr.Group != "none" || strings.Contains(ansi.Strip(h.view()), " · 4") {
+		t.Errorf("none: a flat list, group %q", h.m.scr.Group)
+	}
+	h.press("x")
+	h.mustContain("Exchange Nasdaq")
+}
+
+func TestGroupOperatorAndSortWorkInsideGroups(t *testing.T) {
+	h := newHarness(t)
+	h.m.goTo(nav.Route{Kind: nav.Companies, Arg: "group:none sort:-ticker"})
+	h.run(h.m.loadCmd(false))
+	if h.m.scr.Group != "none" {
+		t.Fatalf("group:none in the query: %q", h.m.scr.Group)
+	}
+	h.m.goTo(nav.Route{Kind: nav.Companies, Arg: "sort:-ticker"})
+	h.run(h.m.loadCmd(false))
+	v := ansi.Strip(h.view())
+	if strings.Index(v, "GOOGL") > strings.Index(v, "GOOG ") || !strings.Contains(v, "Exchange NYSE") {
+		t.Errorf("reversed tickers inside each exchange group:\n%s", v)
+	}
+}
+
+func TestAGroupHeadingOpensItsGroup(t *testing.T) {
+	h := newHarness(t)
+	h.press("c")
+	h.press("up") // from the first stock to the heading of Nasdaq
+	h.mustContain("enter opens the group")
+	h.press("down", "down", "down", "down") // GOOG GOOGL NVDA, then the NYSE heading
+	h.press("enter")
+	h.mustContain(`exchange:"NYSE"`, "1 of 4 companies", "KO")
+	if h.m.scr.Group != "none" || h.m.vp.Len() != 1 {
+		t.Errorf("a group opens flat with its stocks: group %q, %d rows", h.m.scr.Group, h.m.vp.Len())
+	}
+	if strings.Contains(ansi.Strip(h.view()), "NVDA") {
+		t.Error("the other exchange is gone")
 	}
 }

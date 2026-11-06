@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/b070nd/stoxicity/app/src/company"
+	"github.com/b070nd/stoxicity/app/src/httpx"
+	"github.com/b070nd/stoxicity/app/src/stockfeeds"
 	"github.com/b070nd/stoxicity/app/src/store"
 	"github.com/b070nd/stoxicity/app/src/universe"
 )
@@ -25,7 +27,7 @@ const (
 	defaultEnrichMax = 300
 )
 
-const universeUsage = "expected: status | update [-force] | changes [-days N] [-limit N] | enrich [-all] [-max N] [TICKER...] | find [-limit N] [-days N] [-format table|tsv|json] QUERY... | show TICKER | tag TICKER [-]TAG... | list [ID] | list add|remove ID TICKER..."
+const universeUsage = "expected: status | update [-force] | changes [-days N] [-limit N] | enrich [-all] [-max N] [TICKER...] | feeds [-search N] | find [-limit N] [-days N] [-format table|tsv|json] QUERY... | show TICKER | tag TICKER [-]TAG... | list [ID] | list add|remove ID TICKER..."
 
 // cmdUniverse is the reference list of stocks: every company the program
 // knows, searched, tagged and grouped.
@@ -45,6 +47,8 @@ func cmdUniverse(ctx context.Context, a *app, args []string) error {
 		return a.universeChanges(args[1:])
 	case "enrich":
 		return a.universeEnrich(ctx, args[1:])
+	case "feeds":
+		return a.universeFeeds(ctx, args[1:])
 	case "find":
 		return a.universeFind(ctx, args[1:])
 	case "show":
@@ -594,5 +598,58 @@ func (a *app) universeList(args []string) error {
 		return fmt.Errorf("no list %q", args[0])
 	}
 	fmt.Fprintf(a.stdout, "%s (%s): %s\n", l.ID, l.Name, dash(strings.Join(l.Tickers, " ")))
+	return nil
+}
+
+// universeFeeds writes down the SEC filing record of every stock, reads the
+// websites of up to -search companies for their own news feed, and says how many
+// feeds of each kind there are.
+func (a *app) universeFeeds(ctx context.Context, args []string) error {
+	fs := newFlags("universe feeds")
+	search := fs.Int("search", 100, "company websites to read for their news feed; 0 reads none")
+	if _, err := parseMixed(fs, args); err != nil {
+		return err
+	}
+	if *search < 0 {
+		return usageErrorf("-search must not be negative")
+	}
+	if a.companies().Empty() {
+		return fmt.Errorf("no company list yet: run \"stoxicity universe update\"")
+	}
+	db, err := a.store()
+	if err != nil {
+		return err
+	}
+	var client httpx.Client
+	if *search > 0 {
+		if client, err = a.httpClient(); err != nil {
+			return err
+		}
+	}
+	k := &stockfeeds.Keeper{Store: db, Client: client, Now: a.now}
+	stocks, err := stockfeeds.Stocks(ctx, db)
+	if err != nil {
+		return err
+	}
+	seeded, err := k.Seed(ctx, stocks)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(a.stdout, "SEC filing records: %d new\n", seeded)
+	if *search > 0 {
+		rep, err := k.Discover(ctx, stocks, interestingTickers(ctx, db, a.knownTickers(), a.layerPath(), a.cfg.Lens.Threshold, a.now()), *search)
+		fmt.Fprintf(a.stdout, "company websites: %s\n", rep)
+		if err != nil {
+			return err
+		}
+	}
+	stats, err := db.StockFeedStats(ctx)
+	if err != nil {
+		return err
+	}
+	for _, kind := range []string{store.FeedSEC, store.FeedSite} {
+		s := stats[kind]
+		fmt.Fprintf(a.stdout, "%-5s feeds   %d of %d stocks, %d read so far, %d failing\n", kind, s.Feeds, s.Stocks, s.Polled, s.Failing)
+	}
 	return nil
 }

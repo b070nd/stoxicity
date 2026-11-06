@@ -117,7 +117,7 @@ func defaults() Config {
 			Device:          "cpu",
 			Offline:         true,
 		},
-		Company: Company{Enabled: true, MaxAge: "168h", Listing: true, RefreshEvery: "6h", EnrichPerCycle: 200},
+		Company: Company{Enabled: true, MaxAge: "168h", Listing: true, RefreshEvery: "6h", EnrichPerCycle: 200, FeedSearchPerCycle: 60},
 		Tenancy: Tenancy{Dir: "tenants", Default: "default"},
 	}
 }
@@ -188,6 +188,10 @@ func validate(cfg Config) error {
 	}
 	if cfg.Company.EnrichPerCycle < 0 || cfg.Company.EnrichPerCycle > 5000 {
 		errs = append(errs, fmt.Errorf("config: company.enrich_per_cycle must be between 0 and 5000, got %d", cfg.Company.EnrichPerCycle))
+	}
+
+	if cfg.Company.FeedSearchPerCycle < 0 || cfg.Company.FeedSearchPerCycle > 2000 {
+		errs = append(errs, fmt.Errorf("config: company.feed_search_per_cycle must be between 0 and 2000, got %d", cfg.Company.FeedSearchPerCycle))
 	}
 
 	checkUnit := func(key string, v float64) {

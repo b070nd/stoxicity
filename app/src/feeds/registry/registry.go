@@ -8,6 +8,7 @@ import (
 	"github.com/b070nd/stoxicity/app/src/feeds"
 	"github.com/b070nd/stoxicity/app/src/feeds/api"
 	"github.com/b070nd/stoxicity/app/src/feeds/edgar"
+	"github.com/b070nd/stoxicity/app/src/feeds/pool"
 	"github.com/b070nd/stoxicity/app/src/feeds/rss"
 	"github.com/b070nd/stoxicity/app/src/httpx"
 	"github.com/b070nd/stoxicity/app/src/model"
@@ -23,6 +24,9 @@ type Options struct {
 	// tests point them at httptest servers.
 	WebBase  string
 	DataBase string
+	// StockFeeds is where the per-stock feeds are kept. Without it there is no
+	// fetcher for model.KindStockFeeds sources.
+	StockFeeds pool.Store
 	// Now is the clock of every fetcher; time.Now if nil.
 	Now func() time.Time
 }
@@ -30,14 +34,15 @@ type Options struct {
 // New returns one Fetcher for each source kind, all making their requests
 // through client.
 func New(client httpx.Client, opts Options) map[model.Kind]feeds.Fetcher {
-	return map[model.Kind]feeds.Fetcher{
-		model.KindRSS: rss.New(client, rss.Config{Now: opts.Now}),
-		model.KindFilings: edgar.New(client, edgar.Config{
-			WebBase:  opts.WebBase,
-			DataBase: opts.DataBase,
-			Tickers:  opts.Tickers,
-			Now:      opts.Now,
-		}),
-		model.KindAPI: api.New(client),
+	cfg := edgar.Config{WebBase: opts.WebBase, DataBase: opts.DataBase, Tickers: opts.Tickers, Now: opts.Now}
+	m := map[model.Kind]feeds.Fetcher{
+		model.KindRSS:     rss.New(client, rss.Config{Now: opts.Now}),
+		model.KindFilings: edgar.New(client, cfg),
+		model.KindAPI:     api.New(client),
 	}
+	if opts.StockFeeds != nil {
+		m[model.KindStockFeeds] = pool.New(opts.StockFeeds, edgar.NewSubmissions(client, cfg),
+			rss.New(client, rss.Config{Now: opts.Now}), pool.Config{Now: opts.Now})
+	}
+	return m
 }

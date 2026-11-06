@@ -60,6 +60,8 @@ type Model struct {
 	builtFor string
 	// sorts is the order the user chose for each kind of screen with a table.
 	sorts map[nav.Kind]Sort
+	// group is the grouping the user chose for the catalogue with x.
+	group string
 	// marks are the tickers marked with space.
 	marks map[string]bool
 	// diffNext: the next rebuild follows a reload, so the rows that are new or
@@ -69,6 +71,9 @@ type Model struct {
 	fresh    map[string]time.Time
 	// counts are what the meters say of the news window.
 	counts newsCounts
+	// companies is how many stock rows the catalogue holds (its headings are
+	// rows the cursor can stop on too, but are not companies).
+	companies int
 	// haveSources: sources has been loaded at least once.
 	haveSources bool
 
@@ -270,15 +275,16 @@ func (m *Model) rebuild() {
 		Params: p, Watchlist: m.be.Watchlist(), Topics: m.be.TopicNames(),
 		Name: m.be.CompanyName, Verdicts: m.verdicts, Sources: m.sources,
 		Watches: m.watches, WatchID: m.stack.Watch(), Now: m.be.Now(), Truncated: m.truncated,
-		Universe: m.be.Universe(), Following: m.be.Following,
+		Universe: m.be.Universe(), Following: m.be.Following, Feeds: m.be.StockFeeds,
 	}
 	if needsShared(r.Kind) {
 		d.Articles = m.shared
 	} else {
 		d.Articles = m.routeArts
 	}
-	if !filtering { // the query being typed may say sort: itself
+	if !filtering { // the query being typed may say sort: or group: itself
 		d.Sort = m.sorts[r.Kind]
+		d.Group = m.group
 	}
 	m.data = d
 	m.scr = Build(r, d)
@@ -287,16 +293,43 @@ func (m *Model) rebuild() {
 		m.noteFresh(before)
 	}
 	m.counts = m.countNews()
+	m.companies = 0
+	if r.Kind == nav.Companies {
+		for _, row := range m.scr.Rows {
+			if markable(row) != "" {
+				m.companies++
+			}
+		}
+	}
 	switch {
 	case filtering:
 		m.vp.Reset(m.scr.Rows, 0) // a query being typed starts from the best match
+		m.firstStock(r)
 	case same:
 		m.vp.Reload(m.scr.Rows, near)
 		if i := m.find(key, near); i >= 0 {
 			m.vp.Select(i)
 		}
 	default:
-		m.vp.Reset(m.scr.Rows, m.cursors[r.String()])
+		at, seen := m.cursors[r.String()]
+		m.vp.Reset(m.scr.Rows, at)
+		if !seen {
+			m.firstStock(r)
+		}
+	}
+}
+
+// firstStock puts the cursor of a catalogue on its first stock rather than on
+// the heading of the first group, which is where the cursor starts otherwise.
+func (m *Model) firstStock(r nav.Route) {
+	if r.Kind != nav.Companies {
+		return
+	}
+	for i := range m.vp.Len() {
+		if markable(m.scr.Rows[m.vp.At(i)]) != "" {
+			m.vp.Select(i)
+			return
+		}
 	}
 }
 
@@ -378,4 +411,20 @@ func (m *Model) noteFresh(before map[string]string) {
 func (m *Model) isFresh(r Row) bool {
 	until, ok := m.fresh[r.Identity()]
 	return ok && m.be.Now().Before(until)
+}
+
+// companyPos is the place of the stock under the cursor among the stocks of the
+// catalogue, counting from 1; 0 when the cursor is on a heading.
+func (m *Model) companyPos() int {
+	at, ok := m.vp.Row()
+	if !ok || markable(m.scr.Rows[at]) == "" {
+		return 0
+	}
+	n := 0
+	for _, row := range m.scr.Rows[:at+1] {
+		if markable(row) != "" {
+			n++
+		}
+	}
+	return n
 }

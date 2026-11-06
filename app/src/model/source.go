@@ -53,7 +53,25 @@ type Source struct {
 	// (EDGAR's current-filings feed). The fetcher must read it page by page
 	// until it reaches an article it already has, or entries are lost.
 	Paged bool `yaml:"paged"`
+
+	// Pool names the feeds a stockfeeds source stands for: PoolSEC, the filing
+	// record of each company, or PoolSite, the news feed each company's website
+	// points to.
+	Pool string `yaml:"pool"`
+	// Batch is how many feeds of the pool one poll reads; the pool's own default
+	// if 0. The source's Interval is how often a batch is read, and Cycle how
+	// long a feed waits before it is read again.
+	Batch int `yaml:"batch"`
+	// Cycle is how long a stock feed of the pool rests between reads, for
+	// example "6h"; the pool's own default if empty.
+	Cycle string `yaml:"cycle"`
 }
+
+// The pools of a stockfeeds source.
+const (
+	PoolSEC  = "sec"
+	PoolSite = "site"
+)
 
 // VisibleTo reports whether a tenant may see this source's articles.
 func (s Source) VisibleTo(tenantID string) bool {
@@ -75,11 +93,25 @@ func (s Source) Validate() error {
 	if !ValidID(s.ID) {
 		bad("id must be 1-40 lower-case letters, digits or hyphens")
 	}
-	if u, err := url.Parse(s.URL); err != nil || u.Scheme != "https" || u.Host == "" {
+	// A pool reads the addresses of its feeds from the database; its own URL only
+	// says which host it belongs to, and may be left out.
+	if u, err := url.Parse(s.URL); (s.Kind != KindStockFeeds || s.URL != "") && (err != nil || u.Scheme != "https" || u.Host == "") {
 		bad("url %q must be an https URL", s.URL)
 	}
 	switch s.Kind {
 	case KindRSS, KindFilings, KindAPI:
+	case KindStockFeeds:
+		if s.Pool != PoolSEC && s.Pool != PoolSite {
+			bad("pool %q must be %q or %q", s.Pool, PoolSEC, PoolSite)
+		}
+		if s.Batch < 0 {
+			bad("batch %d must not be negative", s.Batch)
+		}
+		if s.Cycle != "" {
+			if d, err := time.ParseDuration(s.Cycle); err != nil || d < time.Hour {
+				bad("cycle %q must be a duration of at least 1h", s.Cycle)
+			}
+		}
 	default:
 		bad("unknown kind %q", s.Kind)
 	}

@@ -139,7 +139,15 @@ company:
   submissions_url: "" # the SEC record of one company; %s is the ten-digit CIK
   refresh_every: 6h   # how often `run` refreshes the reference database; off = never
   enrich_per_cycle: 200 # companies whose industry etc. are fetched in one refresh (0 to 5000)
+  feed_search_per_cycle: 60 # company websites read for their news feed in one refresh (0 to 2000)
 ```
+
+`feed_search_per_cycle` is how many company websites one refresh reads to find the
+company's own news feed (see [fetchers.md](fetchers.md#12-the-feeds-of-every-stock));
+the SEC filing record of every stock is written down in each refresh whatever it
+says. The pools `stock-feeds-sec` and `stock-feeds-sites` in `sources.yaml` read
+those feeds; `interval`, `batch` and `cycle` on them set how often a batch is
+read, how many feeds it holds and how long a feed rests.
 
 `refresh_every` is a fixed interval (at least 1m, or `off`) with no jitter; the
 refresh runs in the background of `stoxicity run` and ends with it. What it

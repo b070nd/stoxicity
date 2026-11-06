@@ -304,3 +304,45 @@ sources:
     licence: internal
     owner: default
     enabled: true
+
+  # ---- The feeds of each stock -----------------------------------------------
+  # Each of these stands for thousands of feeds, one or more per stock, kept in
+  # the database (stock_feed) and read a batch at a time: `interval` is how often
+  # a batch is read, `batch` how many feeds it holds and `cycle` how long a feed
+  # rests before it is read again. They show as one line each on the board. The
+  # feeds are written down by the background refresh of `stoxicity run` (and
+  # `stoxicity universe feeds`); until then these sources have nothing to read.
+  - id: stock-feeds-sec
+    name: SEC filings of every stock
+    domain: sec.gov
+    kind: stockfeeds
+    pool: sec
+    # Names the host, so the SEC's request limit is shared with the other SEC
+    # sources; the address of each company's file comes from the database.
+    url: https://data.sec.gov/submissions/
+    tier: 1
+    tags: [filings, us, stocks]
+    forms: ["8-K", "10-K", "10-Q", "20-F", "40-F", "6-K"]
+    interval: 2m
+    batch: 40
+    cycle: 12h
+    licence: redistributable
+    terms: https://www.sec.gov/about/privacy-information
+    enabled: true # needs STOXICITY_CONTACT set, like sec-edgar
+
+  # The news or investor-relations feed each company's own website announces.
+  # They are the companies' own words, but their terms were not read one by one:
+  # `internal`, so they are yours only.
+  - id: stock-feeds-sites
+    name: Company news feeds of every stock
+    domain: company-sites
+    kind: stockfeeds
+    pool: site
+    tier: 1
+    tags: [company, stocks]
+    interval: 5m
+    batch: 25
+    cycle: 6h
+    licence: internal
+    owner: default
+    enabled: true

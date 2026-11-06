@@ -35,6 +35,8 @@ import (
 //	tag:moat                 carries your tag
 //	watched:yes              on your watchlist or in a watch
 //	news:>=3  news:yes       relevant articles in the window the screen covers
+//	group:exchange|kind|industry|none
+//	                         how a screen arranges the list in groups. Not a filter.
 //	sort:name  sort:-news    the order (ticker, name, news, industry, exchange,
 //	                         kind); a leading - reverses it. Not a filter.
 //
@@ -46,6 +48,31 @@ type Query struct {
 	clauses [][]lit // all clauses must hold; a clause holds if any literal does
 	sortBy  string  // "" means the default order
 	desc    bool
+	groupBy string // "" means the caller's choice; "none" asks for no groups
+}
+
+// groupKeys are the groupings group: knows. "none" asks for a flat list.
+var groupKeys = []string{"exchange", "kind", "industry", "none"}
+
+// GroupKeys are the groupings group: knows.
+func GroupKeys() []string { return slices.Clone(groupKeys) }
+
+// GroupKey is the grouping the query asks for with group:, or "" when it asks
+// for none (and the screen picks its own).
+func (q Query) GroupKey() string { return q.groupBy }
+
+// Group is the value a hit belongs under when listed by key (exchange, kind or
+// industry); empty when the profile has none.
+func (h Hit) Group(key string) string {
+	switch key {
+	case "exchange":
+		return h.Profile.Exchange
+	case "kind":
+		return h.Profile.Kind
+	case "industry":
+		return h.Profile.Industry
+	}
+	return ""
 }
 
 // sortKeys are the orders sort: knows.
@@ -85,7 +112,7 @@ const (
 
 // queryOps is the list of operators, for the error message.
 var queryOps = []string{
-	"cik", "company", "exchange", "industry", "kind", "list", "market", "name",
+	"cik", "company", "exchange", "group", "industry", "kind", "list", "market", "name",
 	"news", "sector", "sic", "sort", "state", "status", "tag", "ticker", "watched",
 }
 
@@ -193,6 +220,17 @@ func ParseQuery(expr string) (Query, error) {
 						return Query{}, &QueryError{Pos: valPos, Msg: fmt.Sprintf("unknown order %q; use %s", val, strings.Join(sortKeys, ", "))}
 					}
 					q.sortBy, q.desc = key, desc
+					continue
+				}
+				if name == "group" {
+					if neg || orPending {
+						return Query{}, &QueryError{Pos: start, Msg: "group: arranges the list; it cannot be negated or joined with OR"}
+					}
+					key := strings.ToLower(val)
+					if !slices.Contains(groupKeys, key) {
+						return Query{}, &QueryError{Pos: valPos, Msg: fmt.Sprintf("unknown grouping %q; use %s", val, strings.Join(groupKeys, ", "))}
+					}
+					q.groupBy = key
 					continue
 				}
 				var err error
