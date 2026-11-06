@@ -13,22 +13,21 @@ import (
 	"github.com/b070nd/stoxicity/app/src/scheduler"
 )
 
-// boardRows is the most rows of work the board shows; more are counted.
-const boardRows = 14
-
 // boardEvery is how often the board redraws, so that the elapsed times count.
 const boardEvery = time.Second
 
-// renderBoard draws the work in progress as lines of at most width cells: a
-// summary line, then one row for each source that is being polled or is due and
-// waiting, with the time it has been at it. A source that has finished has no
-// row; it is idle until its timer runs out.
-func renderBoard(b scheduler.Board, zone *time.Location, width int) []string {
+// renderBoard draws every source as lines of at most width cells, at most
+// maxRows of them besides the summary line: first those with work, with the
+// time they have been at it, then the idle ones, with the time their timers
+// run out and what their last poll came to.
+func renderBoard(b scheduler.Board, zone *time.Location, width, maxRows int) []string {
 	var running, waiting int
 	for _, r := range b.Rows {
-		if r.State == scheduler.Running {
+		switch r.State {
+		case scheduler.Running:
 			running++
-		} else {
+		case scheduler.Idle:
+		default:
 			waiting++
 		}
 	}
@@ -38,27 +37,40 @@ func renderBoard(b scheduler.Board, zone *time.Location, width int) []string {
 	}
 	lines := []string{sum}
 	for i, r := range b.Rows {
-		if i == boardRows {
-			lines = append(lines, fmt.Sprintf("   … %d more", len(b.Rows)-boardRows))
+		if i == maxRows && len(b.Rows) > maxRows {
+			lines = append(lines, fmt.Sprintf("   … %d more", len(b.Rows)-i))
 			break
 		}
-		var what string
-		switch r.State {
-		case scheduler.Running:
-			what = fmt.Sprintf("▶ %-24s polling   %s", r.SourceID, clock(b.At.Sub(r.Since)))
-		case scheduler.Late:
-			what = fmt.Sprintf("◷ %-24s late      %s  (timer ran out while polling; starts again when it ends)", r.SourceID, clock(b.At.Sub(r.Since)))
-		case scheduler.Resting:
-			what = fmt.Sprintf("⏸ %-24s resting   %s left  (%s is cooling down)", r.SourceID, clock(r.Until.Sub(b.At)), r.Host)
-		default:
-			what = fmt.Sprintf("… %-24s waiting   %s", r.SourceID, clock(b.At.Sub(r.Since)))
-		}
-		lines = append(lines, "   "+what)
+		lines = append(lines, "   "+boardRow(r, b.At, zone))
 	}
 	for i, l := range lines {
 		lines[i] = cut(l, width)
 	}
 	return lines
+}
+
+// boardRow is one source on the board.
+func boardRow(r scheduler.Activity, at time.Time, zone *time.Location) string {
+	id := fmt.Sprintf("%-24s", r.SourceID)
+	switch r.State {
+	case scheduler.Running:
+		return fmt.Sprintf("▶ %s polling   %s", id, clock(at.Sub(r.Since)))
+	case scheduler.Late:
+		return fmt.Sprintf("◷ %s late      %s  (timer ran out while polling; starts again when it ends)", id, clock(at.Sub(r.Since)))
+	case scheduler.Resting:
+		return fmt.Sprintf("⏸ %s resting   %s left  (%s is cooling down)", id, clock(r.Until.Sub(at)), r.Host)
+	case scheduler.Waiting:
+		return fmt.Sprintf("… %s waiting   %s", id, clock(at.Sub(r.Since)))
+	}
+	switch {
+	case r.Parked:
+		return fmt.Sprintf("✗ %s parked    until refreshed · %s", id, oneLine(r.LastError))
+	case r.Failures > 0:
+		return fmt.Sprintf("! %s idle      retry in %s · failed %d× · %s", id, clock(r.Until.Sub(at)), r.Failures, oneLine(r.LastError))
+	case r.LastOK.IsZero():
+		return fmt.Sprintf("· %s idle      next in %s · not polled yet", id, clock(r.Until.Sub(at)))
+	}
+	return fmt.Sprintf("· %s idle      next in %s · last %s, %d new", id, clock(r.Until.Sub(at)), r.LastOK.In(zone).Format("15:04:05"), r.LastNew)
 }
 
 // clock writes a duration as m:ss, or h:mm:ss from an hour.
@@ -88,7 +100,7 @@ func cut(s string, width int) string {
 type liveBoard struct {
 	mu    sync.Mutex
 	out   io.Writer
-	width func() int
+	size  func() (width, height int)
 	snap  func() scheduler.Board
 	zone  *time.Location
 	shown int // lines of the board on screen now
@@ -137,7 +149,8 @@ func (b *liveBoard) erase() {
 }
 
 func (b *liveBoard) draw() {
-	lines := renderBoard(b.snap(), b.zone, b.width())
+	w, h := b.size()
+	lines := renderBoard(b.snap(), b.zone, w, max(h-6, 4))
 	fmt.Fprint(b.out, strings.Join(lines, "\n")+"\n")
 	b.shown = len(lines)
 }
@@ -152,11 +165,11 @@ func terminalBoard(stdout, stderr io.Writer, snap func() scheduler.Board, zone *
 	}
 	return &liveBoard{
 		out: stdout,
-		width: func() int {
-			if w, _, err := term.GetSize(out.Fd()); err == nil && w > 0 {
-				return w
+		size: func() (int, int) {
+			if w, h, err := term.GetSize(out.Fd()); err == nil && w > 0 && h > 0 {
+				return w, h
 			}
-			return 80
+			return 80, 24
 		},
 		snap: snap,
 		zone: zone,

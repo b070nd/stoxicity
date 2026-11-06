@@ -1017,7 +1017,7 @@ func TestHostRecoversAfterASuccess(t *testing.T) {
 	}
 }
 
-func TestBoardListsRunningAndWaitingAndDropsFinishedRows(t *testing.T) {
+func TestBoardListsEveryStageOfEverySource(t *testing.T) {
 	h := newHarness(t, sources("a", "b", "c", "d"), func(o *Options) { o.Workers = 1 })
 	gate := gateFetch(h)
 	h.start()
@@ -1044,8 +1044,13 @@ func TestBoardListsRunningAndWaitingAndDropsFinishedRows(t *testing.T) {
 		h.event()
 	}
 	b = h.sched.Board()
-	if len(b.Rows) != 0 || b.Idle != 4 || b.Next == "" || !b.NextDue.After(b.At) {
-		t.Fatalf("board after all polls = %+v, want every row gone and the next one named", b)
+	if len(b.Rows) != 4 || b.Idle != 4 || b.Next != "a" || !b.NextDue.After(b.At) {
+		t.Fatalf("board after all polls = %+v, want all four idle and the next one named", b)
+	}
+	for _, r := range b.Rows {
+		if r.State != Idle || !r.Until.After(b.At) || r.LastOK.IsZero() {
+			t.Fatalf("row %+v, want idle with a next time and the last good poll", r)
+		}
 	}
 }
 
@@ -1098,4 +1103,34 @@ func TestPollLongerThanItsIntervalIsLateAndRunsAgainOnce(t *testing.T) {
 	if calls.Load() != 2 {
 		t.Fatalf("%d polls, want exactly 2", calls.Load())
 	}
+}
+
+func TestBoardListsActiveSourcesFirstThenIdleByTimer(t *testing.T) {
+	srcs := []model.Source{source("a"), source("b"), source("c")}
+	srcs[0].Interval, srcs[1].Interval, srcs[2].Interval = "30m", "10m", "20m"
+	h := newHarness(t, srcs, func(o *Options) { o.Workers = 3 })
+	h.fetch.fn = articles("x")
+	h.start()
+	for range 3 {
+		h.event()
+	}
+	b := h.sched.Board()
+	var got []string
+	for _, r := range b.Rows {
+		got = append(got, r.SourceID)
+		if r.LastNew != 1 {
+			t.Errorf("%s last stored %d, want 1", r.SourceID, r.LastNew)
+		}
+	}
+	if fmt.Sprint(got) != "[b c a]" {
+		t.Fatalf("idle order = %v, want the soonest first: [b c a]", got)
+	}
+}
+
+func TestStartTogetherMakesOverdueSourcesDueAtOnce(t *testing.T) {
+	h := newHarness(t, sources("a", "b", "c"), func(o *Options) { o.StartTogether = true; o.Workers = 8 })
+	h.rnd.def = 0.9 // would be 54s of start jitter
+	gateFetch(h)
+	h.start()
+	waitFor(t, "all three polling at once", func() bool { return h.fetch.inflight() == 3 })
 }

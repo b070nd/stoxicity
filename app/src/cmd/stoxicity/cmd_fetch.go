@@ -89,6 +89,7 @@ func (a *app) poller(srcs []model.Source, pipe *pipeline.Pipeline, now bool) (*s
 		Workers:         a.cfg.Refresh.Workers,
 		PerHost:         a.cfg.Refresh.PerHost,
 		HostOf:          sourceHost,
+		StartTogether:   true,
 		Now:             a.opts.now,
 		Rand:            a.opts.rand,
 		Logger:          a.log,

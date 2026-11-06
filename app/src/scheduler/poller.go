@@ -76,6 +76,10 @@ type Options struct {
 	// politely together. Nil, or an empty answer, uses the host name in the
 	// source's URL; a source with no URL is a host of its own.
 	HostOf func(src model.Source) string
+	// StartTogether makes every source that is overdue at the start due at once,
+	// instead of spreading the first polls over a tenth of their intervals. The
+	// limits per host and for all polls still apply, so it does not stampede.
+	StartTogether bool
 	// IntervalFor, when set, overrides the interval of a source at a given
 	// time, for example to poll EDGAR faster in US market hours. A result of
 	// zero or less falls back to the source's own interval.
@@ -103,6 +107,7 @@ type entry struct {
 	index    int    // position in the queue, -1 while a poll is in flight
 	inflight bool
 	started  time.Time // when the poll in flight began
+	lastNew  int       // articles the last good poll stored
 	refresh  bool      // RefreshNow arrived during the poll: poll again right after
 }
 
@@ -291,7 +296,10 @@ func (p *Poller) load(ctx context.Context) error {
 		}
 		iv := p.interval(e.src, now)
 		if !h.NextDue.After(now) {
-			h.NextDue = now.Add(p.jitter(initialJitter, iv))
+			h.NextDue = now
+			if !p.opts.StartTogether {
+				h.NextDue = now.Add(p.jitter(initialJitter, iv))
+			}
 		}
 		h.Level = level(h, iv, now)
 		e.state, e.health = states[i], h
@@ -443,6 +451,7 @@ func (p *Poller) poll(ctx context.Context, e *entry, prev feeds.State) {
 	if err == nil {
 		p.succeed(&h, iv, now, e.started)
 		e.state = next
+		e.lastNew = added
 	} else {
 		p.fail(&h, iv, now, err)
 	}
