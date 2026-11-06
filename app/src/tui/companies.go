@@ -57,6 +57,11 @@ func buildCompanies(q string, d Data) Screen {
 		s.Notice = err.Error()
 		return s
 	}
+	t := companyTable(query)
+	s.Table, s.Sort = t.shape(), t.Effective(d.Sort)
+	if s.Sort.Key != "" {
+		query = query.WithSort(s.Sort.Key, s.Sort.Desc != (s.Sort.Key == "news"))
+	}
 	hits := d.Universe.Find(query, universe.FactsFrom(d.Articles, d.Params.Threshold, d.Watchlist), 0)
 	if len(hits) == 0 {
 		s.Notice = fmt.Sprintf("No company matches (of %d). Press / to change the query.", d.Universe.Len())
@@ -85,16 +90,45 @@ func buildCompanies(q string, d Data) Screen {
 		b.styled(Dim, line.name+": "+strings.Join(parts, " · "))
 	}
 	b.blank()
-	b.styled(Heading, fmt.Sprintf("  %-7s %-30s %-7s %-5s %-24s %-7s %s", "TICKER", "NAME", "LISTED", "KIND", "INDUSTRY", "NEWS", "TAGS"))
 	watched := map[string]bool{}
 	for _, w := range d.Watchlist {
 		watched[universe.Ticker(w)] = true
 	}
 	for _, h := range hits {
-		b.add(companyLine(h, watched[h.Profile.Ticker]))
+		t.Items = append(t.Items, companyItem(h, watched[h.Profile.Ticker]))
 	}
+	b.rows = append(b.rows, t.Rows(s.Sort)...)
 	s.Rows = b.rows
 	return s
+}
+
+// companyTable is the columns of the catalogue. The list is ordered by the
+// universe (which sorts twelve thousand companies, and knows the order of a
+// ranked search), so the table only labels the header: its default is what the
+// query asks for. News is listed busiest first when ascending, which is how
+// the query language says it, so the header shows the opposite arrow.
+func companyTable(q universe.Query) Table {
+	t := Table{
+		Columns: []Column{
+			{Width: 1},
+			{Title: "TICKER", Key: "ticker", Width: 7},
+			{Title: "NAME", Key: "name", Width: 30},
+			{Title: "LISTED", Key: "exchange", Width: 7},
+			{Title: "KIND", Key: "kind", Width: 5},
+			{Title: "INDUSTRY", Key: "industry", Width: 24},
+			{Title: "NEWS", Key: "news", Width: 5, Right: true, Desc: true},
+			{Title: "TAGS"},
+		},
+		Presorted: true,
+	}
+	key, desc := q.SortKey()
+	switch {
+	case key != "":
+		t.Default = Sort{Key: key, Desc: desc != (key == "news")}
+	case !q.HasText():
+		t.Default = Sort{Key: "ticker"}
+	}
+	return t
 }
 
 // orderOf says in words how the query orders the list.
@@ -121,7 +155,7 @@ func thousands(n int) string {
 	return s
 }
 
-func companyLine(h universe.Hit, watched bool) Row {
+func companyItem(h universe.Hit, watched bool) Item {
 	p := h.Profile
 	star := " "
 	if watched {
@@ -129,15 +163,17 @@ func companyLine(h universe.Hit, watched bool) Row {
 	}
 	news := ""
 	if h.News > 0 {
-		news = fmt.Sprintf("%d news", h.News)
+		news = fmt.Sprint(h.News)
 	}
 	var tags []string
 	for _, t := range p.Tags {
 		tags = append(tags, "#"+t)
 	}
-	text := fmt.Sprintf("%s %-7s %-30s %-7s %-5s %-24s %-7s %s", star, p.Ticker, clip(p.Name, 30),
-		clip(p.Exchange, 7), p.Kind, clip(p.Industry, 24), news, strings.Join(tags, " "))
-	return Row{Text: strings.TrimRight(text, " "), Go: route(nav.Stock, p.Ticker)}
+	return Item{
+		Cells: []Cell{Str(star), Str(p.Ticker), Str(p.Name), Str(p.Exchange), Str(p.Kind), Str(p.Industry),
+			Num(news, float64(h.News)), Str(strings.Join(tags, " "))},
+		Row: Row{Go: route(nav.Stock, p.Ticker)},
+	}
 }
 
 // profileRows adds the identity block of a stock: what is known about the

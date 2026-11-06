@@ -11,15 +11,18 @@ import (
 	"github.com/b070nd/stoxicity/app/src/model"
 	"github.com/b070nd/stoxicity/app/src/nav"
 	"github.com/b070nd/stoxicity/app/src/pages"
+	"github.com/b070nd/stoxicity/app/src/status"
 )
 
 const (
 	defaultDays    = 14
 	defaultRows    = 10 // pages.Params.Limit
 	defaultRefresh = time.Minute
+	defaultRedraw  = time.Second
+	freshFor       = 8 * time.Second // how long a row that came in or changed stands out
 	searchLimit    = 200
 	loadTimeout    = 30 * time.Second
-	chromeLines    = 4 // watch bar, breadcrumbs, filter line, status line
+	chromeLines    = 5 // watch bar, meters, breadcrumbs, key bar (or prompt), status line
 	minWidth       = 40
 	minHeight      = 8
 )
@@ -50,10 +53,24 @@ type Model struct {
 
 	data    Data
 	scr     Screen
-	sel     []int // indices of the selectable rows of scr
-	cursor  int   // index into sel
-	top     int   // first visible row
+	vp      Viewport // the window onto scr and the cursor in it
 	cursors map[string]int
+	// builtFor is the route scr was last built for; a rebuild for the same route
+	// keeps the cursor on the same row, a rebuild for another starts afresh.
+	builtFor string
+	// sorts is the order the user chose for each kind of screen with a table.
+	sorts map[nav.Kind]Sort
+	// marks are the tickers marked with space.
+	marks map[string]bool
+	// diffNext: the next rebuild follows a reload, so the rows that are new or
+	// changed since the last build are noted in fresh (identity to when it
+	// stops standing out).
+	diffNext bool
+	fresh    map[string]time.Time
+	// counts are what the meters say of the news window.
+	counts newsCounts
+	// haveSources: sources has been loaded at least once.
+	haveSources bool
 
 	loading bool
 	seq     int
@@ -68,14 +85,15 @@ type Model struct {
 	truncated bool
 
 	verdicts map[string]labels.Verdict
-	sources  []SourceRow
+	sources  []status.Source
 
-	detail *model.Article
-	mode   mode
-	filter []rune
-	target string // the ticker a tag or list edit is for
-	status string
-	failed bool // status is an error
+	detail  *model.Article
+	mode    mode
+	prompt  Prompt   // the line being typed in the filter, tag, list and jump modes
+	target  string   // what a tag or list edit is for, as the prompt names it
+	editing []string // the tickers it applies to
+	status  string
+	failed  bool // status is an error
 
 	refreshed time.Time
 	quitting  bool
@@ -89,15 +107,18 @@ type (
 		err  error
 	}
 	loadedMsg struct {
-		seq       int
-		arts      []model.Article
-		sources   []SourceRow
-		verdicts  map[string]labels.Verdict
-		shared    bool
-		truncated bool
-		err       error
+		seq     int
+		arts    []model.Article
+		sources []status.Source
+		// haveSources: sources was read (it may be empty).
+		haveSources bool
+		verdicts    map[string]labels.Verdict
+		shared      bool
+		truncated   bool
+		err         error
 	}
 	tickMsg  time.Time
+	clockMsg time.Time // the screen is drawn again
 	savedMsg struct {
 		id   string
 		keep bool
@@ -118,6 +139,7 @@ func New(ctx context.Context, opts Options) *Model {
 	m := &Model{
 		be: be, opts: opts, ctx: ctx, stack: nav.New(),
 		width: 100, height: 30, cursors: map[string]int{},
+		sorts: map[nav.Kind]Sort{}, marks: map[string]bool{}, fresh: map[string]time.Time{},
 		verdicts: map[string]labels.Verdict{},
 	}
 	watch := opts.Watch
@@ -125,13 +147,18 @@ func New(ctx context.Context, opts Options) *Model {
 		watch = be.DefaultWatch()
 	}
 	m.stack.SwitchWatch(watch)
+	m.vp.Resize(m.bodyHeight() - 1)
 	m.rebuild()
 	return m
 }
 
 // Init loads the watches and the first screen and starts the refresh timer.
 func (m *Model) Init() tea.Cmd {
-	return tea.Batch(m.watchesCmd(), m.loadCmd(false), m.tickCmd())
+	return tea.Batch(m.watchesCmd(), m.loadCmd(false), m.tickCmd(), m.clockCmd())
+}
+
+func (m *Model) clockCmd() tea.Cmd {
+	return tea.Tick(m.opts.Redraw, func(t time.Time) tea.Msg { return clockMsg(t) })
 }
 
 func (m *Model) tickCmd() tea.Cmd {
@@ -200,6 +227,13 @@ func (m *Model) loadCmd(force bool) tea.Cmd {
 			out.shared = true
 			out.arts, err = be.Articles(c, watch, p.Previous().First, p.End())
 		}
+		if r.Kind != nav.Sources && err == nil {
+			// The meters above every screen say how the sources are doing; a
+			// source list that cannot be read must not spoil the screen.
+			if src, serr := be.Sources(c); serr == nil {
+				out.sources, out.haveSources = src, true
+			}
+		}
 		if err == nil {
 			out.verdicts, err = be.Verdicts(c)
 		}
@@ -212,9 +246,26 @@ func (m *Model) loadCmd(force bool) tea.Cmd {
 func (m *Model) rebuild() {
 	r := m.stack.Current()
 	if r.Kind == nav.Companies && m.mode == modeFilter {
-		r.Arg = strings.TrimSpace(string(m.filter)) // the list narrows as you type
+		r.Arg = strings.TrimSpace(m.prompt.Text()) // the list narrows as you type
 	}
 	p := m.params()
+	filtering := r.Kind == nav.Companies && m.mode == modeFilter
+	same := r.String() == m.builtFor && !filtering
+	key, near := "", m.vp.Cursor()
+	if row, ok := m.row(); ok && same {
+		key = row.Identity()
+	}
+	var before map[string]string
+	if m.diffNext && same {
+		// A screen with nothing on it (still loading, or empty) is no baseline.
+		if before = m.texts(); len(before) == 0 {
+			before = nil
+		}
+	}
+	m.diffNext = false
+	if !same {
+		clear(m.fresh) // another screen: nothing on it is news yet
+	}
 	d := Data{
 		Params: p, Watchlist: m.be.Watchlist(), Topics: m.be.TopicNames(),
 		Name: m.be.CompanyName, Verdicts: m.verdicts, Sources: m.sources,
@@ -226,18 +277,105 @@ func (m *Model) rebuild() {
 	} else {
 		d.Articles = m.routeArts
 	}
+	if !filtering { // the query being typed may say sort: itself
+		d.Sort = m.sorts[r.Kind]
+	}
 	m.data = d
 	m.scr = Build(r, d)
-	m.sel = m.sel[:0]
-	for i, row := range m.scr.Rows {
-		if row.Selectable() {
-			m.sel = append(m.sel, i)
+	m.builtFor = r.String()
+	if before != nil {
+		m.noteFresh(before)
+	}
+	m.counts = m.countNews()
+	switch {
+	case filtering:
+		m.vp.Reset(m.scr.Rows, 0) // a query being typed starts from the best match
+	case same:
+		m.vp.Reload(m.scr.Rows, near)
+		if i := m.find(key, near); i >= 0 {
+			m.vp.Select(i)
+		}
+	default:
+		m.vp.Reset(m.scr.Rows, m.cursors[r.String()])
+	}
+}
+
+// find is the position, among the rows the cursor can stop on, of the row with
+// this identity; of several, the one nearest to position near. -1 if there is
+// none.
+func (m *Model) find(key string, near int) int {
+	if key == "" {
+		return -1
+	}
+	best := -1
+	for i := range m.vp.Len() {
+		if m.scr.Rows[m.vp.At(i)].Identity() != key {
+			continue
+		}
+		if best < 0 || abs(i-near) < abs(best-near) {
+			best = i
 		}
 	}
-	m.cursor = min(m.cursors[r.String()], max(len(m.sel)-1, 0))
-	if m.mode == modeFilter && r.Kind == nav.Companies {
-		m.cursor = 0 // a query being typed starts from the best match
+	return best
+}
+
+func abs(n int) int {
+	if n < 0 {
+		return -n
 	}
-	m.top = 0
-	m.follow()
+	return n
+}
+
+// newsCounts is what the meters say of the news: the articles in the window and
+// how many of them are relevant.
+type newsCounts struct {
+	articles, relevant int
+	ok                 bool // the window is loaded
+}
+
+func (m *Model) countNews() newsCounts {
+	if !m.sharedOK {
+		return m.counts
+	}
+	p := m.params()
+	window := pages.InWindow(m.shared, p)
+	return newsCounts{articles: len(window), relevant: len(pages.RelevantNewest(window, p.Threshold)), ok: true}
+}
+
+// texts is the text of every row the cursor can stop on, by identity.
+func (m *Model) texts() map[string]string {
+	out := make(map[string]string, m.vp.Len())
+	for i := range m.vp.Len() {
+		row := m.scr.Rows[m.vp.At(i)]
+		out[row.Identity()] = row.Text
+	}
+	return out
+}
+
+// noteFresh finds the rows of the screen just built that were not in the
+// screen before, or whose text is not what it was, and lets them stand out for
+// a while. A re-sort changes no text, so it marks nothing; a reload that brings
+// a new article, a source gone red or a mention counted marks exactly those.
+func (m *Model) noteFresh(before map[string]string) {
+	until := m.be.Now().Add(freshFor)
+	n := 0
+	for _, row := range m.scr.Rows {
+		id := row.Identity()
+		if id == "" || !row.Selectable() {
+			continue
+		}
+		if old, ok := before[id]; !ok || old != row.Text {
+			m.fresh[id] = until
+			n++
+		}
+	}
+	if n > 0 && !m.failed {
+		m.ok("%d new or changed", n)
+	}
+}
+
+// isFresh reports whether the row stands out now.
+func (m *Model) isFresh(r Row) bool {
+	until, ok := m.fresh[r.Identity()]
+	return ok && m.be.Now().Before(until)
 }

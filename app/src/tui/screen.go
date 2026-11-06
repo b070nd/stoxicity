@@ -2,7 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -11,6 +10,7 @@ import (
 	"github.com/b070nd/stoxicity/app/src/model"
 	"github.com/b070nd/stoxicity/app/src/nav"
 	"github.com/b070nd/stoxicity/app/src/pages"
+	"github.com/b070nd/stoxicity/app/src/status"
 	"github.com/b070nd/stoxicity/app/src/summarize"
 	"github.com/b070nd/stoxicity/app/src/tagcloud"
 	"github.com/b070nd/stoxicity/app/src/universe"
@@ -43,15 +43,43 @@ type Row struct {
 	Watch    string // enter switches to this watch (the Watches screen)
 	HasWatch bool
 	URL      string // o opens this web address
+	// Key names the row for the cursor to follow across a reload and a re-sort
+	// when nothing else does (a source has no article, route or watch).
+	Key string
 }
 
 // Selectable reports whether the cursor can stop on the row.
-func (r Row) Selectable() bool { return r.Article != nil || r.Go != nil || r.HasWatch || r.URL != "" }
+func (r Row) Selectable() bool {
+	return r.Article != nil || r.Go != nil || r.HasWatch || r.URL != "" || r.Key != ""
+}
+
+// Identity is what makes the row the same row after the screen is rebuilt:
+// the cursor follows it when the rows are re-sorted or reloaded. Empty for a
+// row that cannot hold the cursor.
+func (r Row) Identity() string {
+	switch {
+	case r.Key != "":
+		return "k:" + r.Key
+	case r.Article != nil:
+		return "a:" + r.Article.ID
+	case r.Go != nil:
+		return "g:" + r.Go.String()
+	case r.HasWatch:
+		return "w:" + r.Watch
+	case r.URL != "":
+		return "u:" + r.URL
+	}
+	return ""
+}
 
 // Screen is what a view shows: a title and its rows.
 type Screen struct {
 	Title string
 	Rows  []Row
+	// Table and Sort say how the rows of a screen with a table are ordered and
+	// by which columns they can be (Table holds no items).
+	Table *Table
+	Sort  Sort
 	// Empty is shown when there are no rows besides the title.
 	Notice string
 }
@@ -64,7 +92,7 @@ type Data struct {
 	Topics    []string
 	Name      func(ticker string) string
 	Verdicts  map[string]labels.Verdict
-	Sources   []SourceRow
+	Sources   []status.Source
 	Watches   []WatchInfo
 	WatchID   string
 	Now       time.Time
@@ -73,6 +101,9 @@ type Data struct {
 	// a ticker. Either may be missing.
 	Universe  *universe.Universe
 	Following func(ticker string) []string
+	// Sort is the order the user chose for the screen's table; the zero Sort
+	// leaves it in its default order.
+	Sort Sort
 }
 
 func (d Data) name(t string) string {
@@ -287,9 +318,7 @@ func buildHome(d Data) Screen {
 	stocks := pages.BuildStocksPage(d.Articles, d.Watchlist, p)
 	b.blank()
 	b.heading("Stocks ›", &nav.Route{Kind: nav.Stocks})
-	for _, r := range pages.Head(stocks.Rows, homeRows) {
-		b.add(stockLine(r, d))
-	}
+	b.rows = append(b.rows, stockTable(pages.Head(stocks.Rows, homeRows), d).Body(Sort{})...)
 
 	doms := pages.Head(domains.Aggregate(window, p.Threshold), homeRows)
 	b.blank()
@@ -310,16 +339,37 @@ func buildHome(d Data) Screen {
 	return s
 }
 
-func stockLine(r pages.StockRow, d Data) Row {
-	star := " "
-	if r.Watched {
-		star = "★"
+// stockColumns lay out a list of stocks; the first column holds the star.
+var stockColumns = []Column{
+	{Width: 1},
+	{Title: "TICKER", Key: "ticker", Width: 6},
+	{Title: "NAME", Key: "name", Width: 28},
+	{Title: "NEWS", Key: "mentions", Width: 4, Right: true, Desc: true},
+	{Title: "MAT", Key: "materiality", Width: 4, Right: true, Desc: true},
+	{Title: "TONE", Key: "tone", Width: 5, Right: true, Desc: true},
+}
+
+// stockTable is the stocks of the news, most mentioned first unless sorted.
+func stockTable(rows []pages.StockRow, d Data) Table {
+	t := Table{Columns: stockColumns, Default: Sort{Key: "mentions", Desc: true}}
+	for _, r := range rows {
+		star := " "
+		if r.Watched {
+			star = "★"
+		}
+		t.Items = append(t.Items, Item{
+			Cells: []Cell{
+				Str(star),
+				Str(r.Ticker),
+				Str(clip(d.name(r.Ticker), 28)),
+				Num(fmt.Sprint(r.Mentions), float64(r.Mentions)),
+				Num(fmt.Sprintf("%.1f", r.Materiality), r.Materiality),
+				Num(tonePct(r.Tone), r.Tone),
+			},
+			Row: Row{Go: route(nav.Stock, r.Ticker)},
+		})
 	}
-	name := d.name(r.Ticker)
-	return Row{
-		Text: fmt.Sprintf("%s %-6s %-28s %3d  mat %.1f  tone %s", star, r.Ticker, clip(name, 28), r.Mentions, r.Materiality, tonePct(r.Tone)),
-		Go:   route(nav.Stock, r.Ticker),
-	}
+	return t
 }
 
 func domainLine(st domains.Stat) Row {
@@ -348,11 +398,10 @@ func buildStocks(d Data) Screen {
 		return s
 	}
 	var b builder
-	b.styled(Dim, fmt.Sprintf("%d stocks in %d relevant articles (★ = on your watchlist)", len(page.Rows), page.Relevant))
-	for _, r := range page.Rows {
-		b.add(stockLine(r, d))
-	}
-	s.Rows = b.rows
+	b.styled(Dim, fmt.Sprintf("%d stocks in %d relevant articles (★ = on your watchlist) · < > pick the column, I turns it round", len(page.Rows), page.Relevant))
+	t := stockTable(page.Rows, d)
+	b.rows = append(b.rows, t.Rows(d.Sort)...)
+	s.Rows, s.Table, s.Sort = b.rows, t.shape(), t.Effective(d.Sort)
 	return s
 }
 
@@ -441,13 +490,26 @@ func buildTopics(d Data) Screen {
 	b.styled(Dim, fmt.Sprintf("%d topics in %d relevant articles; lift compares with the window before", len(page.Rows), page.Relevant))
 	cloudRows(&b, page.Cloud, 40)
 	b.blank()
+	t := Table{
+		Columns: []Column{
+			{Title: "TOPIC", Key: "topic", Width: 28},
+			{Title: "NEWS", Key: "count", Width: 5, Right: true, Desc: true},
+			{Title: "BEFORE", Key: "before", Width: 7, Right: true, Desc: true},
+			{Title: "LIFT", Key: "lift", Width: 6, Right: true, Desc: true},
+		},
+		Default: Sort{Key: "count", Desc: true},
+	}
 	for _, r := range page.Rows {
-		b.add(Row{
-			Text: fmt.Sprintf("  %-28s %3d  before %-5.1f lift %.1fx", clip(r.Topic, 28), r.Count, r.Prior, r.Lift),
-			Go:   route(nav.Topic, r.Topic),
+		t.Items = append(t.Items, Item{
+			Cells: []Cell{
+				Str(r.Topic), Num(fmt.Sprint(r.Count), float64(r.Count)),
+				Num(fmt.Sprintf("%.1f", r.Prior), r.Prior), Num(fmt.Sprintf("%.1fx", r.Lift), r.Lift),
+			},
+			Row: Row{Go: route(nav.Topic, r.Topic)},
 		})
 	}
-	s.Rows = b.rows
+	b.rows = append(b.rows, t.Rows(d.Sort)...)
+	s.Rows, s.Table, s.Sort = b.rows, t.shape(), t.Effective(d.Sort)
 	return s
 }
 
@@ -508,11 +570,28 @@ func buildDomains(d Data) Screen {
 		return s
 	}
 	var b builder
-	b.styled(Dim, fmt.Sprintf("%d domains; relevant against total, most relevant first", len(stats)))
-	for _, st := range stats {
-		b.add(domainLine(st))
+	b.styled(Dim, fmt.Sprintf("%d domains; relevant against total", len(stats)))
+	t := Table{
+		Columns: []Column{
+			{Title: "DOMAIN", Key: "domain", Width: 32},
+			{Title: "RELEVANT", Key: "relevant", Width: 9, Right: true, Desc: true},
+			{Title: "TOTAL", Key: "total", Width: 6, Right: true, Desc: true},
+			{Title: "SHARE", Key: "share", Width: 6, Right: true, Desc: true},
+		},
+		Default: Sort{Key: "relevant", Desc: true},
 	}
-	s.Rows = b.rows
+	for _, st := range stats {
+		t.Items = append(t.Items, Item{
+			Cells: []Cell{
+				Str(st.Domain), Num(fmt.Sprint(st.Relevant), float64(st.Relevant)),
+				Num(fmt.Sprint(st.Total), float64(st.Total)),
+				Num(fmt.Sprintf("%.0f%%", st.Ratio()*100), st.Ratio()),
+			},
+			Row: Row{Go: route(nav.Domain, st.Domain)},
+		})
+	}
+	b.rows = append(b.rows, t.Rows(d.Sort)...)
+	s.Rows, s.Table, s.Sort = b.rows, t.shape(), t.Effective(d.Sort)
 	return s
 }
 
@@ -637,58 +716,72 @@ func buildSources(d Data) Screen {
 		s.Notice = "No sources are configured."
 		return s
 	}
-	var b builder
-	b.styled(Dim, "ID                    KIND     ON   LICENCE        HEALTH  LAST OK           LAST ERROR")
-	rows := append([]SourceRow(nil), d.Sources...)
-	sort.SliceStable(rows, func(i, j int) bool { return healthRank(rows[i]) < healthRank(rows[j]) })
+	zone := d.Params.Zone
+	if zone == nil {
+		zone = time.UTC
+	}
+	t := Table{
+		Columns: []Column{
+			{Title: "ID", Key: "id", Width: 21},
+			{Title: "KIND", Key: "kind", Width: 8},
+			{Title: "LICENCE", Key: "licence", Width: 14},
+			{Title: "HEALTH", Key: "health", Width: 7},
+			{Title: "STATE", Key: "state", Width: 8},
+			{Title: "LAST OK", Key: "lastok", Width: 17, Desc: true},
+			{Title: "NEXT", Key: "next", Width: 6},
+			{Title: "FAILS", Key: "fails", Width: 5, Right: true, Desc: true},
+			{Title: "LAST ERROR"},
+		},
+		Default: Sort{Key: "health"},
+	}
+	rows := append([]status.Source(nil), d.Sources...)
+	status.Sort(rows)
 	for _, r := range rows {
-		on := "no"
-		if r.Enabled {
-			on = "yes"
-		}
-		health, last := r.Health, "-"
+		health, last, next, fails := string(r.Level), "-", "-", ""
 		if health == "" {
 			health = "-"
 		}
 		if !r.LastOK.IsZero() {
-			zone := d.Params.Zone
-			if zone == nil {
-				zone = time.UTC
-			}
 			last = r.LastOK.In(zone).Format("2006-01-02 15:04")
 		}
+		if !r.Until.IsZero() {
+			next = r.Until.In(zone).Format("15:04")
+		}
+		if r.Failures > 0 {
+			fails = fmt.Sprint(r.Failures)
+		}
 		st := Plain
-		switch r.Health {
-		case "red":
+		switch r.Level {
+		case status.Red:
 			st = Bad
-		case "yellow":
+		case status.Yellow:
 			st = Warn
-		case "green":
+		case status.Green:
 			st = Good
 		}
 		if !r.Enabled {
 			st = Dim
 		}
-		b.styled(st, fmt.Sprintf("%-21s %-8s %-4s %-14s %-7s %-17s %s", clip(r.ID, 21), r.Kind, on, r.Licence, health, last, clip(oneLine(r.LastError), 40)))
+		t.Items = append(t.Items, Item{
+			Cells: []Cell{
+				Str(r.ID), Str(r.Kind), Str(r.Licence),
+				Num(health, float64(r.Needs())), Str(string(r.State)),
+				Num(last, float64(r.LastOK.Unix())), Num(next, dueNum(r.Until)),
+				Num(fails, float64(r.Failures)), Str(oneLine(r.LastError)),
+			},
+			Row: Row{Style: st, Key: "source:" + r.ID},
+		})
 	}
-	s.Rows = b.rows
+	s.Rows, s.Table, s.Sort = t.Rows(d.Sort), t.shape(), t.Effective(d.Sort)
 	return s
 }
 
-// healthRank sorts failing sources to the top.
-func healthRank(r SourceRow) int {
-	if !r.Enabled {
-		return 5
+// dueNum sorts a time to come by when it comes, and a missing one last.
+func dueNum(t time.Time) float64 {
+	if t.IsZero() {
+		return 1e18
 	}
-	switch r.Health {
-	case "red":
-		return 0
-	case "yellow":
-		return 1
-	case "":
-		return 3
-	}
-	return 4
+	return float64(t.Unix())
 }
 
 func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }

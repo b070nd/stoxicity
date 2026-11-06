@@ -99,7 +99,9 @@ the other:
 
 The first line counts the polls running against `refresh.workers`, the most
 that may run at once over all domains (1 to 64, default 16; lower it on a slow
-machine or connection). Sources with work come first, with the time they have been at it (polling), have
+machine or connection), and ends with how the sources are doing once any has
+been polled: `health 20 ok, 2 stale, 1 failing` (stale: failed once or twice, or
+no good poll for more than two intervals). Sources with work come first, with the time they have been at it (polling), have
 been due (waiting) or have been late; the idle ones follow in the order their
 timers run out, with the last good poll. A source's timer runs from the *start*
 of its poll, so the cadence holds however long polls take. A poll that outlasts

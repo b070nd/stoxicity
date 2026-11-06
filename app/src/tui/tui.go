@@ -29,6 +29,9 @@ type Options struct {
 	Days int
 	// Refresh is how often the screen reloads; 0 means a minute.
 	Refresh time.Duration
+	// Redraw is how often the screen is drawn again without reloading, so that
+	// the countdowns count and what was new fades; 0 means a second.
+	Redraw time.Duration
 	// OpenURL opens a web address in the browser; nil means the system's
 	// opener.
 	OpenURL func(url string) error
@@ -40,6 +43,9 @@ func (o Options) withDefaults() Options {
 	}
 	if o.Refresh <= 0 {
 		o.Refresh = defaultRefresh
+	}
+	if o.Redraw <= 0 {
+		o.Redraw = defaultRedraw
 	}
 	if o.OpenURL == nil {
 		o.OpenURL = systemOpen

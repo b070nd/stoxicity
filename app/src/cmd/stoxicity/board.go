@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/x/term"
 
 	"github.com/b070nd/stoxicity/app/src/scheduler"
+	"github.com/b070nd/stoxicity/app/src/status"
 )
 
 // boardEvery is how often the board redraws, so that the elapsed times count.
@@ -38,6 +39,9 @@ func renderBoard(b scheduler.Board, zone *time.Location, width, maxRows int) []s
 	sum := fmt.Sprintf("%s  %s polling · %d waiting · %d idle", b.At.In(zone).Format(time.TimeOnly), polling, waiting, b.Idle)
 	if b.Next != "" {
 		sum += fmt.Sprintf(" · next %s in %s", b.Next, clock(b.NextDue.Sub(b.At)))
+	}
+	if m := status.Summarise(status.FromBoard(b, nil)); m.Green+m.Yellow+m.Red > 0 {
+		sum += fmt.Sprintf(" · health %d ok, %d stale, %d failing", m.Green, m.Yellow, m.Red)
 	}
 	lines := []string{sum}
 	for i, r := range b.Rows {

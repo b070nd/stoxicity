@@ -40,6 +40,8 @@ type Activity struct {
 	LastNew   int       // articles stored by that poll
 	Failures  int       // failed polls in a row
 	LastError string
+	// Level is the source's health now (LevelGreen, LevelYellow or LevelRed).
+	Level string
 	// Parked: nothing will poll the source until it is refreshed (a 404, a parse
 	// failure).
 	Parked bool
@@ -73,6 +75,7 @@ func (p *Poller) Board() Board {
 				SourceID: e.src.ID, Host: e.host, State: state, Since: since,
 				LastOK: e.health.LastOK, LastNew: e.lastNew, Failures: e.health.Failures,
 				LastError: e.health.LastError, Parked: e.health.Permanent,
+				Level: Grade(e.health, p.interval(e.src, now), now),
 			}
 		}
 		switch {

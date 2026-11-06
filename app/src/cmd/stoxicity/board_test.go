@@ -136,3 +136,15 @@ func TestRenderBoardListsEverySourceIncludingIdleOnes(t *testing.T) {
 		}
 	}
 }
+
+func TestBoardSummaryCountsHealthLevels(t *testing.T) {
+	b := scheduler.Board{At: boardNow, Idle: 3, Rows: []scheduler.Activity{
+		{SourceID: "a", State: scheduler.Idle, Until: boardNow.Add(time.Minute), LastOK: boardNow, Level: scheduler.LevelGreen},
+		{SourceID: "b", State: scheduler.Idle, Until: boardNow.Add(time.Minute), LastOK: boardNow, Failures: 1, Level: scheduler.LevelYellow},
+		{SourceID: "c", State: scheduler.Idle, Until: boardNow.Add(time.Minute), Failures: 3, Level: scheduler.LevelRed},
+	}}
+	got := renderBoard(b, time.UTC, 200, 14)[0]
+	if !strings.Contains(got, "health 1 ok, 1 stale, 1 failing") {
+		t.Errorf("summary = %q", got)
+	}
+}

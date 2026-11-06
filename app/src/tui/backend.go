@@ -6,6 +6,7 @@ import (
 
 	"github.com/b070nd/stoxicity/app/src/labels"
 	"github.com/b070nd/stoxicity/app/src/model"
+	"github.com/b070nd/stoxicity/app/src/status"
 	"github.com/b070nd/stoxicity/app/src/universe"
 )
 
@@ -14,17 +15,6 @@ type WatchInfo struct {
 	ID     string
 	Name   string
 	Unread int
-}
-
-// SourceRow is one line of the source health screen.
-type SourceRow struct {
-	ID        string
-	Kind      string
-	Enabled   bool
-	Licence   string
-	Health    string // green, yellow, red, or empty before the first poll
-	LastOK    time.Time
-	LastError string
 }
 
 // Backend is everything the interface reads and writes. The workspace package
@@ -58,7 +48,7 @@ type Backend interface {
 	Articles(ctx context.Context, watchID string, from, to time.Time) ([]model.Article, error)
 	// Search runs a Google-style query (package filter) over the same set.
 	Search(ctx context.Context, watchID, query string, from, to time.Time, limit int) ([]model.Article, error)
-	Sources(ctx context.Context) ([]SourceRow, error)
+	Sources(ctx context.Context) ([]status.Source, error)
 	Verdicts(ctx context.Context) (map[string]labels.Verdict, error)
 	Label(ctx context.Context, articleID string, keep bool) error
 	// MarkSeen moves the watch's read marker to now.

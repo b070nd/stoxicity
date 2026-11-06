@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
@@ -11,6 +12,7 @@ import (
 	"github.com/b070nd/stoxicity/app/src/labels"
 	"github.com/b070nd/stoxicity/app/src/nav"
 	"github.com/b070nd/stoxicity/app/src/sanitize"
+	"github.com/b070nd/stoxicity/app/src/status"
 )
 
 // The palette uses the terminal's own 16 colours, so it follows the user's
@@ -24,6 +26,7 @@ var (
 	styleCursor = lipgloss.NewStyle().Reverse(true)
 	styleTab    = lipgloss.NewStyle().Reverse(true).Bold(true)
 	styleHead   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
+	styleFresh  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("10"))
 	cloud       = [...]lipgloss.Style{
 		lipgloss.NewStyle().Faint(true),
 		lipgloss.NewStyle(),
@@ -88,7 +91,7 @@ func (m *Model) render() string {
 		body = append(body, "")
 	}
 	body = body[:h]
-	lines := []string{m.watchBar(), m.crumbs()}
+	lines := []string{m.watchBar(), m.meterLine(), m.crumbs()}
 	lines = append(lines, body...)
 	lines = append(lines, m.filterLine(), m.statusLine())
 	for i, l := range lines {
@@ -120,6 +123,58 @@ func (m *Model) watchBar() string {
 	return strings.Join(parts, "")
 }
 
+// meterLine is the header: how the sources are doing, when the next fetch is
+// due, how much news the window holds and what is unread.
+func (m *Model) meterLine() string {
+	var parts []string
+	if m.haveSources {
+		mt := status.Summarise(m.sources)
+		if mt.Total == 0 {
+			parts = append(parts, styleDim.Render("no sources"))
+		} else {
+			s := "sources " + styleGood.Render(fmt.Sprintf("%d ok", mt.Green))
+			if mt.Yellow > 0 {
+				s += " " + styleWarn.Render(fmt.Sprintf("%d stale", mt.Yellow))
+			}
+			if mt.Red > 0 {
+				s += " " + styleBad.Render(fmt.Sprintf("%d failing", mt.Red))
+			}
+			if mt.Unknown > 0 {
+				s += " " + styleDim.Render(fmt.Sprintf("%d not polled", mt.Unknown))
+			}
+			parts = append(parts, s)
+			if mt.Next != "" {
+				in := mt.NextDue.Sub(m.be.Now())
+				if in >= 0 {
+					parts = append(parts, fmt.Sprintf("next fetch %s in %s", mt.Next, shortDur(in)))
+				} else {
+					parts = append(parts, styleWarn.Render(fmt.Sprintf("%s overdue %s", mt.Next, shortDur(-in))))
+				}
+			}
+		}
+	}
+	if m.counts.ok {
+		parts = append(parts, fmt.Sprintf("news %s articles, %s relevant", thousands(m.counts.articles), thousands(m.counts.relevant)))
+	}
+	unread := 0
+	for _, w := range m.watches {
+		unread += w.Unread
+	}
+	if unread > 0 {
+		parts = append(parts, styleBold.Render(fmt.Sprintf("%s unread", thousands(unread))))
+	}
+	return " " + strings.Join(parts, styleDim.Render(" · "))
+}
+
+// shortDur writes a duration as m:ss, or h:mm from an hour.
+func shortDur(d time.Duration) string {
+	d = max(d, 0).Round(time.Second)
+	if d >= time.Hour {
+		return fmt.Sprintf("%d:%02dh", int(d/time.Hour), int(d/time.Minute)%60)
+	}
+	return fmt.Sprintf("%d:%02d", int(d/time.Minute), int(d/time.Second)%60)
+}
+
 func (m *Model) crumbs() string {
 	cs := m.stack.Crumbs()
 	parts := make([]string, len(cs))
@@ -137,42 +192,81 @@ func (m *Model) crumbs() string {
 func (m *Model) bodyLines() []string {
 	var out []string
 	out = append(out, styleBold.Render(" "+clean(m.scr.Title)))
-	h := m.bodyHeight()
 	if len(m.scr.Rows) == 0 {
 		if m.scr.Notice != "" {
 			out = append(out, "", styleDim.Render(" "+clean(m.scr.Notice)))
 		}
 		return out
 	}
-	at := -1
-	if m.cursor < len(m.sel) {
-		at = m.sel[m.cursor]
+	at, ok := m.vp.Row()
+	if !ok {
+		at = -1
 	}
-	end := min(m.top+h-1, len(m.scr.Rows))
-	for i := m.top; i < end; i++ {
+	from, end := m.vp.Window()
+	for i := from; i < end; i++ {
 		row := m.scr.Rows[i]
 		text := clean(row.Text)
+		mark := " "
+		if t := markable(row); t != "" && m.marks[t] {
+			mark = "●"
+		}
 		if i == at {
-			out = append(out, styleCursor.Render(fit("▸ "+text, m.width)))
+			out = append(out, styleCursor.Render(fit("▸"+mark+text, m.width)))
 			continue
 		}
-		out = append(out, row.Style.lip().Render("  "+text))
+		style := row.Style.lip()
+		if m.isFresh(row) {
+			style = styleFresh
+		}
+		out = append(out, style.Render(" "+mark+text))
 	}
 	return out
 }
 
 func (m *Model) filterLine() string {
 	switch m.mode {
-	case modeFilter:
-		return " / " + string(m.filter) + "█"
-	case modeTag:
-		return " # tag " + m.target + ": " + string(m.filter) + "█  (-name removes · enter saves · esc cancels)"
-	case modeMember:
-		return " L list for " + m.target + ": " + string(m.filter) + "█  (-name removes; a new name makes the list)"
-	case modeJump:
-		return " g jump to: " + string(m.filter) + "█  (type the start of a ticker or name · esc ends)"
+	case modeFilter, modeTag, modeMember, modeJump:
+		return m.prompt.Line()
 	}
-	return styleDim.Render(" / filter · ? help")
+	return m.keyBar()
+}
+
+// keyBar lists the keys that do something here, in the order of the key map.
+// When they do not all fit, the ones at the end of the list go first, except
+// help and quit, which stay.
+func (m *Model) keyBar() string {
+	c := m.context()
+	type item struct{ key, label string }
+	var items, tail []item
+	for _, b := range DefaultKeys {
+		if b.Bar == "" || !b.Applies(c) {
+			continue
+		}
+		it := item{keyName(b.Keys[0]), b.Bar}
+		if b.Action == Help || b.Action == Quit {
+			tail = append(tail, it)
+		} else {
+			items = append(items, it)
+		}
+	}
+	width := func(list ...[]item) int {
+		n := 1
+		for _, l := range list {
+			for _, it := range l {
+				n += utf8.RuneCountInString(it.key) + 1 + utf8.RuneCountInString(it.label) + 2
+			}
+		}
+		return n
+	}
+	for len(items) > 0 && width(items, tail) > m.width {
+		items = items[:len(items)-1]
+	}
+	var b strings.Builder
+	b.WriteString(" ")
+	for _, it := range append(items, tail...) {
+		b.WriteString(styleBold.Render(it.key) + styleDim.Render(" "+it.label) + "  ")
+	}
+	return strings.TrimRight(b.String(), " ")
 }
 
 func (m *Model) statusLine() string {
@@ -182,8 +276,11 @@ func (m *Model) statusLine() string {
 	} else if !m.refreshed.IsZero() {
 		parts = append(parts, "refreshed "+m.refreshed.In(m.be.Zone()).Format("15:04"))
 	}
-	if m.stack.Current().Kind == nav.Companies && len(m.sel) > 0 && m.cursor < len(m.sel) {
-		parts = append(parts, fmt.Sprintf("company %s of %s", thousands(m.cursor+1), thousands(len(m.sel))))
+	if m.stack.Current().Kind == nav.Companies && m.vp.Len() > 0 {
+		parts = append(parts, fmt.Sprintf("company %s of %s", thousands(m.vp.Cursor()+1), thousands(m.vp.Len())))
+	}
+	if n := len(m.marks); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d marked", n))
 	}
 	parts = append(parts, m.be.Tenant())
 	line := " " + strings.Join(parts, " · ")
@@ -199,12 +296,24 @@ func (m *Model) statusLine() string {
 
 func (m *Model) helpLines() []string {
 	out := []string{styleBold.Render(" Keys"), ""}
-	for _, b := range DefaultKeys {
+	// Two columns, filled down the left one first, so the whole map shows on
+	// a screen of ordinary height.
+	col := max((m.width-2)/2, 20)
+	entries := make([]string, len(DefaultKeys))
+	for i, b := range DefaultKeys {
 		keys := strings.Join(b.Keys, " ")
 		if len(b.Keys) > 3 {
 			keys = b.Keys[0] + " … " + b.Keys[len(b.Keys)-1]
 		}
-		out = append(out, fmt.Sprintf("  %-18s %s", keys, b.Help))
+		entries[i] = clip(fmt.Sprintf("%-14s %s", keys, b.Help), col-2)
+	}
+	half := (len(entries) + 1) / 2
+	for i := range half {
+		line := fmt.Sprintf("  %-*s", col, entries[i])
+		if j := i + half; j < len(entries) {
+			line += entries[j]
+		}
+		out = append(out, strings.TrimRight(line, " "))
 	}
 	out = append(out, "", styleDim.Render(" press any key to close"))
 	return out

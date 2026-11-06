@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"time"
 
 	"github.com/b070nd/stoxicity/app/src/model"
 	"github.com/b070nd/stoxicity/app/src/tui"
@@ -21,6 +22,7 @@ func main() {
 	root := flag.String("root", "", "configuration folder (default: the closest one above the working directory)")
 	tenantFlag := flag.String("tenant", "", "tenant to open (default: $STOXICITY_TENANT, then \"default\")")
 	watchFlag := flag.String("watch", "", "watch to open (default: the tenant's default_watch)")
+	refresh := flag.Duration("refresh", 0, "how often the screen reloads, e.g. 10s (default: 1m)")
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
 	if *showVersion {
@@ -31,19 +33,23 @@ func main() {
 		fmt.Fprintln(os.Stderr, "stoxicity-tui: bad tenant or watch ID")
 		os.Exit(2)
 	}
+	if *refresh < 0 || (*refresh > 0 && *refresh < time.Second) {
+		fmt.Fprintln(os.Stderr, "stoxicity-tui: -refresh must be at least 1s")
+		os.Exit(2)
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	if err := run(ctx, *root, *tenantFlag, *watchFlag); err != nil {
+	if err := run(ctx, *root, *tenantFlag, *watchFlag, *refresh); err != nil {
 		fmt.Fprintln(os.Stderr, "stoxicity-tui:", err)
 		os.Exit(1)
 	}
 }
 
-func run(ctx context.Context, root, tenantID, watchID string) error {
+func run(ctx context.Context, root, tenantID, watchID string, refresh time.Duration) error {
 	ws, err := workspace.Open(workspace.Options{Root: root, Tenant: tenantID, Watch: watchID})
 	if err != nil {
 		return err
 	}
 	defer ws.Close()
-	return tui.Run(ctx, tui.Options{Backend: ws})
+	return tui.Run(ctx, tui.Options{Backend: ws, Refresh: refresh})
 }

@@ -25,6 +25,7 @@ import (
 	"github.com/b070nd/stoxicity/app/src/reader"
 	"github.com/b070nd/stoxicity/app/src/refdata"
 	"github.com/b070nd/stoxicity/app/src/sources"
+	"github.com/b070nd/stoxicity/app/src/status"
 	"github.com/b070nd/stoxicity/app/src/store"
 	"github.com/b070nd/stoxicity/app/src/tenant"
 	"github.com/b070nd/stoxicity/app/src/tui"
@@ -397,28 +398,34 @@ func (w *Workspace) Search(ctx context.Context, watchID, query string, from, to 
 	return out, nil
 }
 
-// Sources reports every configured source with its last known health.
-func (w *Workspace) Sources(ctx context.Context) ([]tui.SourceRow, error) {
-	var rows []tui.SourceRow
+// Sources reports every configured source with its last known health. The
+// health level is graded now, from when the source last worked, so a source
+// that nothing polls any more does not stay green.
+func (w *Workspace) Sources(ctx context.Context) ([]status.Source, error) {
+	now := w.now()
+	rows := make([]status.Source, 0, len(w.reg))
 	for _, id := range slices.Sorted(maps.Keys(w.reg)) {
 		s := w.reg[id]
 		_, h, err := w.db.LoadSource(ctx, id)
 		if err != nil {
 			return nil, err
 		}
-		row := tui.SourceRow{
-			ID: id, Kind: string(s.Kind), Enabled: s.Enabled, Licence: string(s.Licence),
-			LastOK: h.LastOK, LastError: h.LastError,
-		}
-		if !h.LastOK.IsZero() || h.Failures > 0 {
-			row.Health = h.Level
-			if row.Health == "" {
-				row.Health = "yellow"
-			}
-		}
-		rows = append(rows, row)
+		rows = append(rows, status.FromStored(s, h, w.pollInterval(s, now), now))
 	}
 	return rows, nil
+}
+
+// pollInterval is how often the scheduler polls src at time now: the same
+// order of preference as the scheduler's own (the fast window, the source's
+// own interval, the default).
+func (w *Workspace) pollInterval(src model.Source, now time.Time) time.Duration {
+	if d := w.cfg.IntervalFor(src, now); d > 0 {
+		return d
+	}
+	if d, err := time.ParseDuration(src.Interval); err == nil && d > 0 {
+		return d
+	}
+	return w.cfg.FetchInterval()
 }
 
 // Verdicts are the user's keep/drop labels by article ID.

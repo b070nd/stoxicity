@@ -55,6 +55,18 @@ var sortKeys = []string{"ticker", "name", "news", "industry", "exchange", "kind"
 // whether it is reversed; empty when it asks for none.
 func (q Query) SortKey() (key string, desc bool) { return q.sortBy, q.desc }
 
+// WithSort returns the query with the order replaced, as if it said sort:key
+// (or sort:-key when desc). An unknown key leaves the order as it was.
+func (q Query) WithSort(key string, desc bool) Query {
+	if slices.Contains(sortKeys, key) {
+		q.sortBy, q.desc = key, desc
+	}
+	return q
+}
+
+// SortKeys are the orders sort: knows.
+func SortKeys() []string { return slices.Clone(sortKeys) }
+
 // QueryError is a problem in a query.
 type QueryError struct {
 	Pos int

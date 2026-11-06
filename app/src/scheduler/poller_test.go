@@ -662,7 +662,7 @@ func TestHealthLevels(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := level(tt.h, iv, t0); got != tt.want {
+			if got := Grade(tt.h, iv, t0); got != tt.want {
 				t.Fatalf("level = %s, want %s", got, tt.want)
 			}
 		})

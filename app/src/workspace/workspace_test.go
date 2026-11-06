@@ -7,8 +7,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/b070nd/stoxicity/app/src/feeds"
 	"github.com/b070nd/stoxicity/app/src/labels"
 	"github.com/b070nd/stoxicity/app/src/model"
+	"github.com/b070nd/stoxicity/app/src/scheduler"
+	"github.com/b070nd/stoxicity/app/src/status"
 	"github.com/b070nd/stoxicity/app/src/store"
 	"github.com/b070nd/stoxicity/app/src/watch"
 )
@@ -278,8 +281,33 @@ func TestSourcesListsEveryConfiguredSource(t *testing.T) {
 	if len(rows) != 2 || rows[0].ID != "pub" || rows[1].ID != "secret" {
 		t.Fatalf("rows = %+v", rows)
 	}
-	if rows[0].Health != "" || !rows[0].Enabled || rows[0].Licence != "redistributable" {
+	if rows[0].Level != status.Unknown || !rows[0].Enabled || rows[0].Licence != "redistributable" {
 		t.Errorf("a source that was never polled has no health yet: %+v", rows[0])
+	}
+}
+
+// The scheduler stores its levels in capitals; the interface must still show a
+// failing source as red, and one that has not worked for a long time as yellow.
+func TestSourcesGradesWhatTheSchedulerStored(t *testing.T) {
+	w := open(t, setup(t))
+	ctx := context.Background()
+	failing := scheduler.Health{LastOK: now.Add(-time.Hour), Failures: 5, CircuitOpen: true, Level: scheduler.LevelRed, LastError: "boom"}
+	stale := scheduler.Health{LastOK: now.Add(-48 * time.Hour), Level: scheduler.LevelGreen}
+	if err := w.db.SaveSource(ctx, "pub", feeds.State{}, failing); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.db.SaveSource(ctx, "secret", feeds.State{}, stale); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := w.Sources(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rows[0].Level != status.Red || rows[0].LastError != "boom" {
+		t.Errorf("failing source: %+v", rows[0])
+	}
+	if rows[1].Level != status.Yellow {
+		t.Errorf("a source last good two days ago should not be green: %+v", rows[1])
 	}
 }
 

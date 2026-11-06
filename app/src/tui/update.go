@@ -2,7 +2,9 @@ package tui
 
 import (
 	"fmt"
+	"maps"
 	"net/url"
+	"slices"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -19,7 +21,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		m.follow()
+		m.vp.Resize(m.bodyHeight() - 1)
 	case tea.KeyPressMsg:
 		return m, m.key(msg)
 	case watchesMsg:
@@ -34,6 +36,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.loaded(msg)
 	case tickMsg:
 		return m, tea.Batch(m.tickCmd(), m.watchesCmd(), m.loadCmd(true))
+	case clockMsg:
+		return m, m.clockCmd() // drawing again is all it is for
 	case savedMsg:
 		if msg.err != nil {
 			m.fail("label: %v", msg.err)
@@ -97,15 +101,18 @@ func (m *Model) loaded(msg loadedMsg) tea.Cmd {
 	if msg.err != nil {
 		m.fail("%v", msg.err)
 		m.scr = Screen{Title: m.stack.Current().Label(), Notice: "could not load: " + msg.err.Error()}
-		m.sel, m.cursor, m.top = nil, 0, 0
+		m.builtFor = ""
+		m.vp.Clear()
 		return nil
 	}
 	m.verdicts = msg.verdicts
+	if msg.sources != nil || msg.haveSources || m.stack.Current().Kind == nav.Sources {
+		m.sources, m.haveSources = msg.sources, true
+	}
 	switch {
 	case msg.shared:
 		m.shared, m.sharedWatch, m.sharedOK = msg.arts, m.stack.Watch(), true
 	case m.stack.Current().Kind == nav.Sources:
-		m.sources = msg.sources
 	case m.stack.Current().Kind != nav.Watches:
 		m.routeArts, m.truncated = msg.arts, msg.truncated
 	}
@@ -113,6 +120,7 @@ func (m *Model) loaded(msg loadedMsg) tea.Cmd {
 	if !m.failed || !strings.HasPrefix(m.status, "watch ") {
 		m.status, m.failed = "", false
 	}
+	m.diffNext = true
 	m.rebuild()
 	if w := m.stack.Watch(); w != "" && m.stack.Current().Scoped() {
 		be, ctx := m.be, m.ctx
@@ -162,7 +170,7 @@ func (m *Model) watchName(id string) string {
 
 // go_ opens a route.
 func (m *Model) goTo(r nav.Route) tea.Cmd {
-	m.cursors[m.stack.Current().String()] = m.cursor
+	m.cursors[m.stack.Current().String()] = m.vp.Cursor()
 	m.stack.Go(r)
 	return m.entered()
 }
@@ -187,24 +195,28 @@ func (m *Model) entered() tea.Cmd {
 // showLoading replaces the screen with a placeholder until the load answers.
 func (m *Model) showLoading() {
 	m.scr = Screen{Title: m.stack.Current().Label(), Notice: "loading…"}
-	m.sel, m.cursor, m.top = nil, 0, 0
+	m.builtFor = ""
+	m.vp.Clear()
 }
 
 // key handles a key press.
 func (m *Model) key(k tea.KeyPressMsg) tea.Cmd {
 	switch m.mode {
-	case modeFilter:
-		return m.filterKey(k)
-	case modeTag, modeMember:
-		return m.editKey(k)
-	case modeJump:
-		return m.jumpKey(k)
+	case modeFilter, modeTag, modeMember, modeJump:
+		return m.promptKey(k)
 	case modeHelp:
 		m.mode = modeList
 		return nil
 	}
 	b, ok := Lookup(k.String())
 	if !ok {
+		return nil
+	}
+	c := m.context()
+	if !b.Applies(c) {
+		if !c.Detail { // in an open article the other keys are simply quiet
+			m.fail("%s", b.Refusal(c))
+		}
 		return nil
 	}
 	if m.detail != nil {
@@ -253,7 +265,7 @@ func (m *Model) key(k tea.KeyPressMsg) tea.Cmd {
 	case GoSources:
 		return m.goTo(nav.Route{Kind: nav.Sources})
 	case Back:
-		m.cursors[cur.String()] = m.cursor
+		m.cursors[cur.String()] = m.vp.Cursor()
 		if m.stack.Back() {
 			return m.entered()
 		}
@@ -266,31 +278,41 @@ func (m *Model) key(k tea.KeyPressMsg) tea.Cmd {
 	case OpenURL:
 		return m.openURL()
 	case Up:
-		m.move(-1)
+		m.vp.Move(-1)
 	case Down:
-		m.move(1)
+		m.vp.Move(1)
 	case PageUp:
-		m.move(-m.bodyHeight())
+		m.vp.Page(-1)
 	case PageDown:
-		m.move(m.bodyHeight())
+		m.vp.Page(1)
 	case Top:
-		m.move(-len(m.sel))
+		m.vp.Home()
 	case Bottom:
-		m.move(len(m.sel))
+		m.vp.End()
+	case SortNext:
+		m.sortBy(1)
+	case SortPrev:
+		m.sortBy(-1)
+	case SortInvert:
+		m.sortBy(0)
+	case Mark:
+		m.mark()
+	case Unmark:
+		clear(m.marks)
+		m.ok("marks cleared")
 	case FocusFilter:
-		m.mode, m.filter = modeFilter, nil
+		initial := ""
 		if cur.Kind == nav.Companies { // refine the query on screen
-			m.filter = []rune(cur.Arg)
-			if cur.Arg != "" {
-				m.filter = append(m.filter, ' ')
+			initial = cur.Arg
+			if initial != "" {
+				initial += " "
 			}
 		}
+		m.mode = modeFilter
+		m.prompt.Open("filter:"+string(cur.Kind), " / ", "", initial, false)
 	case Jump:
-		if cur.Kind != nav.Companies {
-			m.fail("g jumps within the catalogue of companies (c)")
-			return nil
-		}
-		m.mode, m.filter = modeJump, nil
+		m.mode = modeJump
+		m.prompt.Open("jump", " g jump to: ", "type the start of a ticker or name · esc ends", "", true)
 	case Keep:
 		return m.label(true)
 	case Drop:
@@ -322,82 +344,79 @@ func (m *Model) detailKey(b Binding) tea.Cmd {
 	return nil
 }
 
-// filterKey edits the filter bar. On the Companies screen the bar narrows the
-// company list as you type and enter keeps the query as the route; elsewhere
-// enter runs the query as a search.
-func (m *Model) filterKey(k tea.KeyPressMsg) tea.Cmd {
+// promptKey passes a key to the open prompt and acts on what it came to. What
+// the text means depends on which prompt it is.
+func (m *Model) promptKey(k tea.KeyPressMsg) tea.Cmd {
+	ev := m.prompt.Key(k)
+	switch m.mode {
+	case modeFilter:
+		return m.filterEvent(ev)
+	case modeJump:
+		return m.jumpEvent(ev, k)
+	}
+	return m.editEvent(ev)
+}
+
+// filterEvent acts on the filter bar. On the Companies screen the bar narrows
+// the company list as you type and enter keeps the query as the route;
+// elsewhere enter runs the query as a search.
+func (m *Model) filterEvent(ev PromptEvent) tea.Cmd {
 	companies := m.stack.Current().Kind == nav.Companies
-	switch k.String() {
-	case "esc", "ctrl+c":
+	switch ev {
+	case Cancelled:
 		m.mode = modeList
 		if companies {
 			m.rebuild()
 		}
-	case "enter":
-		q := strings.TrimSpace(string(m.filter))
-		m.mode = modeList
+		return nil
+	case Submitted:
+		q := strings.TrimSpace(m.prompt.Text())
 		if companies {
 			if _, err := universe.ParseQuery(q); err != nil {
 				m.fail("%v", err)
-				m.mode = modeFilter
-				return nil
+				return nil // the query stays in the bar to be mended
 			}
+			m.prompt.Remember()
+			m.mode = modeList
 			if q == m.stack.Current().Arg {
 				m.rebuild()
 				return nil
 			}
+			delete(m.sorts, nav.Companies) // the new query's own sort: applies
 			return m.goTo(nav.Route{Kind: nav.Companies, Arg: q})
 		}
 		if q == "" {
+			m.mode = modeList
 			return nil
 		}
 		if _, err := filter.ParseWith(q, m.be.Universe().FilterEnv()); err != nil {
 			m.fail("%v", err)
-			m.mode = modeFilter
 			return nil
 		}
+		m.prompt.Remember()
+		m.mode = modeList
 		return m.goTo(nav.Route{Kind: nav.Search, Arg: q})
-	case "backspace":
-		if n := len(m.filter); n > 0 {
-			m.filter = m.filter[:n-1]
-		}
-	case "ctrl+u":
-		m.filter = nil
-	default:
-		if t := k.Key().Text; t != "" {
-			m.filter = append(m.filter, []rune(t)...)
-		}
 	}
-	if companies && m.mode == modeFilter {
+	if companies {
 		m.rebuild()
 	}
 	return nil
 }
 
-// jumpKey handles a key while the cursor jumps through the catalogue: what is
-// typed is the start of a ticker (or of a name when the list is ordered by
-// name), and the cursor goes to the first company that starts with it. The
-// list is not filtered, so the neighbours stay in view.
-func (m *Model) jumpKey(k tea.KeyPressMsg) tea.Cmd {
-	switch k.String() {
-	case "esc", "enter", "ctrl+c":
+// jumpEvent acts on the jump prompt: what is typed is the start of a ticker (or
+// of a name when the list is ordered by name), and the cursor goes to the first
+// company that starts with it. The list is not filtered, so the neighbours stay
+// in view. The movement keys end the jump and move the cursor.
+func (m *Model) jumpEvent(ev PromptEvent, k tea.KeyPressMsg) tea.Cmd {
+	switch ev {
+	case Cancelled, Submitted:
 		m.mode = modeList
 		return nil
-	case "backspace":
-		if n := len(m.filter); n > 0 {
-			m.filter = m.filter[:n-1]
-		}
-	case "ctrl+u":
-		m.filter = nil
-	case "up", "down", "pgup", "pgdown", "home", "end":
+	case PassedOn:
 		m.mode = modeList
 		return m.key(k)
-	default:
-		if t := k.Key().Text; t != "" {
-			m.filter = append(m.filter, []rune(t)...)
-		}
 	}
-	m.jumpTo(string(m.filter))
+	m.jumpTo(m.prompt.Text())
 	return nil
 }
 
@@ -409,14 +428,10 @@ func (m *Model) jumpTo(prefix string) {
 	if prefix == "" || m.data.Universe == nil {
 		return
 	}
-	byName := false
-	if q, err := universe.ParseQuery(m.stack.Current().Arg); err == nil {
-		key, _ := q.SortKey()
-		byName = key == "name"
-	}
+	byName := m.scr.Sort.Key == "name"
 	m.status, m.failed = "", false
-	for i, at := range m.sel {
-		row := m.scr.Rows[at]
+	for i := range m.vp.Len() {
+		row := m.scr.Rows[m.vp.At(i)]
 		if row.Go == nil || row.Go.Kind != nav.Stock {
 			continue
 		}
@@ -427,12 +442,82 @@ func (m *Model) jumpTo(prefix string) {
 			}
 		}
 		if strings.HasPrefix(have, prefix) {
-			m.cursor = i
-			m.follow()
+			m.vp.Select(i)
 			return
 		}
 	}
 	m.fail("nothing starts with %q", prefix)
+}
+
+// context is where a key is pressed now.
+func (m *Model) context() Context {
+	row, ok := m.row()
+	return Context{
+		Kind: m.stack.Current().Kind, Detail: m.detail != nil,
+		Row: row, HasRow: ok, Table: m.scr.Table != nil, Article: m.selected() != nil,
+	}
+}
+
+// sortBy sorts the screen's table by the next (dir 1) or previous (-1) column,
+// or turns the current order round (0). The cursor stays on its row.
+func (m *Model) sortBy(dir int) {
+	t := m.scr.Table
+	if t == nil {
+		m.fail("this screen has no columns to sort")
+		return
+	}
+	var s Sort
+	if dir == 0 {
+		s = t.Invert(m.scr.Sort)
+	} else {
+		var ok bool
+		if s, ok = t.Choose(m.scr.Sort, dir); !ok {
+			return
+		}
+	}
+	m.sorts[m.stack.Current().Kind] = s
+	m.ok("sorted by %s", s)
+	m.rebuild()
+}
+
+// markable is the ticker of the stock the row stands for, or "".
+func markable(r Row) string {
+	if r.Go != nil && r.Go.Kind == nav.Stock {
+		return strings.ToUpper(r.Go.Arg)
+	}
+	return ""
+}
+
+// mark marks or unmarks the stock under the cursor and moves down, so that a
+// run of stocks is marked by holding the key.
+func (m *Model) mark() {
+	row, ok := m.row()
+	t := ""
+	if ok {
+		t = markable(row)
+	}
+	if t == "" {
+		m.fail("put the cursor on a stock to mark it")
+		return
+	}
+	if m.marks[t] {
+		delete(m.marks, t)
+	} else {
+		m.marks[t] = true
+	}
+	m.vp.Move(1)
+}
+
+// targets are the stocks a tag or list edit applies to: every marked stock, or
+// else the one under the cursor.
+func (m *Model) targets() []string {
+	if len(m.marks) > 0 {
+		return slices.Sorted(maps.Keys(m.marks))
+	}
+	if t := m.stockUnderCursor(); t != "" {
+		return []string{t}
+	}
+	return nil
 }
 
 // stockUnderCursor is the ticker a tag or list edit applies to: the stock
@@ -449,46 +534,45 @@ func (m *Model) stockUnderCursor() string {
 
 // startEdit opens the prompt for tags or lists.
 func (m *Model) startEdit(to mode) tea.Cmd {
-	t := m.stockUnderCursor()
-	if t == "" {
+	ts := m.targets()
+	if len(ts) == 0 {
 		m.fail("put the cursor on a stock first")
 		return nil
 	}
-	m.target, m.filter, m.mode = t, nil, to
+	m.editing, m.target, m.mode = ts, ts[0], to
+	if len(ts) > 1 {
+		m.target = fmt.Sprintf("%d marked stocks", len(ts))
+	}
+	if to == modeMember {
+		m.prompt.Open("list", " L list for "+m.target+": ", "-name removes; a new name makes the list", "", false)
+	} else {
+		m.prompt.Open("tag", " # tag "+m.target+": ", "-name removes · enter saves · esc cancels", "", false)
+	}
 	return nil
 }
 
-// editKey edits the tag or list prompt. Enter applies every word: a word adds
-// the tag or list, a word with a leading "-" removes it.
-func (m *Model) editKey(k tea.KeyPressMsg) tea.Cmd {
-	switch k.String() {
-	case "esc", "ctrl+c":
+// editEvent acts on the tag or list prompt. Enter applies every word: a word
+// adds the tag or list, a word with a leading "-" removes it.
+func (m *Model) editEvent(ev PromptEvent) tea.Cmd {
+	switch ev {
+	case Cancelled:
 		m.mode = modeList
-	case "enter":
-		words := strings.Fields(strings.ToLower(strings.ReplaceAll(string(m.filter), "#", "")))
+	case Submitted:
+		words := strings.Fields(strings.ToLower(strings.ReplaceAll(m.prompt.Text(), "#", "")))
 		to := m.mode
 		m.mode = modeList
 		if len(words) == 0 {
 			return nil
 		}
-		return m.edit(to, m.target, words)
-	case "backspace":
-		if n := len(m.filter); n > 0 {
-			m.filter = m.filter[:n-1]
-		}
-	case "ctrl+u":
-		m.filter = nil
-	default:
-		if t := k.Key().Text; t != "" {
-			m.filter = append(m.filter, []rune(t)...)
-		}
+		m.prompt.Remember()
+		return m.edit(to, m.editing, m.target, words)
 	}
 	return nil
 }
 
 // edit applies the words to the stock through the backend, one by one, and
 // stops at the first failure.
-func (m *Model) edit(to mode, ticker string, words []string) tea.Cmd {
+func (m *Model) edit(to mode, tickers []string, label string, words []string) tea.Cmd {
 	be, ctx := m.be, m.ctx
 	noun := "tag"
 	if to == modeMember {
@@ -499,14 +583,16 @@ func (m *Model) edit(to mode, ticker string, words []string) tea.Cmd {
 		for _, w := range words {
 			add := !strings.HasPrefix(w, "-")
 			w = strings.TrimPrefix(w, "-")
-			var err error
-			if to == modeMember {
-				err = be.SetListMember(ctx, w, ticker, add)
-			} else {
-				err = be.Tag(ctx, ticker, w, add)
-			}
-			if err != nil {
-				return editedMsg{err: fmt.Errorf("%s %s: %w", noun, w, err)}
+			for _, ticker := range tickers {
+				var err error
+				if to == modeMember {
+					err = be.SetListMember(ctx, w, ticker, add)
+				} else {
+					err = be.Tag(ctx, ticker, w, add)
+				}
+				if err != nil {
+					return editedMsg{err: fmt.Errorf("%s %s %s: %w", ticker, noun, w, err)}
+				}
 			}
 			if add {
 				done = append(done, "+"+w)
@@ -514,7 +600,7 @@ func (m *Model) edit(to mode, ticker string, words []string) tea.Cmd {
 				done = append(done, "-"+w)
 			}
 		}
-		return editedMsg{what: fmt.Sprintf("%s %ss %s", ticker, noun, strings.Join(done, " "))}
+		return editedMsg{what: fmt.Sprintf("%s %ss %s", label, noun, strings.Join(done, " "))}
 	}
 }
 
@@ -530,10 +616,11 @@ func (m *Model) selected() *model.Article {
 }
 
 func (m *Model) row() (Row, bool) {
-	if m.cursor < 0 || m.cursor >= len(m.sel) {
+	at, ok := m.vp.Row()
+	if !ok {
 		return Row{}, false
 	}
-	return m.scr.Rows[m.sel[m.cursor]], true
+	return m.scr.Rows[at], true
 }
 
 // openRow follows the selected row.
@@ -548,7 +635,7 @@ func (m *Model) openRow() tea.Cmd {
 	case row.Go != nil:
 		return m.goTo(*row.Go)
 	case row.HasWatch:
-		m.cursors[m.stack.Current().String()] = m.cursor
+		m.cursors[m.stack.Current().String()] = m.vp.Cursor()
 		m.stack.Go(nav.Route{Kind: nav.Home})
 		m.stack.SwitchWatch(row.Watch)
 		m.sharedOK = false
@@ -601,33 +688,5 @@ func (m *Model) openURL() tea.Cmd {
 
 func clipURL(s string) string { return clip(oneLine(s), 60) }
 
-// move moves the cursor by n selectable rows.
-func (m *Model) move(n int) {
-	if len(m.sel) == 0 {
-		return
-	}
-	m.cursor = min(max(m.cursor+n, 0), len(m.sel)-1)
-	m.follow()
-}
-
 // bodyHeight is how many rows the body shows.
 func (m *Model) bodyHeight() int { return max(m.height-chromeLines, minHeight-chromeLines) }
-
-// follow scrolls so that the cursor row is visible.
-func (m *Model) follow() {
-	h := m.bodyHeight() - 1 // the first line of the body is the title
-	at := 0
-	if m.cursor < len(m.sel) {
-		at = m.sel[m.cursor]
-	}
-	if len(m.sel) == 0 || m.cursor == 0 {
-		at = 0 // the first row: show the heading above it
-	}
-	switch {
-	case at < m.top:
-		m.top = at
-	case at >= m.top+h:
-		m.top = at - h + 1
-	}
-	m.top = max(m.top, 0)
-}

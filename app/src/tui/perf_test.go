@@ -16,11 +16,11 @@ func TestCatalogueOfTwelveThousandRebuildsQuickly(t *testing.T) {
 		h.press(q)
 	}
 	per := time.Since(start) / 5
-	if len(h.m.sel) == 0 {
+	if h.m.vp.Len() == 0 {
 		t.Fatal("no rows")
 	}
 	if per > 150*time.Millisecond {
 		t.Errorf("a keystroke takes %v on 12,000 companies, want under 150ms", per)
 	}
-	t.Logf("%v per keystroke, %d rows", per, len(h.m.sel))
+	t.Logf("%v per keystroke, %d rows", per, h.m.vp.Len())
 }

@@ -216,7 +216,7 @@ func (p *Poller) Health() []Health {
 	out := make([]Health, len(p.entries))
 	for i, e := range p.entries {
 		h := e.health
-		h.Level = level(h, p.interval(e.src, now), now)
+		h.Level = Grade(h, p.interval(e.src, now), now)
 		out[i] = h
 	}
 	return out
@@ -301,7 +301,7 @@ func (p *Poller) load(ctx context.Context) error {
 				h.NextDue = now.Add(p.jitter(initialJitter, iv))
 			}
 		}
-		h.Level = level(h, iv, now)
+		h.Level = Grade(h, iv, now)
 		e.state, e.health = states[i], h
 		e.started = h.LastOK // so that a restart goes on in the same order
 		heap.Push(&p.queue, e)
@@ -477,7 +477,7 @@ func (p *Poller) poll(ctx context.Context, e *entry, prev feeds.State) {
 		}
 		p.opts.Logger.Warn("scheduler: host cooling down", "host", e.host, "until", cool, "cause", err)
 	}
-	h.Level = level(h, iv, now)
+	h.Level = Grade(h, iv, now)
 	e.health = h
 	st := e.state
 	p.mu.Unlock()
@@ -620,8 +620,11 @@ func (p *Poller) interval(src model.Source, now time.Time) time.Duration {
 	return p.opts.DefaultInterval
 }
 
-// level grades a source's health at time now.
-func level(h Health, interval time.Duration, now time.Time) string {
+// Grade is the health level (LevelGreen, LevelYellow or LevelRed) of a source
+// whose polls come every interval, at time now. The level stored in Health is
+// the grade at the last poll; a reader that wants the grade now calls Grade, so
+// a source that has stopped being polled turns yellow instead of staying green.
+func Grade(h Health, interval time.Duration, now time.Time) string {
 	switch {
 	case h.CircuitOpen, h.Failures >= 3, h.LastOK.IsZero() && h.Failures > 0:
 		return LevelRed

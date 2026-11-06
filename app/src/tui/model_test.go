@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -12,6 +13,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/b070nd/stoxicity/app/src/company"
 	"github.com/b070nd/stoxicity/app/src/filter"
@@ -19,6 +21,7 @@ import (
 	"github.com/b070nd/stoxicity/app/src/model"
 	"github.com/b070nd/stoxicity/app/src/nav"
 	"github.com/b070nd/stoxicity/app/src/pages"
+	"github.com/b070nd/stoxicity/app/src/status"
 	"github.com/b070nd/stoxicity/app/src/universe"
 )
 
@@ -37,7 +40,7 @@ type fake struct {
 	mu       sync.Mutex
 	arts     []model.Article
 	watches  []WatchInfo
-	sources  []SourceRow
+	sources  []status.Source
 	verdicts map[string]labels.Verdict
 
 	layer universe.Layer
@@ -129,9 +132,9 @@ func newFakeArticles() *fake {
 			art("a4", "Nvidia supply chain", "example.com", 50*time.Hour, 0.7, 3, []string{"NVDA"}, []string{"ai-infra"}),
 		},
 		watches: []WatchInfo{{ID: "tech", Name: "Tech", Unread: 2}, {ID: "buffett", Name: "Buffett core", Unread: 0}},
-		sources: []SourceRow{
-			{ID: "good", Kind: "rss", Enabled: true, Health: "green"},
-			{ID: "bad", Kind: "rss", Enabled: true, Health: "red", LastError: "boom"},
+		sources: []status.Source{
+			{ID: "good", Kind: "rss", Enabled: true, Level: status.Green},
+			{ID: "bad", Kind: "rss", Enabled: true, Level: status.Red, LastError: "boom"},
 		},
 		verdicts: map[string]labels.Verdict{},
 	}
@@ -195,7 +198,7 @@ func (f *fake) Search(_ context.Context, watch, query string, _, _ time.Time, _ 
 	return out, nil
 }
 
-func (f *fake) Sources(context.Context) ([]SourceRow, error) { return f.sources, nil }
+func (f *fake) Sources(context.Context) ([]status.Source, error) { return f.sources, nil }
 
 func (f *fake) Verdicts(context.Context) (map[string]labels.Verdict, error) {
 	f.mu.Lock()
@@ -235,7 +238,7 @@ func newHarness(t *testing.T) *harness {
 	t.Helper()
 	h := &harness{t: t, be: newFake()}
 	h.m = New(context.Background(), Options{
-		Backend: h.be, Refresh: time.Millisecond,
+		Backend: h.be, Refresh: time.Millisecond, Redraw: time.Millisecond,
 		OpenURL: func(u string) error { h.opened = append(h.opened, u); return h.openOK },
 	})
 	h.m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
@@ -254,8 +257,8 @@ func (h *harness) run(cmd tea.Cmd) {
 		for _, c := range msg {
 			h.run(c)
 		}
-	case tickMsg:
-		// The timer is not run in tests.
+	case tickMsg, clockMsg:
+		// The timers are not run in tests.
 	case tea.QuitMsg:
 	default:
 		_, next := h.m.Update(msg)
@@ -405,8 +408,8 @@ func TestBackRestoresTheCursor(t *testing.T) {
 		t.Fatalf("crumbs = %q", h.crumbs())
 	}
 	h.press("esc")
-	if h.m.cursor != 1 {
-		t.Errorf("cursor after back = %d, want 1", h.m.cursor)
+	if h.m.vp.Cursor() != 1 {
+		t.Errorf("cursor after back = %d, want 1", h.m.vp.Cursor())
 	}
 }
 
@@ -442,7 +445,7 @@ func TestHomeTimelineRowOpensTheDay(t *testing.T) {
 	if idx < 0 {
 		t.Fatal("no day row on Home")
 	}
-	h.m.cursor = slices.Index(h.m.sel, idx)
+	h.m.vp.Select(h.m.vp.IndexOf(idx))
 	h.press("enter")
 	if h.m.stack.Current().Kind != nav.Day {
 		t.Fatalf("route = %v", h.m.stack.Current())
@@ -489,17 +492,17 @@ func TestFilterBarEditing(t *testing.T) {
 	h.press("/")
 	h.typeText("abc")
 	h.press("backspace")
-	if string(h.m.filter) != "ab" {
-		t.Errorf("filter = %q", string(h.m.filter))
+	if h.m.prompt.Text() != "ab" {
+		t.Errorf("filter = %q", h.m.prompt.Text())
 	}
 	h.press("space")
-	if string(h.m.filter) != "ab " {
-		t.Errorf("filter = %q", string(h.m.filter))
+	if h.m.prompt.Text() != "ab " {
+		t.Errorf("filter = %q", h.m.prompt.Text())
 	}
 	// Keys that are commands elsewhere are text in the filter bar.
 	h.typeText("qs")
-	if string(h.m.filter) != "ab qs" || h.m.quitting {
-		t.Errorf("filter = %q, quitting = %v", string(h.m.filter), h.m.quitting)
+	if h.m.prompt.Text() != "ab qs" || h.m.quitting {
+		t.Errorf("filter = %q, quitting = %v", h.m.prompt.Text(), h.m.quitting)
 	}
 }
 
@@ -508,8 +511,7 @@ func (h *harness) selectArticle(title string) {
 	h.t.Helper()
 	for i, r := range h.m.scr.Rows {
 		if r.Article != nil && r.Article.Title == title {
-			h.m.cursor = slices.Index(h.m.sel, i)
-			h.m.follow()
+			h.m.vp.Select(h.m.vp.IndexOf(i))
 			return
 		}
 	}
@@ -520,8 +522,7 @@ func (h *harness) selectArticleID(id string) {
 	h.t.Helper()
 	for i, r := range h.m.scr.Rows {
 		if r.Article != nil && r.Article.ID == id {
-			h.m.cursor = slices.Index(h.m.sel, i)
-			h.m.follow()
+			h.m.vp.Select(h.m.vp.IndexOf(i))
 			return
 		}
 	}
@@ -615,7 +616,7 @@ func TestOpenerFailureIsShown(t *testing.T) {
 func TestFeedTextCannotDrawEscapeSequences(t *testing.T) {
 	h := newHarness(t)
 	h.be.arts[0].Title = "Pwn\x1b]0;owned\x07ed\x1b[2J title"
-	h.be.arts[0].Summary = "before \x1b[31mred\x1b[0m after"
+	h.be.arts[0].Summary = "before \x1b[45mred\x1b[0m after"
 	h.press("r")
 	for _, screen := range []string{h.view()} {
 		if strings.Contains(screen, "\x1b]") || strings.Contains(screen, "owned") || strings.Contains(screen, "\x1b[2J") {
@@ -624,7 +625,7 @@ func TestFeedTextCannotDrawEscapeSequences(t *testing.T) {
 	}
 	h.selectArticleID("a1")
 	h.press("enter")
-	if v := h.view(); strings.Contains(v, "\x1b[31m") || strings.Contains(v, "\x1b]") {
+	if v := h.view(); strings.Contains(v, "\x1b[45m") || strings.Contains(v, "\x1b]") {
 		t.Errorf("detail view drew a feed escape sequence: %q", v)
 	}
 }
@@ -657,7 +658,7 @@ func TestWatchesScreenSwitchesWatch(t *testing.T) {
 
 func TestMissingWatchFallsBackToAllNews(t *testing.T) {
 	be := newFake()
-	m := New(context.Background(), Options{Backend: be, Watch: "gone", Refresh: time.Millisecond})
+	m := New(context.Background(), Options{Backend: be, Watch: "gone", Refresh: time.Millisecond, Redraw: time.Millisecond})
 	h := &harness{t: t, m: m, be: be}
 	h.m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 	h.run(m.Init())
@@ -788,15 +789,15 @@ func TestCursorStaysVisibleWhileScrolling(t *testing.T) {
 	h.m.Update(tea.WindowSizeMsg{Width: 100, Height: 12})
 	for i := 0; i < 30; i++ {
 		h.press("down")
-		at := h.m.sel[h.m.cursor]
-		if at < h.m.top || at >= h.m.top+h.m.bodyHeight() {
-			t.Fatalf("step %d: cursor row %d outside [%d, %d)", i, at, h.m.top, h.m.top+h.m.bodyHeight())
+		at := h.m.vp.At(h.m.vp.Cursor())
+		if at < h.m.vp.Top() || at >= h.m.vp.Top()+h.m.bodyHeight()-1 {
+			t.Fatalf("step %d: cursor row %d outside [%d, %d)", i, at, h.m.vp.Top(), h.m.vp.Top()+h.m.bodyHeight()-1)
 		}
 	}
 	h.press("up")
-	h.m.move(-100)
-	if h.m.cursor != 0 || h.m.top != 0 {
-		t.Errorf("cursor %d, top %d after going to the top", h.m.cursor, h.m.top)
+	h.m.vp.Move(-100)
+	if h.m.vp.Cursor() != 0 || h.m.vp.Top() != 0 {
+		t.Errorf("cursor %d, top %d after going to the top", h.m.vp.Cursor(), h.m.vp.Top())
 	}
 }
 
@@ -872,12 +873,12 @@ func TestBuildMarksLabelsAndDimsIrrelevantArticles(t *testing.T) {
 }
 
 func TestBuildSourcesPutsFailuresFirstAndDisabledLast(t *testing.T) {
-	s := Build(nav.Route{Kind: nav.Sources}, Data{Params: pagesParams(), Sources: []SourceRow{
-		{ID: "off", Enabled: false, Health: "red"},
-		{ID: "ok", Enabled: true, Health: "green"},
+	s := Build(nav.Route{Kind: nav.Sources}, Data{Params: pagesParams(), Sources: []status.Source{
+		{ID: "off", Enabled: false, State: status.Off, Level: status.Red},
+		{ID: "ok", Enabled: true, Level: status.Green},
 		{ID: "never", Enabled: true},
-		{ID: "bad", Enabled: true, Health: "red"},
-		{ID: "slow", Enabled: true, Health: "yellow"},
+		{ID: "bad", Enabled: true, Level: status.Red},
+		{ID: "slow", Enabled: true, Level: status.Yellow},
 	}})
 	var order []string
 	for _, r := range s.Rows[1:] {
@@ -922,7 +923,7 @@ func pagesParams() pages.Params {
 func TestCompaniesScreenListsEveryCompanyWithCountsAndFacets(t *testing.T) {
 	h := newHarness(t)
 	h.press("c")
-	h.mustContain("Companies", "4 of 4 companies", "exchange: Nasdaq 3", "NVDA", "Nvidia Corp", "Coca-Cola", "★", "GOOGL", "2 news")
+	h.mustContain("Companies", "4 of 4 companies", "exchange: Nasdaq 3", "NVDA", "Nvidia Corp", "Coca-Cola", "★", "GOOGL", "NEWS")
 	if got := h.crumbs(); !strings.HasSuffix(got, "Companies") {
 		t.Errorf("crumbs = %q", got)
 	}
@@ -994,9 +995,9 @@ func TestOpenKeyOnAProfileRowOpensWebsiteAndFilingPages(t *testing.T) {
 	h.m.goTo(nav.Route{Kind: nav.Stock, Arg: "NVDA"})
 	h.run(h.m.loadCmd(true))
 	var got []string
-	for i, idx := range h.m.sel {
-		if h.m.scr.Rows[idx].URL != "" {
-			h.m.cursor = i
+	for i := range h.m.vp.Len() {
+		if h.m.scr.Rows[h.m.vp.At(i)].URL != "" {
+			h.m.vp.Select(i)
 			h.press("o")
 			got = append(got, h.opened[len(h.opened)-1])
 		}
@@ -1097,15 +1098,15 @@ func TestCatalogueListsEveryCompanyNotAShortlist(t *testing.T) {
 	h.bigCatalogue(1500)
 	h.press("c")
 	h.mustContain("1,500 of 1,500 companies", "by ticker", "TICKER", "T0000", "company 1 of 1,500")
-	if len(h.m.sel) != 1500 {
-		t.Fatalf("%d selectable rows, want all 1500", len(h.m.sel))
+	if h.m.vp.Len() != 1500 {
+		t.Fatalf("%d selectable rows, want all 1500", h.m.vp.Len())
 	}
 	h.press("end")
 	h.mustContain("T1499", "company 1,500 of 1,500")
 	h.press("home")
 	h.press("pgdown")
-	if h.m.cursor == 0 || h.m.cursor >= 100 {
-		t.Errorf("page down moved to %d, want about one screen", h.m.cursor)
+	if h.m.vp.Cursor() == 0 || h.m.vp.Cursor() >= 100 {
+		t.Errorf("page down moved to %d, want about one screen", h.m.vp.Cursor())
 	}
 }
 
@@ -1119,20 +1120,20 @@ func TestCatalogueJumpGoesToTheFirstMatchAndKeepsTheList(t *testing.T) {
 	}
 	h.typeText("t09")
 	h.mustContain("g jump to: t09", "T0900")
-	if h.m.cursor != 900 {
-		t.Fatalf("cursor = %d, want 900", h.m.cursor)
+	if h.m.vp.Cursor() != 900 {
+		t.Fatalf("cursor = %d, want 900", h.m.vp.Cursor())
 	}
 	h.typeText("5")
-	if h.m.cursor != 950 {
-		t.Fatalf("cursor = %d after t095, want 950", h.m.cursor)
+	if h.m.vp.Cursor() != 950 {
+		t.Fatalf("cursor = %d after t095, want 950", h.m.vp.Cursor())
 	}
 	h.typeText("zz")
-	if !h.m.failed || h.m.cursor != 950 {
-		t.Errorf("no match should say so and stay put: failed=%v cursor=%d", h.m.failed, h.m.cursor)
+	if !h.m.failed || h.m.vp.Cursor() != 950 {
+		t.Errorf("no match should say so and stay put: failed=%v cursor=%d", h.m.failed, h.m.vp.Cursor())
 	}
 	h.press("esc")
-	if h.m.mode != modeList || len(h.m.sel) != 1500 {
-		t.Errorf("mode %v, %d rows: jumping must not filter", h.m.mode, len(h.m.sel))
+	if h.m.mode != modeList || h.m.vp.Len() != 1500 {
+		t.Errorf("mode %v, %d rows: jumping must not filter", h.m.mode, h.m.vp.Len())
 	}
 	// The jump is for the catalogue only.
 	h.press("t")
@@ -1148,20 +1149,321 @@ func TestCatalogueSortsByQuery(t *testing.T) {
 	h.m.goTo(nav.Route{Kind: nav.Companies, Arg: "sort:-ticker"})
 	h.run(h.m.loadCmd(false))
 	h.mustContain("by ticker, reversed")
-	if got := h.m.scr.Rows[h.m.sel[0]].Go.Arg; got != "T0299" {
+	if got := h.m.scr.Rows[h.m.vp.At(0)].Go.Arg; got != "T0299" {
 		t.Errorf("first row %s, want T0299", got)
 	}
 	// The names run backwards against the tickers; sort:name puts the last ticker first.
 	h.m.goTo(nav.Route{Kind: nav.Companies, Arg: "sort:name"})
 	h.run(h.m.loadCmd(false))
 	h.mustContain("by name")
-	if got := h.m.scr.Rows[h.m.sel[0]].Go.Arg; got != "T0299" {
+	if got := h.m.scr.Rows[h.m.vp.At(0)].Go.Arg; got != "T0299" {
 		t.Errorf("first row by name %s, want T0299", got)
 	}
 	// Jumping follows the name under sort:name.
 	h.press("g")
 	h.typeText("company 0100")
-	if got := h.m.scr.Rows[h.m.sel[h.m.cursor]].Go.Arg; got != "T0200" {
+	if got := h.m.scr.Rows[h.m.vp.At(h.m.vp.Cursor())].Go.Arg; got != "T0200" {
 		t.Errorf("jump by name went to %s, want T0200", got)
+	}
+}
+
+func TestStocksSortByAnotherColumnKeepsTheCursorOnItsStock(t *testing.T) {
+	h := newHarness(t)
+	h.press("s")
+	h.mustContain("Stocks", "NEWS▼") // mentions, largest first: NVDA, KO
+	if row, _ := h.m.row(); row.Go.Arg != "NVDA" {
+		t.Fatalf("cursor on %v, want NVDA first", row.Go)
+	}
+	h.press("<") // the column before mentions is the name
+	h.mustContain("NAME▲", "sorted by name ascending")
+	if row, _ := h.m.row(); row.Go == nil || row.Go.Arg != "NVDA" {
+		t.Errorf("after sorting the cursor must stay on NVDA, it is on %+v", row)
+	}
+	if at, _ := h.m.vp.Row(); h.m.scr.Rows[at].Go.Arg != "NVDA" || h.m.vp.Cursor() != 1 {
+		t.Errorf("NVDA should now be second (Coca-Cola, Nvidia): cursor index %d", h.m.vp.Cursor())
+	}
+	h.press("I")
+	h.mustContain("NAME▼", "name descending")
+	if h.m.vp.Cursor() != 0 {
+		t.Errorf("inverted, NVDA is first again: %d", h.m.vp.Cursor())
+	}
+	// The choice belongs to the kind of screen: leaving and coming back keeps it.
+	h.press("H", "s")
+	h.mustContain("NAME▼")
+	h.press("S")
+	h.mustContain("HEALTH▲")
+}
+
+func TestScreensWithoutColumnsSayTheyCannotBeSorted(t *testing.T) {
+	h := newHarness(t)
+	h.press(">")
+	if !h.m.failed || !strings.Contains(h.m.status, "no columns") {
+		t.Errorf("status %q", h.m.status)
+	}
+}
+
+func TestSourcesAreSelectableSortableAndFollowedAcrossARefresh(t *testing.T) {
+	h := newHarness(t)
+	h.press("S")
+	h.press("down") // bad, good: the cursor goes to the second
+	if row, _ := h.m.row(); row.Key != "source:good" {
+		t.Fatalf("cursor on %+v, want source good", row)
+	}
+	// The good source fails; it moves above the other, and the cursor goes along.
+	h.be.sources = []status.Source{
+		{ID: "good", Kind: "rss", Enabled: true, Level: status.Red, Failures: 9, LastError: "gone"},
+		{ID: "bad", Kind: "rss", Enabled: true, Level: status.Yellow},
+	}
+	h.press("r")
+	if row, _ := h.m.row(); row.Key != "source:good" {
+		t.Errorf("after the refresh the cursor is on %+v, want it to follow good", row)
+	}
+	if h.m.vp.Cursor() != 0 {
+		t.Errorf("good is now the first row, the cursor is on %d", h.m.vp.Cursor())
+	}
+}
+
+func TestCompaniesSortWithTheColumnKeysAndTheQueryWinsWhenTyped(t *testing.T) {
+	h := newHarness(t)
+	h.press("c")
+	h.mustContain("TICKER▲")
+	h.press(">") // name
+	h.mustContain("NAME▲")
+	if got := h.m.scr.Sort; got.Key != "name" {
+		t.Fatalf("sort = %+v", got)
+	}
+	first := func() string { row, _ := h.m.row(); return row.Go.Arg }
+	h.press("home")
+	if first() != "GOOG" {
+		t.Errorf("by name Alphabet comes first: %s", first())
+	}
+	h.press("I")
+	h.press("home")
+	if first() != "NVDA" {
+		t.Errorf("by name reversed, Nvidia comes first: %s", first())
+	}
+	// Typing a query with its own sort: takes over from the column keys.
+	h.press("/")
+	h.typeText("sort:-ticker")
+	h.press("enter")
+	h.mustContain("TICKER▼")
+	h.press("home")
+	if first() != "NVDA" {
+		t.Errorf("sort:-ticker lists NVDA first: %s", first())
+	}
+}
+
+func TestMarkStocksThenTagThemAllAtOnce(t *testing.T) {
+	h := newHarness(t)
+	h.press("c")
+	h.press("space", "space", "space") // GOOG, GOOGL, KO; the cursor ends on NVDA
+	if len(h.m.marks) != 3 || !h.m.marks["KO"] {
+		t.Fatalf("marks = %v", h.m.marks)
+	}
+	h.mustContain("●", "3 marked")
+	h.press("space") // NVDA, the last row: marked, the cursor stays
+	h.press("up")    // KO
+	h.press("space") // KO unmarked again
+	if got := slices.Sorted(maps.Keys(h.m.marks)); !slices.Equal(got, []string{"GOOG", "GOOGL", "NVDA"}) {
+		t.Fatalf("marks = %v", got)
+	}
+	h.press("#")
+	h.mustContain("3 marked stocks")
+	h.typeText("watchlist")
+	h.press("enter")
+	h.mustContain("3 marked stocks tags +watchlist")
+	for tk, want := range map[string]bool{"GOOG": true, "GOOGL": true, "NVDA": true, "KO": false} {
+		p, _ := h.be.Universe().Get(tk)
+		if slices.Contains(p.Tags, "watchlist") != want {
+			t.Errorf("%s tags %v, tagged should be %v", tk, p.Tags, want)
+		}
+	}
+	h.press("U")
+	if len(h.m.marks) != 0 {
+		t.Errorf("U clears the marks: %v", h.m.marks)
+	}
+}
+
+func TestMarkNeedsAStock(t *testing.T) {
+	h := newHarness(t)
+	h.press("S")
+	h.press("space")
+	if !h.m.failed || len(h.m.marks) != 0 {
+		t.Errorf("a source cannot be marked: %q %v", h.m.status, h.m.marks)
+	}
+}
+
+func TestFilterBarRecallsThePreviousSearchAndEditsInPlace(t *testing.T) {
+	h := newHarness(t)
+	h.press("/")
+	h.typeText("nvidia")
+	h.press("enter")
+	h.mustContain("Search: nvidia")
+	h.press("esc")
+	h.press("/", "up")
+	if got := h.m.prompt.Text(); got != "nvidia" {
+		t.Fatalf("up in the filter bar recalls %q, want the earlier search", got)
+	}
+	h.press("left", "left", "left", "left", "left", "left")
+	h.typeText("-")
+	if got := h.m.prompt.Text(); got != "-nvidia" {
+		t.Errorf("typing at the cursor: %q", got)
+	}
+	h.mustContain("/ -█nvidia")
+}
+
+// barLine is the key bar as plain text.
+func (h *harness) barLine() string {
+	lines := strings.Split(ansi.Strip(h.view()), "\n")
+	return lines[len(lines)-2]
+}
+
+func TestKeyBarOffersOnlyTheKeysThatWorkHere(t *testing.T) {
+	h := newHarness(t)
+	h.m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	for _, w := range []string{"filter", "help", "quit"} {
+		if !strings.Contains(h.barLine(), w) {
+			t.Errorf("home bar %q lacks %q", h.barLine(), w)
+		}
+	}
+	for _, w := range []string{"jump", "sort", "mark", "tag"} {
+		if strings.Contains(h.barLine(), w) {
+			t.Errorf("home bar %q offers %q, which does nothing there", h.barLine(), w)
+		}
+	}
+	h.press("c")
+	for _, w := range []string{"jump", "sort", "invert", "mark", "tag", "list"} {
+		if !strings.Contains(h.barLine(), w) {
+			t.Errorf("catalogue bar %q lacks %q", h.barLine(), w)
+		}
+	}
+	h.press("S")
+	if bar := h.barLine(); !strings.Contains(bar, "sort") || strings.Contains(bar, "tag") || strings.Contains(bar, "open") {
+		t.Errorf("sources bar %q: sortable, with nothing to tag or open", bar)
+	}
+}
+
+func TestKeyBarInAnOpenArticle(t *testing.T) {
+	h := newHarness(t)
+	h.m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	h.press("down", "down", "down")
+	for i := 0; i < 12 && h.m.selected() == nil; i++ {
+		h.press("down")
+	}
+	h.press("enter")
+	if h.m.detail == nil {
+		t.Fatal("no article opened")
+	}
+	bar := h.barLine()
+	for _, w := range []string{"keep", "drop", "browser", "back"} {
+		if !strings.Contains(bar, w) {
+			t.Errorf("article bar %q lacks %q", bar, w)
+		}
+	}
+	if strings.Contains(bar, "filter") || strings.Contains(bar, "sort") {
+		t.Errorf("article bar %q offers keys that are quiet in an article", bar)
+	}
+	h.press("s")
+	if h.m.detail == nil || h.m.stack.Current().Kind != nav.Home {
+		t.Error("a screen key must not leave an open article")
+	}
+}
+
+func TestKeyBarKeepsHelpAndQuitWhenNarrow(t *testing.T) {
+	h := newHarness(t)
+	h.m.Update(tea.WindowSizeMsg{Width: 44, Height: 20})
+	bar := h.barLine()
+	if !strings.Contains(bar, "help") || !strings.Contains(bar, "quit") {
+		t.Errorf("narrow bar %q must keep help and quit", bar)
+	}
+	if n := len([]rune(bar)); n > 44 {
+		t.Errorf("bar is %d cells wide in 44", n)
+	}
+}
+
+func TestAKeyThatDoesNothingHereSaysWhy(t *testing.T) {
+	h := newHarness(t)
+	h.press("g")
+	if !h.m.failed || !strings.Contains(h.m.status, "companies screen only") {
+		t.Errorf("g on home: %q", h.m.status)
+	}
+	h.press("S", "#")
+	if !h.m.failed || !strings.Contains(h.m.status, "stock") {
+		t.Errorf("# on sources: %q", h.m.status)
+	}
+	h.press("o")
+	if !h.m.failed || !strings.Contains(h.m.status, "web address") {
+		t.Errorf("o on a source: %q", h.m.status)
+	}
+}
+
+func TestMetersSummariseSourcesNewsAndUnread(t *testing.T) {
+	h := newHarness(t)
+	line := ansi.Strip(strings.Split(h.view(), "\n")[1])
+	for _, want := range []string{"sources 1 ok 1 failing", "news 4 articles, 3 relevant", "2 unread"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("meter line %q lacks %q", line, want)
+		}
+	}
+	h.be.sources = append(h.be.sources, status.Source{
+		ID: "later", Enabled: true, Level: status.Green, State: status.Idle, Until: now.Add(90 * time.Second),
+	})
+	h.press("r")
+	line = ansi.Strip(strings.Split(h.view(), "\n")[1])
+	if !strings.Contains(line, "sources 2 ok 1 failing") || !strings.Contains(line, "next fetch later in 1:30") {
+		t.Errorf("after a refresh the meters follow the sources: %q", line)
+	}
+	h.be.sources[2].Until = now.Add(-5 * time.Minute)
+	h.press("r")
+	if line = ansi.Strip(strings.Split(h.view(), "\n")[1]); !strings.Contains(line, "later overdue 5:00") {
+		t.Errorf("a source past its time says so: %q", line)
+	}
+}
+
+func TestRefreshHighlightsWhatCameInOrChanged(t *testing.T) {
+	h := newHarness(t)
+	h.press("S")
+	if len(h.m.fresh) != 0 {
+		t.Fatalf("a screen just opened has nothing new: %v", h.m.fresh)
+	}
+	h.be.sources = append(h.be.sources, status.Source{ID: "newcomer", Kind: "rss", Enabled: true, Level: status.Green})
+	h.be.sources[0].Failures = 4 // good now has a failure count: its row changes
+	h.press("r")
+	if !h.m.fresh["k:source:newcomer"].After(now) || !h.m.fresh["k:source:good"].After(now) {
+		t.Fatalf("fresh = %v, want newcomer and good", h.m.fresh)
+	}
+	if _, ok := h.m.fresh["k:source:bad"]; ok {
+		t.Error("bad did not change")
+	}
+	h.mustContain("2 new or changed")
+	if !strings.Contains(h.view(), "\x1b[1;92m") && !strings.Contains(h.view(), "\x1b[1;38;5;10m") {
+		t.Errorf("fresh rows are drawn in bright bold green:\n%q", h.view())
+	}
+	// Sorting moves rows but changes no text: nothing becomes fresh.
+	clear(h.m.fresh)
+	h.press("I")
+	if len(h.m.fresh) != 0 {
+		t.Errorf("a re-sort marked %v", h.m.fresh)
+	}
+	// Moving to another screen forgets what was fresh.
+	h.m.fresh["x"] = now.Add(time.Hour)
+	h.press("D")
+	if len(h.m.fresh) != 0 {
+		t.Errorf("fresh carried to another screen: %v", h.m.fresh)
+	}
+}
+
+func TestFreshRowsFadeWithTime(t *testing.T) {
+	h := newHarness(t)
+	h.press("S")
+	h.be.sources = append(h.be.sources, status.Source{ID: "newcomer", Kind: "rss", Enabled: true, Level: status.Green})
+	h.press("r")
+	row := Row{Key: "source:newcomer"}
+	if !h.m.isFresh(row) {
+		t.Fatal("not fresh right after the refresh")
+	}
+	h.m.fresh["k:source:newcomer"] = now.Add(-time.Second)
+	if h.m.isFresh(row) {
+		t.Error("still fresh after its time")
 	}
 }
