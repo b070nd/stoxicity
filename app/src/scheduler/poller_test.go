@@ -1016,3 +1016,86 @@ func TestHostRecoversAfterASuccess(t *testing.T) {
 		t.Fatalf("a2 due in %v, want its normal interval", d)
 	}
 }
+
+func TestBoardListsRunningAndWaitingAndDropsFinishedRows(t *testing.T) {
+	h := newHarness(t, sources("a", "b", "c", "d"), func(o *Options) { o.Workers = 1 })
+	gate := gateFetch(h)
+	h.start()
+	waitFor(t, "a poll", func() bool { return h.fetch.inflight() == 1 })
+	h.clock.Advance(7 * time.Second)
+
+	b := h.sched.Board()
+	if len(b.Rows) != 4 || b.Idle != 0 {
+		t.Fatalf("board = %+v, want 4 rows, none idle", b)
+	}
+	first := b.Rows[0]
+	if first.State != Running || b.At.Sub(first.Since) != 7*time.Second {
+		t.Fatalf("first row = %+v, want a running poll 7s old", first)
+	}
+	for _, r := range b.Rows[1:] {
+		if r.State != Waiting {
+			t.Fatalf("row %+v, want waiting for a worker", r)
+		}
+	}
+	for range 4 {
+		gate <- struct{}{}
+	}
+	for range 4 {
+		h.event()
+	}
+	b = h.sched.Board()
+	if len(b.Rows) != 0 || b.Idle != 4 || b.Next == "" || !b.NextDue.After(b.At) {
+		t.Fatalf("board after all polls = %+v, want every row gone and the next one named", b)
+	}
+}
+
+func TestTimerRunsFromTheStartOfAPoll(t *testing.T) {
+	h := newHarness(t, sources("a"), nil) // interval 10m, rand 0: no jitter
+	h.fetch.fn = func(_ context.Context, _ model.Source, _ feeds.State) (feeds.Result, error) {
+		h.clock.Advance(4 * time.Minute) // a slow poll that still ends in time
+		return feeds.Result{}, nil
+	}
+	h.start()
+	h.event()
+	if got := h.untilNextDue("a"); got != 6*time.Minute {
+		t.Fatalf("next due in %v, want 6m: 10m after the start, not after the end", got)
+	}
+}
+
+func TestPollLongerThanItsIntervalIsLateAndRunsAgainOnce(t *testing.T) {
+	h := newHarness(t, sources("a"), nil)
+	release := make(chan struct{})
+	var calls atomic.Int32
+	h.fetch.fn = func(ctx context.Context, _ model.Source, _ feeds.State) (feeds.Result, error) {
+		if calls.Add(1) == 1 {
+			select {
+			case <-release:
+			case <-ctx.Done():
+			}
+		}
+		return feeds.Result{}, nil
+	}
+	h.start()
+	waitFor(t, "first poll", func() bool { return calls.Load() == 1 })
+	h.clock.Advance(25 * time.Minute) // its timer ran out twice over
+
+	b := h.sched.Board()
+	if len(b.Rows) != 2 || b.Rows[0].State != Running || b.Rows[1].State != Late {
+		t.Fatalf("board = %+v, want the running poll and one late row", b)
+	}
+	settle()
+	if calls.Load() != 1 {
+		t.Fatalf("%d polls while the first still runs, want 1: a source never overlaps itself", calls.Load())
+	}
+	release <- struct{}{}
+	h.event()
+	// Due again: after a quarter of the interval, once, not once per missed timer.
+	if got := h.untilNextDue("a"); got != 150*time.Second {
+		t.Fatalf("next due in %v, want 2m30s", got)
+	}
+	h.clock.Advance(3 * time.Minute)
+	h.event()
+	if calls.Load() != 2 {
+		t.Fatalf("%d polls, want exactly 2", calls.Load())
+	}
+}

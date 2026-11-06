@@ -74,6 +74,28 @@ rest period is over, and one success ends the caution. A `404` or a parse error
 concerns one feed and does not make the domain rest. Each source still has its
 own backoff and circuit breaker on top.
 
+**The live board.** When `stoxicity run` has a terminal, it keeps the work in
+progress at the bottom of the screen while the result lines scroll above:
+
+```
+13:44:47  2 polling · 2 waiting · 13 idle · next snb-press in 4:12
+   ▶ sec-edgar                polling   0:07
+   ▶ boe-news                 polling   1:15
+   ◷ boe-news                 late      0:20  (timer ran out while polling; starts again when it ends)
+   … fed-press                waiting   0:03
+```
+
+A row has the time the source has been at it (polling), has been due (waiting),
+or has been late. When a source is done its row disappears and it is idle until
+its timer runs out. A source's timer runs from the *start* of its poll, so the
+cadence holds however long polls take. A poll that outlasts its interval shows
+as *late* at the bottom and runs again once it ends, but never two polls of one
+source at once and never one run per missed timer, and not sooner than a
+quarter of the interval after it ended, so a slow source cannot hammer its
+host. A row marked *resting* waits for a domain that is cooling down. Without a
+terminal (a pipe, a log file) or with `stoxicity run -plain` there is no board,
+only one line per poll.
+
 `refresh.fast` in `config.yaml` polls sources of kind `filings` more often
 (`interval`, default 2m) on weekdays between `from` and `to` in `zone`
 (default 06:00-22:00 New York time, following its daylight saving). It is off

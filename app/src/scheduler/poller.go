@@ -102,7 +102,8 @@ type entry struct {
 	health   Health // health.NextDue is the heap key
 	index    int    // position in the queue, -1 while a poll is in flight
 	inflight bool
-	refresh  bool // RefreshNow arrived during the poll: poll again right after
+	started  time.Time // when the poll in flight began
+	refresh  bool      // RefreshNow arrived during the poll: poll again right after
 }
 
 // Poller implements Scheduler: it keeps a min-heap of enabled sources by
@@ -326,6 +327,7 @@ func (p *Poller) dispatch(ctx context.Context) time.Duration {
 			continue
 		}
 		e.inflight = true
+		e.started = now
 		hs.running++
 		p.running++
 		p.wg.Add(1)
@@ -439,7 +441,7 @@ func (p *Poller) poll(ctx context.Context, e *entry, prev feeds.State) {
 	iv := p.interval(e.src, now)
 	h := e.health
 	if err == nil {
-		p.succeed(&h, iv, now)
+		p.succeed(&h, iv, now, e.started)
 		e.state = next
 	} else {
 		p.fail(&h, iv, now, err)
@@ -511,14 +513,25 @@ func (p *Poller) finish(e *entry, requeue bool) {
 	p.wakeUp()
 }
 
-// succeed closes the circuit and schedules the next poll.
-func (p *Poller) succeed(h *Health, interval time.Duration, now time.Time) {
+// succeed closes the circuit and schedules the next poll. The timer runs from
+// the start of the poll that just ended, so a source keeps its cadence however
+// long its polls take. A poll that outlasted its interval is due again at once,
+// once, never several times over, but no sooner than a quarter of the interval
+// after it ended, so a slow source cannot hammer its host.
+func (p *Poller) succeed(h *Health, interval time.Duration, now, started time.Time) {
 	h.Failures = 0
 	h.LastOK = now
 	h.LastError = ""
 	h.CircuitOpen = false
 	h.Permanent = false
-	h.NextDue = now.Add(interval + p.jitter(successJitter, interval))
+	if started.IsZero() {
+		started = now
+	}
+	next := started.Add(interval + p.jitter(successJitter, interval))
+	h.NextDue = next
+	if floor := now.Add(interval / 4); floor.After(next) {
+		h.NextDue = floor
+	}
 }
 
 // fail records a failed poll and decides when to try again, by the class of

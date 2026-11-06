@@ -192,8 +192,14 @@ func cmdFetch(ctx context.Context, a *app, args []string) error {
 // cmdRun polls the enabled sources until the context ends, printing one line
 // for every poll.
 func cmdRun(ctx context.Context, a *app, args []string) error {
-	if len(args) > 0 {
-		return usageErrorf("takes no arguments")
+	fs := newFlags("run")
+	plain := fs.Bool("plain", false, "print one line per poll and no live board")
+	rest, err := parseFlags(fs, args)
+	if err != nil {
+		return err
+	}
+	if len(rest) > 0 {
+		return usageErrorf("takes no arguments except -plain")
 	}
 	if !a.cfg.Refresh.Enabled {
 		return errors.New("refresh.enabled is false in config.yaml")
@@ -203,6 +209,17 @@ func cmdRun(ctx context.Context, a *app, args []string) error {
 		return errors.New("no enabled sources: set enabled: true in sources.yaml")
 	}
 	a.refreshCompaniesQuietly(ctx)
+	// On a terminal the work in progress is shown as a live board under the
+	// scrolling lines; anywhere else (a pipe, a log file) there are only lines.
+	var live *liveBoard
+	if !*plain {
+		live = terminalBoard(a.stdout, a.stderr, func() scheduler.Board { return scheduler.Board{At: a.now()} }, a.location())
+		if live != nil {
+			a.stdout, a.stderr = live, live
+			a.log = a.newLogger()
+			defer func() { live.Close() }()
+		}
+	}
 	stopLaya := a.startLaya(ctx)
 	defer stopLaya()
 	db, err := a.store()
@@ -226,8 +243,18 @@ func cmdRun(ctx context.Context, a *app, args []string) error {
 	done := make(chan error, 1)
 	go func() { done <- p.Run(ctx) }()
 	fmt.Fprintf(a.stdout, "polling %d sources; interrupt to stop\n", len(srcs))
+	var redraw <-chan time.Time
+	if live != nil {
+		live.Source(p.Board)
+		t := time.NewTicker(boardEvery)
+		defer t.Stop()
+		redraw = t.C
+		live.Redraw()
+	}
 	for {
 		select {
+		case <-redraw:
+			live.Redraw()
 		case ev := <-p.Events():
 			a.printEvent(ev)
 			if ev.Err == nil && ev.New > 0 {
