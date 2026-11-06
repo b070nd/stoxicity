@@ -15,29 +15,31 @@ stoxicity-tui -refresh 10s          # reload every 10 seconds (default: a minute
 ## Layout
 
 ```
- All news  1 Tech (2)  2 Buffett core │ H Home  s Stocks  c Companies …   <- watches, then screens
+ All news  1 Tech (2)  2 Buffett core │ Home  Stocks  Companies …   <- watches, then screens (the key of each is underlined)
  all exchanges · sources 21 ok 2 stale 1 failing · next fetch sec-edgar in 0:42 · news 1,204 articles, 87 relevant · 5 unread
  Home › Stocks › NVDA                          <- breadcrumbs
  Stock NVDA · Nvidia Corp                      <- the screen
  ...
- Enter open  Esc back  / filter  > sort  Space mark  # tag  ? help  q quit
+ → open  ← back  / filter  > sort  Space mark  # tag  ? help  quit
  refreshed 09:41 · default
 ```
 
 - **Screen tabs.** After the watches the bar lists the screens that stand on their
   own: Home, Stocks, Companies, Topics, Domains, Exchanges, Sources and Watches. The
   one you are in is lit, and so is the one a detail sits under (a stock opened from
-  Stocks lights Stocks, an exchange lights Exchanges). The key of each is its first
-  letter (`s` Stocks, `S` Sources) and is written on the tab when the terminal is
-  wide enough. The screens that need something to show (a stock, a topic, a domain,
+  Stocks lights Stocks, an exchange lights Exchanges). The key of each is a letter
+  of its own name, underlined in the word: **h**ome, **s**tocks, **c**ompanies,
+  **t**opics, **d**omains, **e**xchanges, s**o**urces, **w**atches. The screens that need something to show (a stock, a topic, a domain,
   a day, a search, one exchange) are not tabs; they open from the lists.
 - **Watch bar.** `tab` and `shift+tab` go to the next and previous watch, a digit
-  goes to that watch, `W` (or `w`) opens the list of watches. Switching keeps the
+  goes to that watch, `w` opens the list of watches. Switching keeps the
   screen: Home › Topics › AI infrastructure for one watch becomes the same topic
   page for the next. Loading a watch's screen marks its hits as seen.
   "All news" shows every article the tenant may see, with no watch applied.
-- **Breadcrumbs.** `esc` or `backspace` goes back, `]` forward. Going back puts
-  the cursor on the row you left.
+- **Breadcrumbs.** The trail shows where you are in the hierarchy (Home › Exchanges
+  › NYSE › KO). `←` (or `esc`, `backspace`) goes up one step, `→` (or `enter`) opens
+  what the cursor is on, `]` goes forward again. Going back puts the cursor on the
+  row you left.
 - **Meters.** The line under the watch bar is always there: the exchange every
   screen is narrowed to (see Exchanges below), how many sources are
   healthy (`ok`), have not worked for more than two polling intervals or failed
@@ -50,8 +52,10 @@ stoxicity-tui -refresh 10s          # reload every 10 seconds (default: a minute
   opens the results as a screen of their own; a query that does not parse is
   reported and stays in the bar.
 - **Key bar.** The line above the status shows the keys that do something where
-  you are, and only those: `g jump` appears on the catalogue, `k keep` and
-  `d drop` with the cursor on an article, `# tag` with the cursor on a stock.
+  you are, and only those: `jump` appears on the catalogue, `+ keep` and
+  `- drop` with the cursor on an article, `# tag` with the cursor on a stock. A key that
+  is a letter of its label is underlined in the word (**j**ump, **g**roup, e**x**change);
+  the others (`→`, `Space`, `+`, `#`, `?`) are written in front.
   A key that does nothing here says why in the status line. `?` lists every key.
 - **Status line.** When the data was last loaded, the tenant, how many rows are
   marked, and the last message or error. The screen reloads every minute (see
@@ -60,9 +64,48 @@ stoxicity-tui -refresh 10s          # reload every 10 seconds (default: a minute
   counts them; a reload that changes nothing, and sorting, mark nothing. The
   cursor stays on its row, whatever moved.
 
+## The keys
+
+The key map is data (`DefaultKeys`) and a test keeps four rules over it:
+
+1. **No collisions.** No key is bound twice, and none is capitalised: `s` is never
+   one thing and `S` another.
+2. **Keys are in the words.** Each screen has a letter of its own name, shown
+   underlined in the tab bar; each key bar entry shows its letter inside the word
+   (**j**ump, **g**roup, **r**efresh). Only keys that are no letter of the label
+   (arrows, `Space`, `+`, `-`, `/`, `#`, `?`) are written in front of it.
+3. **Arrows are the hierarchy.** `←` goes up, `→` opens, `↑` and `↓` move the
+   cursor. Everything has a page, so everything is one `→` from where it is
+   mentioned: a stock in an exchange's news, the exchange on a stock's profile,
+   the stocks of an article (`1`–`9` in an open article open its n-th stock).
+4. **Deterministic.** The same data draws the same screens: every cloud, group and
+   table comes from sorted data, never from the order of a map.
+
+| Where | Keys |
+|-------|------|
+| Watches | `tab` `shift+tab` next and previous · `1`–`9` the n-th |
+| Screens | `h` `s` `c` `t` `d` `e` `o` `w` |
+| Move | `↑` `↓` `pgup` `pgdn` `home` `end` · `→` open · `←` back · `]` forward |
+| Query | `/` filter · `j` jump (catalogue) · `>` `<` sort · `i` invert · `g` group (catalogue) |
+| Stocks | `Space` mark · `ctrl+u` clear marks · `#` tag · `l` list |
+| Articles | `+` keep · `-` drop · `b` browser · `1`–`9` open its stock |
+| Exchanges | `x` next · `ctrl+x` previous · `u` use this one · `↑` from the top: the cloud |
+| Other | `r` refresh · `?` help · `q` quit |
+
+### The exchange cloud
+
+Home, Companies (and Stocks) and Exchanges start with a line of chips: **All** and
+each exchange with its number of companies, drawn heavier the bigger it is (the
+same log-scale tiers as the topic cloud); ● marks the one every screen is narrowed
+to. It is the global exchange filter: step up into it from the first row with `↑`,
+move along it with `←` `→` (`home` and `end` jump to the ends), pick with `Enter` or
+`Space`, and leave with `↓` or `Esc`. The focus stays in the cloud after a pick, so
+trying each exchange in turn is one key each; any other key leaves the cloud and
+does its own work. `x` and `ctrl+x` cycle the same choice from anywhere.
+
 ## Typing
 
-Every prompt (the filter bar, `#`, `L` and `g`) edits the same way: `←` `→`
+Every prompt (the filter bar, `#`, `l` and `j`) edits the same way: `←` `→`
 `ctrl+a` `ctrl+e` move inside the line, `backspace` and `delete` cut a character,
 `ctrl+w` a word, `ctrl+u` to the start, `ctrl+k` to the end. In the filter bar
 and the tag and list prompts `↑` and `↓` recall what you typed before, each kind
@@ -73,39 +116,39 @@ cancels.
 
 The tables (Stocks, Topics, Domains, Sources and the catalogue) have a header
 with the sorted column marked ▲ or ▼. `>` and `<` move the sort to the next and
-previous column, `I` turns it round; a column that counts starts with the
+previous column, `i` turns it round; a column that counts starts with the
 largest first. The choice is remembered for the kind of screen. The cursor stays
 on the row it was on. In the catalogue the columns map onto `sort:` (typing a
 query with its own `sort:` replaces your choice).
 
 `space` marks the stock under the cursor (●) and moves down, so holding it marks
-a run. `#` and `L` then tag or list every marked stock in one go; `U` clears the
+a run. `#` and `l` then tag or list every marked stock in one go; `ctrl+u` clears the
 marks. Marks stay while you move between screens.
 
 ## Screens
 
 | Key | Screen | What it shows |
 |-----|--------|---------------|
-| `H` | Home | digest, top articles, stocks, domains, topic cloud, 14-day timeline |
+| `h` | Home | digest, top articles, stocks, domains, topic cloud, 14-day timeline |
 | `s` | All stocks | every stock and ETF (about 16,000), those with news first: the catalogue below, opened with `sort:news` |
 | | Stocks in the news | opened from the Home heading "Stocks ›": only the stocks in relevant news, with mentions, materiality and tone; ★ marks your watchlist |
 | `c` | Companies | the catalogue of all stocks and ETFs (about 12,000), narrowed as you type, with counts by exchange, kind, industry, list and tag |
 | | Stock | profile (identity, listing, industry, links, feeds, your lists and tags, watches), the latest news about it (any age, loaded when the page opens), then summary, weekly tone and materiality, timeline, what happened, domains, topics, articles |
 | `t` | Topics | tag cloud and a table with the lift over the window before |
 | | Topic | its stocks, domains, timeline, related topics, top articles |
-| `D` | Domains | relevant against total per domain |
+| `d` | Domains | relevant against total per domain |
 | | Domain | its output, your precision on it (kept against dropped), timeline, articles |
 | | Day | one day's digest, relevant articles first |
 | | Search | results with domain and event counts |
-| `E` | Exchanges | the markets stocks are listed on, whether each trades now, its regular hours, companies, stocks, ETFs, news and operator; `enter` opens one, `u` narrows every screen to it |
-| | Exchange | about it (operator, place, market ID, website), opening hours, statistics, the types of stocks it lists, the newest news about its stocks, and a table of its stocks |
-| `S` | Sources | state of every source: health, what it is doing, last good poll, next due, failures, last error; failing ones first |
-| `W` | Watches | the tenant's watches with unread counts; `enter` shows one |
+| `e` | Exchanges | the exchange cloud, then the markets stocks are listed on: whether each trades now, its regular hours, companies, stocks, ETFs, news and operator; `→` opens one, `u` narrows every screen to it |
+| | Exchange | about it (operator, place, market ID, website), opening hours, statistics, the types of stocks it lists, the newest news about its stocks, the stocks that news is about (each opens its page) and a table of its stocks |
+| `o` | Sources | state of every source: health, what it is doing, last good poll, next due, failures, last error; failing ones first |
+| `w` | Watches | the tenant's watches with unread counts; `enter` shows one |
 
-`enter` on a row opens it: a heading opens its list, a table row opens its page,
+`→` (or `enter`) on a row opens it: a heading opens its list, a table row opens its page,
 an article opens its detail (score, the rules that fired, summary, your label).
-`k` keeps and `d` drops the article under the cursor, in a list or in the detail;
-those verdicts are the gold set for `eval` and for calibrating the lens. `o`
+`+` keeps and `-` drops the article under the cursor, in a list or in the detail;
+those verdicts are the gold set for `eval` and for calibrating the lens. `b`
 opens the article in your browser, for `http` and `https` addresses only; on a
 stock profile it opens the company website or its EDGAR filings.
 
@@ -113,7 +156,7 @@ stock profile it opens the company website or its EDGAR filings.
 
 `c` opens the catalogue of every company, not a shortlist: all of them are rows,
 by ticker, and the status line says where you are ("company 4,521 of 12,345").
-`home`, `end`, `pgup` and `pgdn` move through it, and `g` jumps: type the start
+`home`, `end`, `pgup` and `pgdn` move through it, and `j` jumps: type the start
 of a ticker (or of a name, when sorted by name) and the cursor lands on the first
 one that starts with it. `sort:name`, `sort:news`, `sort:industry`,
 `sort:exchange` and `sort:kind` change the order ([universe.md](universe.md) has
@@ -121,7 +164,7 @@ the whole query language and the export). `/` there filters the list as you type
 keeps the query as part of the breadcrumb, `esc` leaves the list as it was.
 The catalogue is grouped under a heading per exchange ("Exchange Nasdaq · 5,608"),
 the biggest first, then the stocks the SEC lists but no exchange does; inside a
-group the order is the one you sort by. `x` cycles the grouping through exchange,
+group the order is the one you sort by. `g` cycles the grouping through exchange,
 kind, industry and none, and `group:kind` (and so on) in the query sets it for
 that query. The exchange comes from the Nasdaq symbol directory; a code it does
 not explain is shown as it is. `s` opens the same list flat, news first.
@@ -132,7 +175,7 @@ stock, and the status line counts stocks only.
 in the window.
 
 On a stock page, or with the cursor on any stock row: `#` asks for tags
-(`moat dividend-grower`, or `-moat` to remove) and `L` for lists (a name that
+(`moat dividend-grower`, or `-moat` to remove) and `l` for lists (a name that
 does not exist yet makes the list). Both are saved to `tenants/<tenant>/stocks.yaml`.
 The filter bar's article search understands `company:`, `list:` and `tag:` too.
 
@@ -185,13 +228,13 @@ The pieces behind the keys, each with a small interface of its own:
 The profile of a stock lists its feeds under `feeds`: the SEC filing record and,
 where the company's website announces one, its own news feed, each with when it
 was last read and how many articles that gave, or `failing (n×)` with the reason.
-`o` on a feed row opens it (the SEC record opens the company's page on EDGAR). The
+`b` on a feed row opens it (the SEC record opens the company's page on EDGAR). The
 rows come from `Backend.StockFeeds`; where none is recorded yet the page says how
 to get them (`stoxicity universe feeds`).
 
 ## Exchanges
 
-`X` narrows **every screen** to one exchange, and `ctrl+x` goes back the other way:
+`x` narrows **every screen** to one exchange, and `ctrl+x` goes back the other way:
 the order is all exchanges, then each exchange the companies are listed on,
 the one with most companies first. The line under the watch bar says which is
 chosen. From the chosen exchange on:
@@ -205,12 +248,12 @@ chosen. From the chosen exchange on:
   list of exchanges, the sources and the watches; and one exchange's page is always
   about that exchange, whatever is chosen.
 
-`E` opens the list of exchanges (NOW is `open` in the regular session, `extended`
+`e` opens the list of exchanges (NOW is `open` in the regular session, `extended`
 before and after it, `closed` otherwise; ● marks the chosen one), and `u` on a row, or
 on an exchange's page, chooses it (again: back to all). The page of an exchange has:
 
 - **About.** Full name, operator, place, market ID (ISO 10383), currency, website
-  (`o` opens it) and what kind of market it is.
+  (`b` opens it) and what kind of market it is.
 - **Opening hours.** Whether it trades now and until when, each session in the market's
   clock and in yours (`Regular 09:30–16:00 EST = 15:30–22:00 CET`), today's calendar
   (closed, early close at 13:00, or a full day) and the next three market holidays.
@@ -224,8 +267,11 @@ on an exchange's page, chooses it (again: back to all). The page of an exchange 
   the window: articles, relevant ones, stocks named, average materiality and tone.
 - **Types of stocks.** What the exchange lists (large established companies, growth
   companies, ETFs, small caps, over-the-counter) with the counts of stocks and ETFs.
-- **Latest news** about its stocks, newest first, and **the stocks** themselves in the
-  catalogue's table: sort with `>` and `<`, open one with `enter`.
+- **Latest news** about its stocks, newest first, each line naming the stocks it is
+  about; then **Stocks in the news**, the stocks that news is about with their
+  mentions, materiality and tone, each a link to its page (the heading opens the
+  catalogue narrowed to the exchange); and **the stocks** themselves in the
+  catalogue's table: sort with `>` and `<`, open one with `→`.
 
 The reference facts (operator, hours, what each exchange lists) are in
 `app/src/exchange`; an exchange the companies name but that package does not know is

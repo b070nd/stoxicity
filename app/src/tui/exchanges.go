@@ -128,7 +128,8 @@ func buildExchanges(d Data) Screen {
 		})
 	}
 	var b builder
-	b.styled(Dim, fmt.Sprintf("%d exchanges · NEWS = relevant articles in %s that name one of its stocks · hours are the regular session in the market's own time · enter opens one, u narrows every screen to it (● = chosen), X cycles", len(names), d.Params.Describe()))
+	b.styled(Dim, fmt.Sprintf("%d exchanges · NEWS = relevant articles in %s that name one of its stocks · hours are the regular session in the market's own time · → opens one, u narrows every screen to it (● = chosen), x cycles", len(names), d.Params.Describe()))
+	exchangeChips(&b, d)
 	b.rows = append(b.rows, t.Rows(d.Sort)...)
 	s.Rows, s.Table, s.Sort = b.rows, t.shape(), t.Effective(d.Sort)
 	return s
@@ -148,7 +149,7 @@ func buildExchange(name string, d Data) Screen {
 	}
 	info, known := exchange.Lookup(name)
 	if !known && len(profiles) == 0 {
-		s.Notice = "No exchange called " + name + ": press E for the list."
+		s.Notice = "No exchange called " + name + ": press e for the list."
 		return s
 	}
 	if known {
@@ -173,6 +174,13 @@ func buildExchange(name string, d Data) Screen {
 		b.blank()
 		b.heading("Latest news about its stocks ›", route(nav.Search, "after:"+d.Params.First.Format(time.DateOnly)+" ("+tickerTerms(rel, 12)+")"))
 		b.articles(pages.Head(rel, 10), d)
+		// The same news, the other way round: the stocks it is about, each a link to
+		// its page, the most mentioned first.
+		if stocks := pages.BuildStocksPage(d.Articles, d.Watchlist, d.Params); len(stocks.Rows) > 0 {
+			b.blank()
+			b.heading("Stocks in the news ›", route(nav.Companies, `exchange:"`+name+`" sort:news group:none`))
+			b.rows = append(b.rows, stockTable(pages.Head(stocks.Rows, 8), d).Body(Sort{})...)
+		}
 	}
 
 	if len(profiles) > 0 {
@@ -254,7 +262,7 @@ func aboutRows(b *builder, i exchange.Info) {
 	field(b, "currency", i.Currency)
 	prose(b, "what it is", i.About)
 	if i.Website != "" {
-		b.add(Row{Text: fmt.Sprintf("  %-12s %s   (o opens)", "website", i.Website), URL: i.Website})
+		b.add(Row{Text: fmt.Sprintf("  %-12s %s   (b opens)", "website", i.Website), URL: i.Website})
 	}
 }
 

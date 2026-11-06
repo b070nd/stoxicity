@@ -191,6 +191,7 @@ func (m *Model) goTo(r nav.Route) tea.Cmd {
 // entered shows the screen the stack now points at.
 func (m *Model) entered() tea.Cmd {
 	m.detail = nil
+	m.chipFocus = false
 	m.mode = modeList
 	m.routeArts, m.truncated = nil, false
 	r := m.stack.Current()
@@ -221,6 +222,9 @@ func (m *Model) key(k tea.KeyPressMsg) tea.Cmd {
 		m.mode = modeList
 		return nil
 	}
+	if m.chipFocus && m.detail == nil && m.chipKey(k.String()) {
+		return nil
+	}
 	b, ok := Lookup(k.String())
 	if !ok {
 		return nil
@@ -233,7 +237,7 @@ func (m *Model) key(k tea.KeyPressMsg) tea.Cmd {
 		return nil
 	}
 	if m.detail != nil {
-		return m.detailKey(b)
+		return m.detailKey(b, k)
 	}
 	cur := m.stack.Current()
 	switch b.Action {
@@ -255,12 +259,8 @@ func (m *Model) key(k tea.KeyPressMsg) tea.Cmd {
 			return nil
 		}
 		return m.switchWatch(id)
-	case SwitchWatch, GoWatches:
+	case GoWatches:
 		return m.goTo(nav.Route{Kind: nav.Watches})
-	case SwitchTenant:
-		m.fail("restart with -tenant NAME to switch tenant")
-	case NewWatch, EditWatch, MuteWatch:
-		m.fail("watches are YAML files in tenants/<tenant>/watches; `stoxicity watch check` validates them")
 	case GoHome:
 		return m.goTo(nav.Route{Kind: nav.Home})
 	case GoStocks:
@@ -300,6 +300,9 @@ func (m *Model) key(k tea.KeyPressMsg) tea.Cmd {
 	case OpenURL:
 		return m.openURL()
 	case Up:
+		if m.vp.Cursor() == 0 && m.enterChips() { // up from the first row: the exchange filter
+			return nil
+		}
 		m.vp.Move(-1)
 	case Down:
 		m.vp.Move(1)
@@ -340,7 +343,7 @@ func (m *Model) key(k tea.KeyPressMsg) tea.Cmd {
 		m.prompt.Open("filter:"+string(cur.Kind), " / ", "", initial, false)
 	case Jump:
 		m.mode = modeJump
-		m.prompt.Open("jump", " g jump to: ", "type the start of a ticker or name · esc ends", "", true)
+		m.prompt.Open("jump", " j jump to: ", "type the start of a ticker or name · esc ends", "", true)
 	case Keep:
 		return m.label(true)
 	case Drop:
@@ -353,13 +356,15 @@ func (m *Model) key(k tea.KeyPressMsg) tea.Cmd {
 }
 
 // detailKey handles a key while an article is open.
-func (m *Model) detailKey(b Binding) tea.Cmd {
+func (m *Model) detailKey(b Binding, k tea.KeyPressMsg) tea.Cmd {
 	switch b.Action {
 	case Quit:
 		m.quitting = true
 		return tea.Quit
 	case Back, Open:
 		m.detail = nil
+	case JumpWatch:
+		return m.openTicker(int(k.String()[0] - '0'))
 	case OpenURL:
 		return m.openURL()
 	case Keep:
@@ -729,7 +734,7 @@ func (m *Model) setExchange(name string) {
 	if name == "" {
 		m.ok("exchange: all")
 	} else {
-		m.ok("exchange: %s (X for the next, ctrl+x for the previous)", name)
+		m.ok("exchange: %s (x for the next, ctrl+x for the previous)", name)
 	}
 	m.rebuild()
 }
@@ -774,4 +779,15 @@ func (m *Model) useExchange(cur nav.Route) {
 	default:
 		m.setExchange(name)
 	}
+}
+
+// openTicker leaves the open article for the page of its n-th stock.
+func (m *Model) openTicker(n int) tea.Cmd {
+	a := m.detail
+	if a == nil || n < 1 || n > len(a.Tickers) {
+		m.fail("this article names no stock %d", n)
+		return nil
+	}
+	m.detail = nil
+	return m.goTo(nav.Route{Kind: nav.Stock, Arg: a.Tickers[n-1]})
 }

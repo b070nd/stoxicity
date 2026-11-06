@@ -26,6 +26,7 @@ var (
 	styleWarn   = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
 	styleCursor = lipgloss.NewStyle().Reverse(true)
 	styleTab    = lipgloss.NewStyle().Reverse(true).Bold(true)
+	styleHot    = lipgloss.NewStyle().Bold(true).Underline(true) // a key's letter inside its word
 	styleHead   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
 	styleFresh  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("10"))
 	cloud       = [...]lipgloss.Style{
@@ -110,14 +111,14 @@ var screenTabs = []struct {
 	key   string
 	kinds []nav.Kind
 }{
-	{"Home", "H", []nav.Kind{nav.Home}},
+	{"Home", "h", []nav.Kind{nav.Home}},
 	{"Stocks", "s", []nav.Kind{nav.Stocks}},
 	{"Companies", "c", []nav.Kind{nav.Companies}},
 	{"Topics", "t", []nav.Kind{nav.Topics}},
-	{"Domains", "D", []nav.Kind{nav.Domains}},
-	{"Exchanges", "E", []nav.Kind{nav.Exchanges}},
-	{"Sources", "S", []nav.Kind{nav.Sources}},
-	{"Watches", "W", []nav.Kind{nav.Watches}},
+	{"Domains", "d", []nav.Kind{nav.Domains}},
+	{"Exchanges", "e", []nav.Kind{nav.Exchanges}},
+	{"Sources", "o", []nav.Kind{nav.Sources}},
+	{"Watches", "w", []nav.Kind{nav.Watches}},
 }
 
 // stocksQuery is what the s key and the Stocks tab open: every stock, those in
@@ -154,43 +155,34 @@ func (m *Model) litTab() string {
 }
 
 // watchBar is one tab per watch with its unread badge, then one per screen.
+// Each tab has its key underlined in the word: the digit of a watch, the letter
+// of a screen.
 func (m *Model) watchBar() string {
 	cur := m.stack.Watch()
-	tab := func(label string, active bool) string {
+	tab := func(label, key string, active bool) string {
+		rest, hot := lipgloss.NewStyle(), styleHot
 		if active {
-			return styleTab.Render(" " + label + " ")
+			rest, hot = styleTab, styleTab.Underline(true)
 		}
-		return " " + label + " "
+		return rest.Render(" ") + hotLabel(key, label, rest, hot) + rest.Render(" ")
 	}
-	parts := []string{tab("All news", cur == "")}
+	parts := []string{tab("All news", "", cur == "")}
 	for i, w := range m.watches {
-		label := clean(w.Name)
+		label, key := clean(w.Name), ""
 		if i < 9 {
-			label = fmt.Sprintf("%d %s", i+1, label)
+			key = fmt.Sprint(i + 1)
+			label = key + " " + label
 		}
 		if w.Unread > 0 && w.ID != cur {
 			label += fmt.Sprintf(" (%d)", w.Unread)
 		}
-		parts = append(parts, tab(label, w.ID == cur))
+		parts = append(parts, tab(label, key, w.ID == cur))
 	}
 	parts = append(parts, styleDim.Render(" │"))
 	lit := m.litTab()
-	screens := func(hints bool) []string {
-		var out []string
-		for _, t := range screenTabs {
-			label := t.label
-			if hints { // the key is the first letter of the label, but its case matters: s Stocks, S Sources
-				label = t.key + " " + label
-			}
-			out = append(out, tab(label, t.label == lit))
-		}
-		return out
+	for _, t := range screenTabs {
+		parts = append(parts, tab(t.label, t.key, t.label == lit))
 	}
-	// The keys are shown when the bar has room for them.
-	if with := append(slices.Clone(parts), screens(true)...); lipgloss.Width(strings.Join(with, "")) <= m.width {
-		return strings.Join(with, "")
-	}
-	parts = append(parts, screens(false)...)
 	return strings.Join(parts, "")
 }
 
@@ -281,6 +273,10 @@ func (m *Model) bodyLines() []string {
 	from, end := m.vp.Window()
 	for i := from; i < end; i++ {
 		row := m.scr.Rows[i]
+		if len(row.Chips) > 0 {
+			out = append(out, m.chipLine(i, row))
+			continue
+		}
 		text := clean(row.Text)
 		mark := " "
 		if t := markable(row); t != "" && m.marks[t] {
@@ -314,7 +310,17 @@ func (m *Model) keyBar() string {
 	c := m.context()
 	type item struct{ key, label string }
 	var items, tail []item
+	switch {
+	case m.chipFocus && m.detail == nil:
+		items = append(items, item{"← →", "exchange"}, item{"enter", "pick"}, item{"↓", "back to the list"})
+	case c.Detail || m.vp.Cursor() > 0 || !m.hasChips():
+	default:
+		items = append(items, item{"↑", "exchanges"})
+	}
 	for _, b := range DefaultKeys {
+		if m.chipFocus && m.detail == nil && b.Bar != "" && b.Action != Help && b.Action != Quit {
+			continue
+		}
 		if b.Bar == "" || !b.Applies(c) {
 			continue
 		}
@@ -329,7 +335,7 @@ func (m *Model) keyBar() string {
 		n := 1
 		for _, l := range list {
 			for _, it := range l {
-				n += utf8.RuneCountInString(it.key) + 1 + utf8.RuneCountInString(it.label) + 2
+				n += hotWidth(it.key, it.label) + 2
 			}
 		}
 		return n
@@ -340,7 +346,7 @@ func (m *Model) keyBar() string {
 	var b strings.Builder
 	b.WriteString(" ")
 	for _, it := range append(items, tail...) {
-		b.WriteString(styleBold.Render(it.key) + styleDim.Render(" "+it.label) + "  ")
+		b.WriteString(hotLabel(it.key, it.label, styleDim, styleHot) + "  ")
 	}
 	return strings.TrimRight(b.String(), " ")
 }
@@ -445,7 +451,16 @@ func (m *Model) detailLines() []string {
 	s := a.Score
 	add(fmt.Sprintf("relevance %.2f · materiality %d · tone %s · %s · %s", s.Relevance, s.Materiality, tonePct(s.Tone), emptyDash(string(s.Kind)), emptyDash(s.Sector)))
 	if len(a.Tickers) > 0 {
-		add("stocks: " + clean(strings.Join(a.Tickers, " ")))
+		// Numbered: the digit keys open the stock's page.
+		numbered := make([]string, len(a.Tickers))
+		for i, t := range a.Tickers {
+			numbered[i] = fmt.Sprintf("%d %s", i+1, t)
+			if i == 8 { // only 1-9 have a key
+				numbered = numbered[:9]
+				break
+			}
+		}
+		add("stocks: " + clean(strings.Join(numbered, "  ")))
 	}
 	if len(a.Topics) > 0 {
 		add("topics: " + clean(strings.Join(a.Topics, " ")))
@@ -474,7 +489,7 @@ func (m *Model) detailLines() []string {
 			add(l)
 		}
 	}
-	out = append(out, "", styleDim.Render("  k keep · d drop · o open in browser · esc back"))
+	out = append(out, "", styleDim.Render("  + keep · - drop · b open in browser · 1-9 open a stock · ← back"))
 	return out
 }
 

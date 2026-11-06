@@ -63,8 +63,12 @@ type Model struct {
 	sorts map[nav.Kind]Sort
 	// group is the grouping the user chose for the catalogue with x.
 	group string
-	// exchange is the exchange every screen is narrowed to (X); empty shows all.
+	// exchange is the exchange every screen is narrowed to (x); empty shows all.
 	exchange string
+	// chipFocus: the arrows are on the exchange chips (up from the first row),
+	// on the chip numbered chip.
+	chipFocus bool
+	chip      int
 	// scoped is the last narrowing of the news, kept while nothing it came from
 	// changes.
 	scoped scopedNews

@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"unicode/utf8"
+
+	"charm.land/lipgloss/v2"
 
 	"github.com/b070nd/stoxicity/app/src/nav"
 )
@@ -16,9 +19,7 @@ type Action string
 const (
 	NextWatch    Action = "next-watch" // the whole point: one key to the next watch
 	PrevWatch    Action = "prev-watch"
-	JumpWatch    Action = "jump-watch"    // 1-9: the n-th watch
-	SwitchWatch  Action = "switch-watch"  // fuzzy switcher over watches, with unread badges
-	SwitchTenant Action = "switch-tenant" // only offered when there is more than one tenant
+	JumpWatch    Action = "jump-watch" // 1-9: the n-th watch; in an open article, its n-th stock
 	Open         Action = "open"
 	Back         Action = "back"
 	Forward      Action = "forward"
@@ -53,9 +54,6 @@ const (
 	Keep         Action = "keep"        // label the selected article relevant
 	Drop         Action = "drop"        // label it noise
 	Refresh      Action = "refresh"
-	NewWatch     Action = "new-watch"
-	EditWatch    Action = "edit-watch"
-	MuteWatch    Action = "mute-watch"
 	Help         Action = "help"
 	Quit         Action = "quit"
 )
@@ -156,42 +154,51 @@ func (b Binding) Refusal(c Context) string {
 	return b.Keys[0] + " does nothing here"
 }
 
-// DefaultKeys is the key map, in the order the key bar shows it. Watch
-// switching sits on the easiest keys (tab and the digits) because it is the
-// most frequent move.
+// DefaultKeys is the key map, in the order the key bar shows it.
+//
+// The rules the map keeps (keys_test.go checks them):
+//   - no key is bound twice, ignoring case, so a letter never means one thing
+//     capitalised and another in lower case;
+//   - every screen is reached by a letter that is in its own name, so the tab
+//     bar can underline it in the word (Sources is "o": Stocks has the s);
+//   - every key that is a letter of its label is underlined there; only keys
+//     that are not (arrows, Space, +, -, /, #, ?) are written in front;
+//   - the arrows move through the hierarchy: left is back, right is open, up and
+//     down move the cursor, and on a row of chips left and right move along it.
+//
+// Watch switching sits on the easiest keys (tab and the digits) because it is
+// the most frequent move.
 var DefaultKeys = []Binding{
 	{Keys: []string{"tab"}, Action: NextWatch, Help: "next watch", Bar: "watch"},
 	{Keys: []string{"shift+tab"}, Action: PrevWatch, Help: "previous watch"},
-	{Keys: []string{"1", "2", "3", "4", "5", "6", "7", "8", "9"}, Action: JumpWatch, Help: "jump to watch n"},
-	{Keys: []string{"w", "ctrl+k"}, Action: SwitchWatch, Help: "find a watch"},
-	{Keys: []string{"T"}, Action: SwitchTenant, Help: "switch tenant"},
-	{Keys: []string{"enter"}, Action: Open, Help: "open", Bar: "open", Needs: OnRow, Detail: true},
-	{Keys: []string{"esc", "backspace"}, Action: Back, Help: "back", Bar: "back", Detail: true},
-	{Keys: []string{"]"}, Action: Forward, Help: "forward"},
-	{Keys: []string{"H"}, Action: GoHome, Help: "dashboard"},
-	{Keys: []string{"W"}, Action: GoWatches, Help: "manage watches"},
-	{Keys: []string{"s"}, Action: GoStocks, Help: "all stocks, news first"},
-	{Keys: []string{"c"}, Action: GoCompanies, Help: "all companies (/ narrows)"},
+	{Keys: []string{"1", "2", "3", "4", "5", "6", "7", "8", "9"}, Action: JumpWatch, Help: "watch n (in an article: its stock n)", Detail: true},
+	{Keys: []string{"right", "enter"}, Action: Open, Help: "open the row", Bar: "open", Needs: OnRow, Detail: true},
+	{Keys: []string{"left", "esc", "backspace"}, Action: Back, Help: "back up the hierarchy", Bar: "back", Detail: true},
+	{Keys: []string{"]"}, Action: Forward, Help: "forward again"},
+	{Keys: []string{"h"}, Action: GoHome, Help: "Home: the dashboard"},
+	{Keys: []string{"s"}, Action: GoStocks, Help: "Stocks: all, news first"},
+	{Keys: []string{"c"}, Action: GoCompanies, Help: "Companies (/ narrows)"},
+	{Keys: []string{"t"}, Action: GoTopics, Help: "Topics"},
+	{Keys: []string{"d"}, Action: GoDomains, Help: "Domains"},
+	{Keys: []string{"e"}, Action: GoExchanges, Help: "Exchanges: hours, statistics, news"},
+	{Keys: []string{"o"}, Action: GoSources, Help: "Sources: their health"},
+	{Keys: []string{"w"}, Action: GoWatches, Help: "Watches: manage them"},
 	{Keys: []string{"/"}, Action: FocusFilter, Help: "filter", Bar: "filter"},
-	{Keys: []string{"g"}, Action: Jump, Help: "catalogue: jump to a ticker or name", Bar: "jump", Screens: []nav.Kind{nav.Companies}},
+	{Keys: []string{"j"}, Action: Jump, Help: "catalogue: jump to a ticker or name", Bar: "jump", Screens: []nav.Kind{nav.Companies}},
 	{Keys: []string{">"}, Action: SortNext, Help: "sort by the next column", Bar: "sort", Needs: OnColumns},
 	{Keys: []string{"<"}, Action: SortPrev, Help: "sort by the previous column", Needs: OnColumns},
-	{Keys: []string{"I"}, Action: SortInvert, Help: "turn the sort order round", Bar: "invert", Needs: OnColumns},
-	{Keys: []string{"x"}, Action: GroupNext, Help: "group by exchange, kind, industry, none", Bar: "group", Screens: []nav.Kind{nav.Companies}},
-	{Keys: []string{"space"}, Action: Mark, Help: "mark the stock, move down", Bar: "mark", Needs: OnStock},
-	{Keys: []string{"U"}, Action: Unmark, Help: "clear all marks"},
+	{Keys: []string{"i"}, Action: SortInvert, Help: "turn the sort order round", Bar: "invert", Needs: OnColumns},
+	{Keys: []string{"g"}, Action: GroupNext, Help: "group by exchange, kind, industry, none", Bar: "group", Screens: []nav.Kind{nav.Companies}},
+	{Keys: []string{"space"}, Action: Mark, Help: "mark stock, move down (chip: pick)", Bar: "mark", Needs: OnStock},
+	{Keys: []string{"ctrl+u"}, Action: Unmark, Help: "clear all marks"},
 	{Keys: []string{"#"}, Action: TagStock, Help: "tag stock or marked (-tag removes)", Bar: "tag", Needs: OnStock},
-	{Keys: []string{"L"}, Action: ListStock, Help: "list stock or marked (-list removes)", Bar: "list", Needs: OnStock},
-	{Keys: []string{"k"}, Action: Keep, Help: "keep (relevant)", Bar: "keep", Needs: OnArticle, Detail: true},
-	{Keys: []string{"d"}, Action: Drop, Help: "drop (noise)", Bar: "drop", Needs: OnArticle, Detail: true},
-	{Keys: []string{"o"}, Action: OpenURL, Help: "open article, site or filing", Bar: "browser", Needs: OnLink, Detail: true},
-	{Keys: []string{"t"}, Action: GoTopics, Help: "topics"},
-	{Keys: []string{"E"}, Action: GoExchanges, Help: "exchanges: hours, statistics, stocks"},
-	{Keys: []string{"X"}, Action: NextExchange, Help: "next exchange (narrows every screen)", Bar: "exchange"},
+	{Keys: []string{"l"}, Action: ListStock, Help: "list stock or marked (-list removes)", Bar: "list", Needs: OnStock},
+	{Keys: []string{"+"}, Action: Keep, Help: "keep (relevant)", Bar: "keep", Needs: OnArticle, Detail: true},
+	{Keys: []string{"-"}, Action: Drop, Help: "drop (noise)", Bar: "drop", Needs: OnArticle, Detail: true},
+	{Keys: []string{"b"}, Action: OpenURL, Help: "open article, site or filing", Bar: "browser", Needs: OnLink, Detail: true},
+	{Keys: []string{"x"}, Action: NextExchange, Help: "next exchange (narrows every screen)", Bar: "exchange"},
 	{Keys: []string{"ctrl+x"}, Action: PrevExchange, Help: "previous exchange (all comes between)"},
 	{Keys: []string{"u"}, Action: UseExchange, Help: "narrow every screen to this exchange", Screens: []nav.Kind{nav.Exchanges, nav.Exchange}},
-	{Keys: []string{"D"}, Action: GoDomains, Help: "domains"},
-	{Keys: []string{"S"}, Action: GoSources, Help: "source health"},
 	{Keys: []string{"up", "ctrl+p"}, Action: Up, Help: "move up"},
 	{Keys: []string{"down", "ctrl+n"}, Action: Down, Help: "move down"},
 	{Keys: []string{"pgup"}, Action: PageUp, Help: "page up"},
@@ -199,9 +206,6 @@ var DefaultKeys = []Binding{
 	{Keys: []string{"home"}, Action: Top, Help: "first row"},
 	{Keys: []string{"end"}, Action: Bottom, Help: "last row"},
 	{Keys: []string{"r"}, Action: Refresh, Help: "refresh now", Bar: "refresh"},
-	{Keys: []string{"n"}, Action: NewWatch, Help: "new watch"},
-	{Keys: []string{"e"}, Action: EditWatch, Help: "edit watch"},
-	{Keys: []string{"m"}, Action: MuteWatch, Help: "mute watch"},
 	{Keys: []string{"?"}, Action: Help, Help: "help", Bar: "help", Detail: true},
 	{Keys: []string{"q", "ctrl+c"}, Action: Quit, Help: "quit", Bar: "quit", Detail: true},
 }
@@ -227,6 +231,52 @@ func keyName(k string) string {
 		return "Space"
 	case "tab":
 		return "Tab"
+	case "left":
+		return "←"
+	case "right":
+		return "→"
+	case "up":
+		return "↑"
+	case "down":
+		return "↓"
 	}
 	return k
+}
+
+// hotKey reports whether the key is a single letter or digit that the label
+// contains, so it can be underlined in the word instead of written in front.
+func hotKey(key, label string) (at int, ok bool) {
+	if len(key) != 1 || !(key[0] >= 'a' && key[0] <= 'z' || key[0] >= '0' && key[0] <= '9') {
+		return 0, false
+	}
+	for i := 0; i < len(label); i++ { // bytes: a multi-byte rune never equals an ASCII key
+		if c := label[i]; c|0x20 == key[0] && (c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z') || c == key[0] {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+// hotLabel writes a label with its key: the key's letter underlined inside the
+// word when it is one, else the key's name in front. rest styles the label, hot
+// styles the key.
+func hotLabel(key, label string, rest, hot lipgloss.Style) string {
+	if key == "" {
+		return rest.Render(label)
+	}
+	if at, ok := hotKey(key, label); ok {
+		return rest.Render(label[:at]) + hot.Render(label[at:at+1]) + rest.Render(label[at+1:])
+	}
+	return hot.Render(keyName(key)) + rest.Render(" "+label)
+}
+
+// hotWidth is the cells hotLabel takes.
+func hotWidth(key, label string) int {
+	if key == "" {
+		return utf8.RuneCountInString(label)
+	}
+	if _, ok := hotKey(key, label); ok {
+		return utf8.RuneCountInString(label)
+	}
+	return utf8.RuneCountInString(keyName(key)) + 1 + utf8.RuneCountInString(label)
 }

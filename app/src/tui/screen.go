@@ -42,10 +42,22 @@ type Row struct {
 	Go       *nav.Route
 	Watch    string // enter switches to this watch (the Watches screen)
 	HasWatch bool
-	URL      string // o opens this web address
+	URL      string // b opens this web address
 	// Key names the row for the cursor to follow across a reload and a re-sort
 	// when nothing else does (a source has no article, route or watch).
 	Key string
+	// Chips makes the row a line of chips (the exchange filter): not a row the
+	// cursor stops on, but a zone you step up into from the first row and move
+	// along with the left and right arrows.
+	Chips []Chip
+}
+
+// Chip is one entry of a line of chips. Picking it makes Value the exchange
+// every screen is narrowed to ("" is all of them).
+type Chip struct {
+	Text  string
+	Style Style // how heavy it is drawn: the cloud tier of its count
+	Value string
 }
 
 // Selectable reports whether the cursor can stop on the row.
@@ -334,6 +346,7 @@ func buildHome(d Data) Screen {
 	}
 	var b builder
 	b.styled(Dim, fmt.Sprintf("%d articles, %d relevant", len(window), len(rel)))
+	exchangeChips(&b, d)
 	b.blank()
 	b.heading("Digest", nil)
 	sum := summarize.Summarize(rel, pages.SummaryLines)
@@ -675,7 +688,7 @@ func buildDomain(domain string, d Data) Screen {
 		b.styled(Dim, fmt.Sprintf("your labels on its relevant articles: %d kept, %d dropped (precision %.0f%%)",
 			keep, drop, 100*float64(keep)/float64(keep+drop)))
 	} else {
-		b.styled(Dim, "no labels yet on its relevant articles (k keeps, d drops)")
+		b.styled(Dim, "no labels yet on its relevant articles (+ keeps, - drops)")
 	}
 	b.blank()
 	b.heading("Timeline", nil)

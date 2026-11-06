@@ -21,7 +21,7 @@ const (
 )
 
 // queryHint is what the catalogue says about its query language and keys.
-const queryHint = "/ narrows as you type: words match ticker, name and industry · exchange:nyse · industry:semi · list:picks · tag:moat · kind:etf · news:>0 · watched:yes · -word excludes · sort:name|news|industry|exchange|kind (-news reverses) · g jumps to a letter · home/end/pgup/pgdn move"
+const queryHint = "/ narrows as you type: words match ticker, name and industry · exchange:nyse · industry:semi · list:picks · tag:moat · kind:etf · news:>0 · watched:yes · -word excludes · sort:name|news|industry|exchange|kind (-news reverses) · j jumps to a letter · home/end/pgup/pgdn move"
 
 // edgarURL is the SEC's page of a company, by CIK.
 func edgarURL(cik string) string {
@@ -80,12 +80,13 @@ func buildCompanies(q string, d Data) Screen {
 	if q == "" {
 		b.styled(Dim, queryHint)
 	}
+	exchangeChips(&b, d)
 	f := universe.FacetsOf(hits, shortFacets)
 	long := universe.FacetsOf(hits, facetRows)
 	for _, line := range []struct {
 		name string
 		c    []universe.Count
-	}{{"exchange", f.Exchange}, {"kind", f.Kind}, {"industry", long.Industry}, {"lists", long.List}, {"tags", long.Tag}} {
+	}{{"kind", f.Kind}, {"industry", long.Industry}, {"lists", long.List}, {"tags", long.Tag}} {
 		if len(line.c) == 0 {
 			continue
 		}
@@ -282,7 +283,11 @@ func profileRows(b *builder, ticker string, d Data) (known bool) {
 	if p.Venue != "" && p.Venue != p.Exchange {
 		listing = strings.TrimSpace(listing + " (" + p.Venue + ")")
 	}
-	field("listed", listing)
+	if p.Exchange != "" { // the exchange it is listed on is a page of its own: → opens it
+		b.add(Row{Text: fmt.Sprintf("  %-10s %s ›", "listed", listing), Go: route(nav.Exchange, p.Exchange)})
+	} else {
+		field("listed", listing)
+	}
 	kind := p.Kind
 	if p.Market != "" {
 		kind = strings.TrimSpace(kind + " · market tier " + p.Market)
@@ -317,10 +322,10 @@ func profileRows(b *builder, ticker string, d Data) (known bool) {
 		b.styled(Dim, "  only your lists, tags or watches name this ticker; the SEC list does not")
 	}
 	if site := webAddress(p.Website); site != "" {
-		b.add(Row{Text: "  website    " + site + "   (o opens)", URL: site})
+		b.add(Row{Text: "  website    " + site + "   (b opens)", URL: site})
 	}
 	if p.CIK != "" {
-		b.add(Row{Text: "  SEC filings on EDGAR   (o opens)", URL: edgarURL(p.CIK)})
+		b.add(Row{Text: "  SEC filings on EDGAR   (b opens)", URL: edgarURL(p.CIK)})
 	}
 
 	feedRows(b, p, d)
@@ -408,7 +413,7 @@ func feedRows(b *builder, p universe.Profile, d Data) {
 		if f.Kind != store.FeedSEC && f.Title != "" {
 			text += " · " + clip(f.Title, 40)
 		}
-		b.add(Row{Text: text + "   (o opens)", URL: url})
+		b.add(Row{Text: text + "   (b opens)", URL: url})
 	}
 }
 
