@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -49,7 +50,25 @@ func (a *app) startLaya(ctx context.Context) (stop func()) {
 	if port == "" {
 		port = "8000"
 	}
-	env := []string{"LAYA_HOST=" + u.Hostname(), "LAYA_PORT=" + port}
+	env := []string{
+		"LAYA_HOST=" + u.Hostname(), "LAYA_PORT=" + port,
+		"LAYA_PRELOAD=1",   // the checkpoints are loaded and named in /health before the first request
+		"LAYA_AUTO_TASK=0", // no routing by guesswork between checkpoints
+		"PYTHONHASHSEED=0", // set and dict order inside the server
+		"TOKENIZERS_PARALLELISM=false",
+	}
+	if l.Device != "" {
+		env = append(env, "LAYA_DEVICE="+l.Device)
+	}
+	if l.Threads > 0 {
+		env = append(env, "LAYA_THREADS="+strconv.Itoa(l.Threads))
+	}
+	if l.Offline {
+		env = append(env, "HF_HUB_OFFLINE=1", "TRANSFORMERS_OFFLINE=1")
+	}
+	if l.Model != "" {
+		env = append(env, "LAYA_MODELS="+l.Model, "LAYA_DEFAULT_MODEL="+l.Model)
+	}
 	if key := os.Getenv("STOXICITY_LAYA_API_KEY"); key != "" {
 		env = append(env, "LAYA_API_KEY="+key)
 	}

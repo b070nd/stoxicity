@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestUniverseStatusBeforeAndAfterUpdate(t *testing.T) {
@@ -181,4 +183,83 @@ func TestSearchAndWatchQueriesUnderstandCompaniesListsAndTags(t *testing.T) {
 		t.Errorf("a watch with an unknown list should fail the check:\n%s", r.out)
 	}
 	r.wantOut(t, "ok    good", "FAIL  watch \"bad\"")
+}
+
+func statusLine(out, prefix string) string {
+	for _, l := range strings.Split(out, "\n") {
+		if strings.HasPrefix(l, prefix) {
+			return l
+		}
+	}
+	return ""
+}
+
+func TestUniverseStatusShowsContentHashesAndAFingerprint(t *testing.T) {
+	e := newTestEnv(t)
+	e.run(t, "universe", "update").wantCode(t, exitOK)
+	r := e.run(t, "universe", "status")
+	r.wantCode(t, exitOK)
+	r.wantOut(t, "reference tables", "3 tickers, content ", "3 symbols, content ", "fingerprint ")
+	if l := statusLine(r.out, "universe"); !strings.Contains(l, "fingerprint") || len(strings.Fields(l)) < 5 {
+		t.Errorf("universe line = %q", l)
+	}
+}
+
+func TestTwoInstallationsFromTheSameSourcesAgreeOnTheFingerprint(t *testing.T) {
+	var lines []string
+	for range 2 {
+		e := newTestEnv(t)
+		e.run(t, "universe", "update").wantCode(t, exitOK)
+		lines = append(lines, statusLine(e.run(t, "universe", "status").out, "universe"))
+	}
+	if lines[0] == "" || lines[0] != lines[1] {
+		t.Errorf("fingerprints differ:\n%s\n%s", lines[0], lines[1])
+	}
+}
+
+func TestUniverseChangesIsEmptyUntilSomethingChanges(t *testing.T) {
+	e := newTestEnv(t)
+	e.run(t, "universe", "update").wantCode(t, exitOK)
+	e.run(t, "universe", "changes").wantOut(t, "no changes")
+}
+
+func TestRunKeepsTheReferenceDatabaseFresh(t *testing.T) {
+	e := newTestEnv(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var out, errOut syncBuffer
+	codes := make(chan int, 1)
+	go func() {
+		codes <- run(ctx, []string{"-config-dir", e.dir, "run"}, &out, &errOut, runOptions{
+			cwd: e.dir, client: e.client, now: func() time.Time { return testNow },
+			rand: func() float64 { return 0 },
+		})
+	}()
+	for _, want := range []string{"news-feed"} {
+		deadline := time.After(10 * time.Second)
+		for !strings.Contains(out.String(), want) {
+			select {
+			case <-deadline:
+				t.Fatalf("no %q within 10s\nstdout:\n%s\nstderr:\n%s", want, out.String(), errOut.String())
+			case <-time.After(20 * time.Millisecond):
+			}
+		}
+	}
+	// The first background cycle fetches the company records.
+	deadline := time.After(10 * time.Second)
+	for !strings.Contains(out.String(), "reference: companies") {
+		select {
+		case <-deadline:
+			t.Fatalf("the background cycle stored no company\nstdout:\n%s\nstderr:\n%s", out.String(), errOut.String())
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+	cancel()
+	select {
+	case <-codes:
+	case <-time.After(10 * time.Second):
+		t.Fatal("run did not stop")
+	}
+	r := e.run(t, "universe", "status")
+	r.wantOut(t, "3 tickers, content ", "1 of 2 companies have an SEC record")
 }

@@ -83,7 +83,14 @@ company:
   nasdaq_url: ""  # nasdaqlisted.txt; empty means Nasdaq Trader
   other_url: ""   # otherlisted.txt
   submissions_url: "" # the SEC record of one company; %s is the ten-digit CIK
+  refresh_every: 6h   # how often `run` refreshes the reference database; off = never
+  enrich_per_cycle: 200 # companies whose industry etc. are fetched in one refresh (0 to 5000)
 ```
+
+`refresh_every` is a fixed interval (at least 1m, or `off`) with no jitter; the
+refresh runs in the background of `stoxicity run` and ends with it. What it
+keeps, and how it stays the same from run to run, is in
+[universe.md](universe.md#the-reference-database).
 
 - The cache is `data/company/company_tickers.json` plus a small file with the
   ETag and the time it was last checked, and the same pair for each Nasdaq file.
@@ -166,6 +173,9 @@ laya:
   apply: [kind, topics, tone]
   relevance_weight: 0.3   # used only when `relevance` is in apply
   batch_size: 16          # articles per request, 1 to 64
+  device: cpu             # torch device of a server that run starts; "" lets laya choose
+  threads: 0              # CPU threads of that server; 0 = torch's choice
+  offline: true           # use only checkpoints already downloaded; false for the first start
 ```
 
 **The confidence gate.** laya returns a confidence with every answer. It is
@@ -209,9 +219,11 @@ noise.)
 with its rule-based scores and a warning is logged (the address is never
 logged). Their version has no laya part, so `stoxicity rescore` later adds the
 row with laya's opinion and keeps the old one. A score written with an opinion
-has the version `<lens>+<classifier>+laya-<model|auto>-q<8 hex>-p<8 hex>`; the
-`q` part changes with the model and the questions, the `p` part with `apply`,
-`min_confidence` and `relevance_weight`. A stored row is never overwritten for
+has the version `<lens>+<classifier>+laya-<model|auto>-q<8 hex>-p<8 hex>`, and
+`-r<8 hex>` after it once the server has told what it runs (the checkpoints it
+has loaded, their exact revisions and the device; left out when it cannot tell);
+the `q` part changes with the model and the questions, the `p` part
+with `apply`, `min_confidence` and `relevance_weight`. A stored row is never overwritten for
 a version it already has, so a change of any of these affects the articles
 scored from then on, and `stoxicity rescore` adds a row with the new version
 for the older ones and keeps the old rows. `batch_size` is not part of the
@@ -234,6 +246,18 @@ alone. `laya-serve` is not part of this repository: set `laya.command`, or
 `STOXICITY_LAYA_COMMAND` in `.env.local` for the path of your install (for
 example `.../laya/.venv/bin/laya-serve`). Only `run` does this; `fetch` and the
 other commands use a server that is already running.
+
+**Repeatable answers.** A server that `run` starts gets the settings that make
+the same article score the same on every start: `LAYA_DEVICE` from
+`laya.device` (CPU by default; `mps` or `cuda` can differ in the last digits),
+`LAYA_THREADS` from `laya.threads`, `LAYA_PRELOAD=1` (the checkpoints are loaded
+and named before the first request), `LAYA_AUTO_TASK=0` (no guessing which
+checkpoint to use), `PYTHONHASHSEED=0`, and, with `laya.offline`,
+`HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1` so that no checkpoint changes
+under it. With `laya.model` set it is also the only checkpoint the server loads
+and its default. Set `offline: false` for the first start, which downloads the
+checkpoints, then back to `true`. A server you start by hand or that was running
+already keeps its own settings; the `-r` part of the version tells what it ran.
 
 **Starting the server by hand, safely.** `laya-serve` listens on `0.0.0.0` unless
 told otherwise, so bind it to loopback and give it a key:

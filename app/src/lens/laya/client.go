@@ -3,12 +3,15 @@ package laya
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -99,6 +102,60 @@ func (s *Scorer) Ping(ctx context.Context) error {
 		return fmt.Errorf("laya: the server reports status %q", truncateRunes(h.Status, 40))
 	}
 	return nil
+}
+
+// ErrNotPinned says Pin could not tell which model the server runs: nothing is
+// loaded yet (the server loads checkpoints on the first request), or the server
+// does not report them. Scores made then carry no model revision in their
+// version.
+var ErrNotPinned = errors.New("laya: the server does not say which checkpoints it runs")
+
+// Pin asks the server which checkpoints it has loaded, at which exact revisions
+// and on which device, and adds a hash of that answer to Version. The reply
+// that names them is only sent to a caller with the key. Call it once the
+// server is up and before scoring; scores made afterwards are tied to the model
+// that made them, and a different revision or device gives a different version
+// (and so new scores next to the old ones, as any other change does).
+func (s *Scorer) Pin(ctx context.Context) error {
+	reply, err := s.send(ctx, http.MethodGet, s.healthURL, nil)
+	if err != nil {
+		return err
+	}
+	var h struct {
+		Status    string            `json:"status"`
+		Loaded    []string          `json:"loaded"`
+		Revisions map[string]string `json:"revisions"`
+		Device    string            `json:"device"`
+	}
+	if err := json.Unmarshal(reply, &h); err != nil {
+		return errors.New("laya: the health reply is not valid JSON")
+	}
+	if h.Status != "ok" {
+		return fmt.Errorf("laya: the server reports status %q", truncateRunes(h.Status, 40))
+	}
+	if len(h.Loaded) == 0 && len(h.Revisions) == 0 {
+		return ErrNotPinned
+	}
+	s.mu.Lock()
+	s.pin = pinOf(h.Loaded, h.Revisions, h.Device)
+	s.mu.Unlock()
+	return nil
+}
+
+// pinOf hashes what identifies the model, in a fixed order.
+func pinOf(loaded []string, revisions map[string]string, device string) string {
+	names := slices.Clone(loaded)
+	for n := range revisions {
+		names = append(names, n)
+	}
+	slices.Sort(names)
+	names = slices.Compact(names)
+	h := sha256.New()
+	fmt.Fprintf(h, "device=%s\n", device)
+	for _, n := range names {
+		fmt.Fprintf(h, "%s=%s\n", n, revisions[n])
+	}
+	return hex.EncodeToString(h.Sum(nil))[:8]
 }
 
 // send sends a request, retrying a busy server (503, honouring Retry-After) up

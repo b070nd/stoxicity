@@ -31,6 +31,33 @@ program keeps a single local copy and never passes it on. Turn it off with
 `company.listing: false`; the universe then has no ETF flag, market tier or
 venue.
 
+## The reference database
+
+Everything above is stored in the shared `base.db` (tables `ref_source`,
+`ref_ticker`, `ref_listing`, `ref_company`, `ref_snapshot`, `ref_change`), and
+the interface, `universe` and `stock` read it and never write it. The files in
+`data/company/` stay the download cache (ETag and time of the last check);
+`refdata.Sync` copies what they hold into the tables, and an empty database is
+filled from them the first time it is needed.
+
+- **Self-refreshing.** `stoxicity run` refreshes in the background every
+  `company.refresh_every` (6h; `off` disables): the ticker list, the Nasdaq
+  files, then the industry data of up to `company.enrich_per_cycle` companies
+  (those you follow, list or tag first, then the rest in CIK order, so it covers
+  everything over a few cycles), then the sync. `universe update` and
+  `universe enrich` do the same by hand.
+- **Deterministic.** A source is compared by a hash of its parsed rows sorted by
+  key, not of the bytes, so the same content in another order or fetched at
+  another time changes nothing and writes nothing but the time it was checked.
+  A real change writes one snapshot and, when it is 2000 rows or fewer, one
+  `ref_change` per added, removed or changed row. The first load is one snapshot
+  without per-row changes. A source that fails keeps its old rows and records the
+  error until the next good answer. Aliases are sorted and de-duplicated.
+- **Checking.** `universe status` shows the sources with their content hash and
+  the line `universe N profiles, fingerprint <12 hex>`: the fingerprint is the
+  hash of every profile, list and tag, so two installs with the same data print
+  the same one. `universe changes [-days N]` lists what changed.
+
 ## Lists, tags and extra companies
 
 `stocks.yaml` is yours:
@@ -40,9 +67,10 @@ lists:
   - id: compounders
     name: Long-term compounders
     tickers: [KO, BRK-B, MSFT]
-tags:
-  moat: [KO, MSFT]
-  turnaround: [INTC]
+tags:                      # ticker: its tags
+  KO: [moat, dividend-grower]
+  MSFT: [moat]
+  INTC: [turnaround]
 extra:
   - ticker: SAP
     name: SAP SE
@@ -69,6 +97,7 @@ stoxicity universe list                          # your lists with sizes
 stoxicity universe list compounders              # one list
 stoxicity universe list add compounders KO MSFT
 stoxicity universe list remove compounders KO
+stoxicity universe changes -days 7               # added, removed and changed rows
 ```
 
 ## Finding companies

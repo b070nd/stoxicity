@@ -3,12 +3,14 @@ package main
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"strings"
 	"text/tabwriter"
 	"time"
 
 	"github.com/b070nd/stoxicity/app/src/company"
+	"github.com/b070nd/stoxicity/app/src/store"
 	"github.com/b070nd/stoxicity/app/src/universe"
 )
 
@@ -21,7 +23,7 @@ const (
 	defaultEnrichMax = 300
 )
 
-const universeUsage = "expected: status | update [-force] | enrich [-all] [-max N] [TICKER...] | find [-limit N] [-days N] QUERY... | show TICKER | tag TICKER [-]TAG... | list [ID] | list add|remove ID TICKER..."
+const universeUsage = "expected: status | update [-force] | changes [-days N] [-limit N] | enrich [-all] [-max N] [TICKER...] | find [-limit N] [-days N] QUERY... | show TICKER | tag TICKER [-]TAG... | list [ID] | list add|remove ID TICKER..."
 
 // cmdUniverse is the reference list of stocks: every company the program
 // knows, searched, tagged and grouped.
@@ -37,6 +39,8 @@ func cmdUniverse(ctx context.Context, a *app, args []string) error {
 		return a.universeStatus()
 	case "update":
 		return a.universeUpdate(ctx, args[1:])
+	case "changes":
+		return a.universeChanges(args[1:])
 	case "enrich":
 		return a.universeEnrich(ctx, args[1:])
 	case "find":
@@ -53,39 +57,124 @@ func cmdUniverse(ctx context.Context, a *app, args []string) error {
 
 func (a *app) universeStatus() error {
 	u := a.universe()
-	dir := a.companyDir()
-	fmt.Fprintf(a.stdout, "folder      %s\n", dir)
-	fmt.Fprintf(a.stdout, "layer       %s\n", a.relative(a.layerPath()))
-	m := a.companies()
-	if m.Empty() {
-		fmt.Fprintln(a.stdout, "companies   none yet: run \"stoxicity universe update\"")
-	} else {
-		fmt.Fprintf(a.stdout, "companies   %d tickers, checked %s\n", len(m.Entities), a.ago(m.FetchedAt))
-	}
-	l, err := company.LoadListing(dir)
-	switch {
-	case err != nil:
-		fmt.Fprintf(a.stdout, "directory   damaged: %v\n", err)
-	case l.Len() == 0:
-		fmt.Fprintf(a.stdout, "directory   none (company.listing is %v): ETFs cannot be told from stocks\n", a.cfg.Company.Listing)
-	default:
-		fmt.Fprintf(a.stdout, "directory   %d symbols, checked %s\n", l.Len(), a.ago(l.FetchedAt))
-	}
-	ind, err := company.LoadIndustry(dir)
+	db, err := a.store()
 	if err != nil {
-		fmt.Fprintf(a.stdout, "industry    damaged: %v\n", err)
+		return err
+	}
+	ctx := context.Background()
+	fmt.Fprintf(a.stdout, "database    %s (reference tables)\n", a.relative(filepath.Join(a.dataDir(), "base.db")))
+	fmt.Fprintf(a.stdout, "downloads   %s\n", a.companyDir())
+	fmt.Fprintf(a.stdout, "layer       %s\n", a.relative(a.layerPath()))
+	srcs, err := db.RefSources(ctx)
+	if err != nil {
+		return err
+	}
+	byName := map[string]store.RefSource{}
+	for _, s := range srcs {
+		byName[s.Name] = s
+	}
+	line := func(label, name, unit, none string) {
+		s, ok := byName[name]
+		if !ok || s.Hash == "" {
+			fmt.Fprintf(a.stdout, "%-11s %s\n", label, none)
+			if ok && s.Error != "" {
+				fmt.Fprintf(a.stdout, "%-11s last refresh failed: %s\n", "", s.Error)
+			}
+			return
+		}
+		fmt.Fprintf(a.stdout, "%-11s %d %s, content %s, checked %s, changed %s\n", label, s.Records, unit,
+			s.Hash[:8], a.ago(s.CheckedAt), a.ago(s.ChangedAt))
+		if s.Error != "" {
+			fmt.Fprintf(a.stdout, "%-11s last refresh failed: %s\n", "", s.Error)
+		}
+	}
+	line("companies", store.SourceTickers, "tickers", "none yet: run \"stoxicity universe update\"")
+	if a.cfg.Company.Listing {
+		line("directory", store.SourceNasdaq, "symbols", "none yet: run \"stoxicity universe update\"")
 	} else {
-		withData := 0
-		for _, i := range ind {
-			if !i.Missing {
-				withData++
+		fmt.Fprintln(a.stdout, "directory   off (company.listing): ETFs cannot be told from stocks")
+	}
+	rows, err := db.RefCompanies(ctx)
+	if err != nil {
+		return err
+	}
+	withData := 0
+	for _, c := range rows {
+		if !c.Missing {
+			withData++
+		}
+	}
+	tickers, _ := db.RefTickers(ctx)
+	fmt.Fprintf(a.stdout, "industry    %d of %d companies have an SEC record (the background refresh of \"run\" and \"stoxicity universe enrich\" add more)\n",
+		withData, len(distinctCIKs(tickers)))
+	fmt.Fprintf(a.stdout, "lists       %d, tags %d (tenant %s)\n", len(u.Lists()), len(u.Tags()), a.tenantID)
+	fmt.Fprintf(a.stdout, "universe    %d profiles, fingerprint %s\n", u.Len(), shortHash(u.Fingerprint()))
+	since := a.now().AddDate(0, 0, -7)
+	if ch, err := db.RefChanges(ctx, since, 1000); err == nil && len(ch) > 0 {
+		var added, removed, changed int
+		for _, c := range ch {
+			switch c.Kind {
+			case "added":
+				added++
+			case "removed":
+				removed++
+			default:
+				changed++
 			}
 		}
-		fmt.Fprintf(a.stdout, "industry    %d companies have an SEC record (run \"stoxicity universe enrich\" for more)\n", withData)
+		fmt.Fprintf(a.stdout, "changes     last 7 days: %d new, %d gone, %d changed (\"stoxicity universe changes\")\n", added, removed, changed)
 	}
-	fmt.Fprintf(a.stdout, "lists       %d, tags %d (tenant %s)\n", len(u.Lists()), len(u.Tags()), a.tenantID)
-	fmt.Fprintf(a.stdout, "universe    %d profiles\n", u.Len())
 	return nil
+}
+
+func shortHash(h string) string {
+	if len(h) > 12 {
+		return h[:12]
+	}
+	return h
+}
+
+func distinctCIKs(ts []store.RefTicker) map[string]bool {
+	m := map[string]bool{}
+	for _, t := range ts {
+		if t.CIK != "" {
+			m[t.CIK] = true
+		}
+	}
+	return m
+}
+
+// universeChanges lists what the background refresh found: tickers that
+// appeared, went or changed.
+func (a *app) universeChanges(args []string) error {
+	fs := newFlags("universe changes")
+	days := fs.Int("days", 7, "how many days back")
+	limit := fs.Int("limit", 50, "most rows to print")
+	rest, err := parseFlags(fs, args)
+	if err != nil {
+		return err
+	}
+	if len(rest) > 0 || *days < 1 || *limit < 1 {
+		return usageErrorf("expected [-days N] [-limit N]")
+	}
+	db, err := a.store()
+	if err != nil {
+		return err
+	}
+	ch, err := db.RefChanges(context.Background(), a.now().AddDate(0, 0, -*days), *limit)
+	if err != nil {
+		return err
+	}
+	if len(ch) == 0 {
+		fmt.Fprintln(a.stdout, "no changes")
+		return nil
+	}
+	tw := tabwriter.NewWriter(a.stdout, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(tw, "WHEN\tSOURCE\tKIND\tKEY\tDETAIL")
+	for _, c := range ch {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", c.At.In(a.location()).Format("2006-01-02 15:04"), c.Source, c.Kind, c.Key, c.Detail)
+	}
+	return tw.Flush()
 }
 
 // ago writes how long ago t was, or "never".
@@ -166,7 +255,11 @@ func (a *app) universeEnrich(ctx context.Context, args []string) error {
 			add(p.Ticker)
 		}
 	default:
-		for _, t := range a.interestingTickers(ctx, u) {
+		db, err := a.store()
+		if err != nil {
+			return err
+		}
+		for _, t := range interestingTickers(ctx, db, a.knownTickers(), a.layerPath(), a.cfg.Lens.Threshold, a.now()) {
 			add(t)
 		}
 	}
@@ -185,7 +278,7 @@ func (a *app) universeEnrich(ctx context.Context, args []string) error {
 		}
 	}
 	res, err := company.Enrich(ctx, client, a.companyDir(), ciks, opts)
-	a.univ = nil
+	a.syncReference(context.WithoutCancel(ctx))
 	fmt.Fprintf(a.stdout, "stored %d records; %d were young enough, %d are unknown to the SEC", res.Fetched, res.Skipped, res.Missing)
 	if res.Left > 0 {
 		fmt.Fprintf(a.stdout, ", %d left (raise -max)", res.Left)
@@ -198,8 +291,10 @@ func (a *app) universeEnrich(ctx context.Context, args []string) error {
 }
 
 // interestingTickers are the tickers worth an industry record: those you
-// follow, those in your lists and tags, and those in relevant news lately.
-func (a *app) interestingTickers(ctx context.Context, u *universe.Universe) []string {
+// follow, those in your lists and tags, and those in relevant news lately. It
+// reads the layer file and the database afresh and uses only what it is given,
+// so the background refresh can call it while the command goes on.
+func interestingTickers(ctx context.Context, db *store.DB, known []string, layerPath string, threshold float64, now time.Time) []string {
 	seen := map[string]bool{}
 	var out []string
 	add := func(t string) {
@@ -208,26 +303,24 @@ func (a *app) interestingTickers(ctx context.Context, u *universe.Universe) []st
 			out = append(out, t)
 		}
 	}
-	for _, t := range a.knownTickers() {
+	for _, t := range known {
 		add(t)
 	}
-	for _, l := range u.Lists() {
-		for _, t := range l.Tickers {
-			add(t)
-		}
-	}
-	for _, p := range u.All() {
-		if len(p.Tags) > 0 {
-			add(p.Ticker)
-		}
-	}
-	if rd, err := a.reader(); err == nil {
-		now := a.now()
-		if arts, err := rd.Range(ctx, now.AddDate(0, 0, -enrichNewsDays), now.Add(time.Hour)); err == nil {
-			f := universe.FactsFrom(arts, a.cfg.Lens.Threshold, nil)
-			for t := range f.News {
+	if layer, err := universe.LoadLayer(layerPath); err == nil {
+		for _, l := range layer.Lists {
+			for _, t := range l.Tickers {
 				add(t)
 			}
+		}
+		for t, tags := range layer.Tags {
+			if len(tags) > 0 {
+				add(t)
+			}
+		}
+	}
+	if arts, err := db.Range(ctx, now.AddDate(0, 0, -enrichNewsDays), now.Add(time.Hour)); err == nil {
+		for t := range universe.FactsFrom(arts, threshold, nil).News {
+			add(t)
 		}
 	}
 	slices.Sort(out)

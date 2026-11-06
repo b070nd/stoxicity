@@ -705,7 +705,7 @@ func TestPersistenceAcrossReopen(t *testing.T) {
 	}
 	var versions int
 	db.base.r.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&versions)
-	if versions != 2 {
+	if versions != 3 {
 		t.Errorf("schema version %d", versions)
 	}
 }

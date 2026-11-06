@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -113,14 +114,18 @@ func defaults() Config {
 			Manage:          true,
 			Command:         "laya-serve",
 			StartTimeout:    "3m",
+			Device:          "cpu",
+			Offline:         true,
 		},
-		Company: Company{Enabled: true, MaxAge: "168h", Listing: true},
+		Company: Company{Enabled: true, MaxAge: "168h", Listing: true, RefreshEvery: "6h", EnrichPerCycle: 200},
 		Tenancy: Tenancy{Dir: "tenants", Default: "default"},
 	}
 }
 
 // applyEnv replaces settings with the STOXICITY_* variables that are set and
 // not empty.
+var deviceName = regexp.MustCompile(`^[a-z]+(:[0-9]+)?$`)
+
 func applyEnv(cfg *Config) {
 	override("STOXICITY_TIMEZONE", &cfg.Timezone)
 	override("STOXICITY_DATA_DIR", &cfg.DataDir)
@@ -168,7 +173,22 @@ func validate(cfg Config) error {
 	checkDuration("refresh.max_backoff", cfg.Refresh.MaxBackoff)
 	checkDuration("laya.timeout", cfg.Laya.Timeout)
 	checkDuration("laya.start_timeout", cfg.Laya.StartTimeout)
+	if cfg.Laya.Threads < 0 || cfg.Laya.Threads > 256 {
+		errs = append(errs, fmt.Errorf("config: laya.threads must be between 0 and 256, got %d", cfg.Laya.Threads))
+	}
+	if d := cfg.Laya.Device; d != "" && !deviceName.MatchString(d) {
+		errs = append(errs, fmt.Errorf("config: laya.device %q is not a torch device name such as cpu, mps or cuda:0", d))
+	}
 	checkDuration("company.max_age", cfg.Company.MaxAge)
+	if !strings.EqualFold(strings.TrimSpace(cfg.Company.RefreshEvery), "off") {
+		checkDuration("company.refresh_every", cfg.Company.RefreshEvery)
+		if d := parseDuration(cfg.Company.RefreshEvery); d != 0 && d < time.Minute {
+			errs = append(errs, fmt.Errorf("config: company.refresh_every must be at least 1m, or \"off\""))
+		}
+	}
+	if cfg.Company.EnrichPerCycle < 0 || cfg.Company.EnrichPerCycle > 5000 {
+		errs = append(errs, fmt.Errorf("config: company.enrich_per_cycle must be between 0 and 5000, got %d", cfg.Company.EnrichPerCycle))
+	}
 
 	checkUnit := func(key string, v float64) {
 		if !(v >= 0 && v <= 1) { // also rejects NaN

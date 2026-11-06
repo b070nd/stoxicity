@@ -206,6 +206,8 @@ func cmdRun(ctx context.Context, a *app, args []string) error {
 	if err != nil {
 		return err
 	}
+	stopRefresh := a.startReferenceRefresh(ctx)
+	defer stopRefresh()
 	p, err := a.poller(srcs, a.pipeline(db), false)
 	if err != nil {
 		return err
@@ -312,4 +314,31 @@ func errorClass(err error) string {
 // of output.
 func oneLine(s string) string {
 	return strings.Join(strings.Fields(s), " ")
+}
+
+// startReferenceRefresh keeps the reference database fresh while run polls: a
+// background cycle now and every company.refresh_every, which asks the sources
+// that are due and fetches a share of the SEC's company records. It returns the
+// function that ends it and waits for the cycle in progress, so the database
+// is not closed under it. It does nothing when company.enabled is false, when
+// refresh_every is "off", or when there is no contact address.
+func (a *app) startReferenceRefresh(ctx context.Context) (stop func()) {
+	every := a.cfg.CompanyRefreshEvery()
+	if !a.cfg.Company.Enabled || every <= 0 {
+		return func() {}
+	}
+	r, err := a.refresher()
+	if err != nil {
+		return func() {}
+	}
+	rctx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		r.Run(rctx, every)
+	}()
+	return func() {
+		cancel()
+		<-done
+	}
 }

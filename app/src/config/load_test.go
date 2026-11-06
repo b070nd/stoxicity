@@ -77,6 +77,7 @@ func TestLoadRepositoryConfig(t *testing.T) {
 		Enabled: true, URL: "http://127.0.0.1:8000", MinConfidence: 0.7, Timeout: "60s",
 		Apply: []string{"kind", "topics", "tone"}, RelevanceWeight: 0.3, BatchSize: 16,
 		Manage: true, Command: "laya-serve", StartTimeout: "3m",
+		Device: "cpu", Offline: true,
 	}
 	if !reflect.DeepEqual(cfg.Laya, want) {
 		t.Errorf("Laya = %+v, want %+v", cfg.Laya, want)

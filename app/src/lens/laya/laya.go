@@ -30,6 +30,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -82,6 +83,10 @@ type Scorer struct {
 	sectorSet map[string]bool
 	topicSet  map[string]bool
 	version   string
+
+	// pin is set by Pin and added to the version; mu guards it.
+	mu  sync.RWMutex
+	pin string
 
 	// sleep waits between attempts; tests replace it.
 	sleep func(ctx context.Context, d time.Duration) error
@@ -166,8 +171,17 @@ func nameSet(names []string) map[string]bool {
 // Version identifies the checkpoint and the question set, as
 // "laya-<model or auto>-q<8 hex digits>". The digits change when any question,
 // its instructions or criteria, or the topic or sector lists change; the order
-// of the lists does not matter.
-func (s *Scorer) Version() string { return s.version }
+// of the lists does not matter. After Pin it ends in "-r<8 hex digits>", which
+// stand for the exact checkpoint revisions and the device of the server, so
+// that two scores with the same version were made by the same model.
+func (s *Scorer) Version() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.pin == "" {
+		return s.version
+	}
+	return s.version + "-r" + s.pin
+}
 
 // Opinions returns one opinion per article, in the order of articles. Articles
 // go to the server in batches of BatchSize. The first round asks about

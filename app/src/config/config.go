@@ -4,6 +4,7 @@ package config
 
 import (
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/b070nd/stoxicity/app/src/model"
@@ -110,6 +111,17 @@ type Company struct {
 	NasdaqURL      string `yaml:"nasdaq_url"`
 	OtherURL       string `yaml:"other_url"`
 	SubmissionsURL string `yaml:"submissions_url"`
+
+	// RefreshEvery is how often "stoxicity run" refreshes the reference
+	// database in the background: it asks the sources that are due (company.
+	// max_age decides which) and fetches EnrichPerCycle company records. A
+	// duration, or "off".
+	RefreshEvery string `yaml:"refresh_every"`
+	// EnrichPerCycle is how many SEC company records (industry, state, fiscal
+	// year) one background cycle fetches. The ones you follow come first, then
+	// the rest in CIK order, so the whole list fills in over a few days. Zero
+	// fetches none.
+	EnrichPerCycle int `yaml:"enrich_per_cycle"`
 }
 
 // Laya points at a laya-serve sidecar used for the second scoring stage.
@@ -139,6 +151,20 @@ type Laya struct {
 	// StartTimeout is how long run waits for a started server to answer; the
 	// first start loads the checkpoints.
 	StartTimeout string `yaml:"start_timeout"`
+
+	// The next three apply to a server that "run" starts, and make its answers
+	// repeatable: the same article gets the same opinion on every start.
+	//
+	// Device is the torch device ("cpu", "mps", "cuda"); empty lets laya pick,
+	// which can differ between machines and runs of the same machine. CPU is
+	// the repeatable choice.
+	Device string `yaml:"device"`
+	// Threads caps the CPU threads of the server; 0 leaves torch's choice.
+	Threads int `yaml:"threads"`
+	// Offline stops the server from asking the model hub for anything, so the
+	// checkpoints are exactly the ones already downloaded. Set it to false for
+	// the first start, which downloads them.
+	Offline bool `yaml:"offline"`
 }
 
 // LayaFields are the names Laya.Apply accepts.
@@ -201,6 +227,15 @@ func (c Config) MaxBackoff() time.Duration { return parseDuration(c.Refresh.MaxB
 // CompanyMaxAge returns Company.MaxAge as a duration, or zero if it does not
 // parse.
 func (c Config) CompanyMaxAge() time.Duration { return parseDuration(c.Company.MaxAge) }
+
+// CompanyRefreshEvery returns Company.RefreshEvery as a duration; zero means
+// the background refresh is off.
+func (c Config) CompanyRefreshEvery() time.Duration {
+	if strings.EqualFold(strings.TrimSpace(c.Company.RefreshEvery), "off") {
+		return 0
+	}
+	return parseDuration(c.Company.RefreshEvery)
+}
 
 // LayaTimeout returns Laya.Timeout as a duration, or zero if it does not parse.
 func (c Config) LayaTimeout() time.Duration { return parseDuration(c.Laya.Timeout) }

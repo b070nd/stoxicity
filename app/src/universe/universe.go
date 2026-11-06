@@ -14,6 +14,9 @@
 package universe
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"slices"
 	"sort"
@@ -163,8 +166,16 @@ func New(in Inputs) *Universe {
 	}
 
 	slices.SortFunc(u.profiles, func(a, b Profile) int { return strings.Compare(a.Ticker, b.Ticker) })
-	for i, p := range u.profiles {
+	for i := range u.profiles {
+		p := &u.profiles[i]
 		u.index[p.Ticker] = i
+		// Aliases come from several sources in the order those list them; sorted
+		// and without repeats they do not depend on it.
+		slices.Sort(p.Aliases)
+		p.Aliases = slices.Compact(slices.DeleteFunc(p.Aliases, func(a string) bool { return a == "" || a == p.Name }))
+		if len(p.Aliases) == 0 {
+			p.Aliases = nil
+		}
 	}
 
 	// Membership, siblings and sectors are filled once the order is final.
@@ -205,6 +216,21 @@ func New(in Inputs) *Universe {
 		}
 	}
 	return u
+}
+
+// Fingerprint is a hash of everything the universe holds: the same inputs give
+// the same fingerprint, whatever order the sources listed them in. It is what
+// "the same data" means in tests and in the status line.
+func (u *Universe) Fingerprint() string {
+	if u == nil {
+		return ""
+	}
+	h := sha256.New()
+	enc := json.NewEncoder(h)
+	enc.Encode(u.profiles)
+	enc.Encode(u.lists)
+	enc.Encode(u.Tags())
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // Len is the number of profiles.

@@ -23,6 +23,7 @@ import (
 	"github.com/b070nd/stoxicity/app/src/labels"
 	"github.com/b070nd/stoxicity/app/src/model"
 	"github.com/b070nd/stoxicity/app/src/reader"
+	"github.com/b070nd/stoxicity/app/src/refdata"
 	"github.com/b070nd/stoxicity/app/src/sources"
 	"github.com/b070nd/stoxicity/app/src/store"
 	"github.com/b070nd/stoxicity/app/src/tenant"
@@ -53,10 +54,14 @@ type Workspace struct {
 	zone    *time.Location
 	watchID string
 
-	// The universe is replaced as a whole when a tag or a list changes.
+	// The universe is replaced as a whole when a tag or a list changes, or when
+	// the reference database does (a "stoxicity run" refreshes it in the
+	// background).
 	src     universe.Sources
 	mu      sync.Mutex
 	univ    *universe.Universe
+	stamp   string    // the reference database as the universe was built from it
+	checked time.Time // when the stamp was last compared
 	byID    map[string]watch.Watch
 	baseDir string
 }
@@ -152,9 +157,14 @@ func Open(opts Options) (*Workspace, error) {
 		LayerPath:  filepath.Join(tenantsDir, t.ID, universe.FileName),
 		Sectors:    sectors, Known: known,
 	}
-	// A damaged or missing cache only costs names and facets; the universe
-	// still holds whatever loaded.
-	w.univ, _ = universe.Load(w.src)
+	// Data from before the database (the cache files of the company folder) is
+	// taken in once; nothing is fetched. A missing reference costs names and
+	// facets, and the universe still holds whatever loaded.
+	if rows, err := db.RefTickers(context.Background()); err == nil && len(rows) == 0 {
+		keeper := &refdata.Refresher{Ref: db, Set: refdata.Settings{Dir: w.src.CompanyDir, Listing: cfg.Company.Listing}, Now: now}
+		_, _, _, _ = keeper.Sync(context.Background())
+	}
+	w.rebuild()
 	w.watchID = opts.Watch
 	if w.watchID == "" {
 		w.watchID = t.DefaultWatch
@@ -176,11 +186,38 @@ func (w *Workspace) CompanyName(t string) string {
 	return p.Name
 }
 
-// Universe is the current snapshot of every known company.
+// stampEvery is how often Universe looks at the reference database for a
+// change; asking costs one small query.
+const stampEvery = 15 * time.Second
+
+// Universe is the current snapshot of every known company. It is built again
+// when the reference database has changed since (a refresh by "stoxicity run"
+// while the interface is open).
 func (w *Workspace) Universe() *universe.Universe {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if now := w.now(); now.Sub(w.checked) >= stampEvery {
+		w.checked = now
+		if st, err := refdata.Stamp(context.Background(), w.db); err == nil && st != w.stamp {
+			w.rebuildLocked()
+		}
+	}
 	return w.univ
+}
+
+// rebuild makes the universe from the database; w.mu need not be held yet.
+func (w *Workspace) rebuild() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.rebuildLocked()
+}
+
+func (w *Workspace) rebuildLocked() {
+	ctx := context.Background()
+	st, _ := refdata.Stamp(ctx, w.db)
+	if u, _ := refdata.Build(ctx, w.db, w.src.LayerPath, w.src.Sectors, w.src.Known); u != nil {
+		w.univ, w.stamp = u, st
+	}
 }
 
 // Following lists the names of the tenant's watches whose scope names the
@@ -237,10 +274,7 @@ func (w *Workspace) edit(change func(*universe.Layer) (bool, error)) error {
 	if err := layer.Save(w.src.LayerPath); err != nil {
 		return err
 	}
-	if u, err := universe.Load(w.src); u != nil {
-		w.univ = u
-		_ = err
-	}
+	w.rebuildLocked()
 	return nil
 }
 

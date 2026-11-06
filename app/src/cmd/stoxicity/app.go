@@ -29,6 +29,7 @@ import (
 	"github.com/b070nd/stoxicity/app/src/lens/laya"
 	"github.com/b070nd/stoxicity/app/src/model"
 	"github.com/b070nd/stoxicity/app/src/pipeline"
+	"github.com/b070nd/stoxicity/app/src/refdata"
 	"github.com/b070nd/stoxicity/app/src/sources"
 	"github.com/b070nd/stoxicity/app/src/store"
 	"github.com/b070nd/stoxicity/app/src/tenant"
@@ -439,6 +440,13 @@ func (a *app) enricher() pipeline.Enricher {
 		fmt.Fprintf(a.stderr, "stoxicity: laya is switched on but unusable (%v); scoring with the rules alone\n", err)
 		return nil
 	}
+	// Tie the version of the scores to the model that makes them. A server that
+	// is not there, or has not loaded anything, leaves the version as it is.
+	pctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	if err := s.Pin(pctx); err != nil && !errors.Is(err, laya.ErrNotPinned) {
+		a.log.Debug("laya: model not pinned", "err", err)
+	}
+	cancel()
 	a.enr = policyEnricher{Enricher: s, policy: layaPolicy(a.cfg.Laya)}
 	return a.enr
 }
@@ -621,6 +629,7 @@ func (a *app) refreshCompanies(ctx context.Context, force bool) (company.Result,
 		Now:    a.now,
 	})
 	a.masterDone, a.res, a.univ = false, nil, nil
+	a.syncReference(ctx)
 	return res, err
 }
 
@@ -639,6 +648,7 @@ func (a *app) refreshListing(ctx context.Context, force bool) (company.Result, e
 		MaxAge: a.cfg.CompanyMaxAge(), Force: force, Now: a.now,
 	})
 	a.univ = nil
+	a.syncReference(ctx)
 	return res, err
 }
 
@@ -711,18 +721,83 @@ func (a *app) sectorMap() map[string]string {
 	return m
 }
 
-// universe joins the cached company files with the tenant's lists and tags,
-// read once. A damaged file is reported on stderr and left out.
+// refresher makes the keeper of the reference database over the cache files
+// in the company folder. It needs the contact address (the sources identify
+// callers by it), so it fails like fetch does.
+func (a *app) refresher() (*refdata.Refresher, error) {
+	client, err := a.httpClient()
+	if err != nil {
+		return nil, err
+	}
+	db, err := a.store()
+	if err != nil {
+		return nil, err
+	}
+	return a.referenceKeeper(db, client), nil
+}
+
+// referenceKeeper is the refresher without the need for a client: Sync reads
+// files and the database only.
+func (a *app) referenceKeeper(db *store.DB, client httpx.Client) *refdata.Refresher {
+	c := a.cfg.Company
+	r := &refdata.Refresher{
+		Ref: db, Client: client, Now: a.now,
+		Set: refdata.Settings{
+			Dir: a.companyDir(), MasterURL: c.URL, NasdaqURL: c.NasdaqURL, OtherURL: c.OtherURL,
+			SubmissionsURL: c.SubmissionsURL, MaxAge: a.cfg.CompanyMaxAge(), Listing: c.Listing,
+			PerCycle: c.EnrichPerCycle,
+		},
+		Logf: func(format string, args ...any) { fmt.Fprintf(a.stdout, format+"\n", args...) },
+	}
+	// What the background cycle needs from the app is taken here, on the
+	// command's own goroutine: the settings and the tickers the watches name.
+	known, layer, threshold := a.knownTickers(), a.layerPath(), a.cfg.Lens.Threshold
+	r.Interesting = func(ctx context.Context) []string {
+		return interestingTickers(ctx, db, known, layer, threshold, a.now())
+	}
+	return r
+}
+
+// syncReference puts what the cache files hold into the database, quietly:
+// it is what makes a refresh made by a command visible to everything that
+// reads the database. Content that did not change writes nothing.
+func (a *app) syncReference(ctx context.Context) {
+	db, err := a.store()
+	if err != nil {
+		return
+	}
+	r := a.referenceKeeper(db, nil)
+	if _, _, _, err := r.Sync(ctx); err != nil {
+		fmt.Fprintf(a.stderr, "stoxicity: reference data not stored: %v\n", err)
+	}
+	a.univ = nil
+}
+
+// universe joins the reference database with the tenant's lists and tags, read
+// once. A database that has no tickers yet is filled from the cache files
+// first, which is how data from before the database arrives. A damaged layer
+// file is reported on stderr and left out.
 func (a *app) universe() *universe.Universe {
-	if a.univ == nil {
-		u, err := universe.Load(universe.Sources{
+	if a.univ != nil {
+		return a.univ
+	}
+	ctx := context.Background()
+	db, err := a.store()
+	if err == nil {
+		if rows, rerr := db.RefTickers(ctx); rerr == nil && len(rows) == 0 {
+			a.syncReference(ctx)
+		}
+		a.univ, err = refdata.Build(ctx, db, a.layerPath(), a.sectorMap(), a.knownTickers())
+	}
+	if a.univ == nil || (err != nil && db == nil) {
+		// No database: the cache files alone still make a universe.
+		a.univ, err = universe.Load(universe.Sources{
 			CompanyDir: a.companyDir(), LayerPath: a.layerPath(),
 			Sectors: a.sectorMap(), Known: a.knownTickers(),
 		})
-		if err != nil {
-			fmt.Fprintf(a.stderr, "stoxicity: %v\n", err)
-		}
-		a.univ = u
+	}
+	if err != nil {
+		fmt.Fprintf(a.stderr, "stoxicity: %v\n", err)
 	}
 	return a.univ
 }

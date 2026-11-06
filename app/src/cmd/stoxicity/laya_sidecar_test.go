@@ -26,6 +26,11 @@ func TestLayaHelperProcess(t *testing.T) {
 	}
 	record := fmt.Sprintf("host=%s port=%s key=%s", os.Getenv("LAYA_HOST"), os.Getenv("LAYA_PORT"), os.Getenv("LAYA_API_KEY"))
 	os.WriteFile(filepath.Join(dir, "started"), []byte(record), 0o600)
+	var env []string
+	for _, k := range []string{"LAYA_DEVICE", "LAYA_THREADS", "LAYA_PRELOAD", "LAYA_AUTO_TASK", "LAYA_MODELS", "LAYA_DEFAULT_MODEL", "HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "PYTHONHASHSEED"} {
+		env = append(env, k+"="+os.Getenv(k))
+	}
+	os.WriteFile(filepath.Join(dir, "env"), []byte(strings.Join(env, "\n")), 0o600)
 	ln, err := net.Listen("tcp", os.Getenv("LAYA_HOST")+":"+os.Getenv("LAYA_PORT"))
 	if err != nil {
 		os.WriteFile(filepath.Join(dir, "error"), []byte(err.Error()), 0o600)
@@ -252,5 +257,74 @@ func TestStartLayaTakesOverAServerAnEarlierRunLeftBehindAndStopsIt(t *testing.T)
 	case <-left.Done():
 	case <-time.After(5 * time.Second):
 		t.Fatal("the server left behind is still running")
+	}
+}
+
+// layaEnv reads what the fake server saw of its settings.
+func layaEnv(t *testing.T, dir string) map[string]string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(dir, "env"))
+	if err != nil {
+		t.Fatalf("the server was not started: %v", err)
+	}
+	got := map[string]string{}
+	for _, l := range strings.Split(string(raw), "\n") {
+		k, v, _ := strings.Cut(l, "=")
+		got[k] = v
+	}
+	return got
+}
+
+func TestStartLayaMakesTheServerRepeatable(t *testing.T) {
+	e := newTestEnv(t)
+	command, dir := fakeLayaCommand(t)
+	a, _, _ := newLayaApp(t, e, "http://127.0.0.1:"+freePort(t), command)
+	stop := a.startLaya(context.Background())
+	defer stop()
+
+	got := layaEnv(t, dir)
+	for k, want := range map[string]string{
+		"LAYA_DEVICE": "cpu", "LAYA_PRELOAD": "1", "LAYA_AUTO_TASK": "0", "PYTHONHASHSEED": "0",
+		"HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1", "LAYA_THREADS": "", "LAYA_MODELS": "",
+	} {
+		if got[k] != want {
+			t.Errorf("%s = %q, want %q", k, got[k], want)
+		}
+	}
+}
+
+func TestStartLayaPassesTheConfiguredDeviceThreadsAndModel(t *testing.T) {
+	e := newTestEnv(t)
+	command, dir := fakeLayaCommand(t)
+	writeLayaConfig(t, e, "http://127.0.0.1:"+freePort(t))
+	path := filepath.Join(e.dir, "config.yaml")
+	raw, _ := os.ReadFile(path)
+	raw = []byte(strings.Replace(string(raw), "  batch_size: 16\n",
+		"  batch_size: 16\n  device: mps\n  threads: 4\n  offline: false\n  model: news-v1\n", 1))
+	if err := os.WriteFile(path, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("STOXICITY_LAYA_API_KEY", "test-key-123")
+	t.Setenv("STOXICITY_LAYA_COMMAND", command)
+	var out, errOut syncBuffer
+	a := &app{stdout: &out, stderr: &errOut, configRoot: e.dir, opts: runOptions{
+		cwd: e.dir, client: e.client, now: func() time.Time { return testNow },
+	}}
+	t.Cleanup(a.close)
+	a.bootstrap()
+	if err := a.startupError(); err != nil {
+		t.Fatal(err)
+	}
+	stop := a.startLaya(context.Background())
+	defer stop()
+
+	got := layaEnv(t, dir)
+	for k, want := range map[string]string{
+		"LAYA_DEVICE": "mps", "LAYA_THREADS": "4", "HF_HUB_OFFLINE": "", "TRANSFORMERS_OFFLINE": "",
+		"LAYA_MODELS": "news-v1", "LAYA_DEFAULT_MODEL": "news-v1",
+	} {
+		if got[k] != want {
+			t.Errorf("%s = %q, want %q", k, got[k], want)
+		}
 	}
 }

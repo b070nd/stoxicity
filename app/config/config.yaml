@@ -55,6 +55,13 @@ company:
   # The Nasdaq Trader symbol directory marks ETFs and gives the market tier and
   # financial status. A personal copy for your own use; it is not passed on.
   listing: true
+  # "stoxicity run" keeps the reference database (every symbol, company and its
+  # basic data) fresh in the background: every refresh_every it asks the sources
+  # that are due and fetches enrich_per_cycle company records (industry, state,
+  # fiscal year end), the ones you follow first. The whole list fills in over a
+  # few days. "off" stops it; 0 records fetches only the lists.
+  refresh_every: 6h
+  enrich_per_cycle: 200
 
 # Second scoring stage: a laya-serve sidecar. On, but its answers are gated by
 # min_confidence and only the fields in `apply` change a score; the rest are
@@ -99,6 +106,15 @@ laya:
   command: laya-serve
   # The first start loads the checkpoints and can take minutes.
   start_timeout: 3m
+  # What makes a server that run starts give the same opinion every time.
+  # device: cpu is repeatable; an empty value lets laya choose (mps, cuda, ...),
+  # which may differ from run to run. offline: true uses only the checkpoints
+  # already downloaded; set it to false once for the first start. threads caps
+  # the CPU threads (0 = torch's choice). Whatever the server really runs is
+  # read back from it and becomes part of the lens version of every score.
+  device: cpu
+  threads: 0
+  offline: true
 
 # Long-term-investor filter (Lynch / Buffett): fundamentals in, noise out.
 # These words are a first guess and one feature among several, not a proven

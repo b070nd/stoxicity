@@ -1135,3 +1135,59 @@ func TestState(t *testing.T) {
 		}
 	})
 }
+
+func healthServer(t *testing.T, reply string) *Scorer {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/health" {
+			http.NotFound(w, r)
+			return
+		}
+		io.WriteString(w, reply)
+	}))
+	t.Cleanup(srv.Close)
+	s, err := New(Config{URL: srv.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+func TestPinTiesTheVersionToTheCheckpointRevisionsAndDevice(t *testing.T) {
+	a := healthServer(t, `{"status":"ok","loaded":["english","multilingual"],"revisions":{"multilingual":"bbb222","english":"aaa111"},"device":"cpu"}`)
+	b := healthServer(t, `{"status":"ok","loaded":["multilingual","english"],"revisions":{"english":"aaa111","multilingual":"bbb222"},"device":"cpu"}`)
+	c := healthServer(t, `{"status":"ok","loaded":["english","multilingual"],"revisions":{"english":"aaa112","multilingual":"bbb222"},"device":"cpu"}`)
+	d := healthServer(t, `{"status":"ok","loaded":["english","multilingual"],"revisions":{"english":"aaa111","multilingual":"bbb222"},"device":"mps"}`)
+	base := a.Version()
+	for _, s := range []*Scorer{a, b, c, d} {
+		if err := s.Pin(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if a.Version() == base || !strings.HasPrefix(a.Version(), base+"-r") {
+		t.Errorf("pinned version = %q, base %q", a.Version(), base)
+	}
+	if a.Version() != b.Version() {
+		t.Errorf("the order of the reply changed the version: %q %q", a.Version(), b.Version())
+	}
+	if a.Version() == c.Version() {
+		t.Error("another revision gave the same version")
+	}
+	if a.Version() == d.Version() {
+		t.Error("another device gave the same version")
+	}
+}
+
+func TestPinWithNothingLoadedLeavesTheVersionAlone(t *testing.T) {
+	s := healthServer(t, `{"status":"ok","loaded":[],"revisions":{},"device":"cpu"}`)
+	base := s.Version()
+	if err := s.Pin(context.Background()); !errors.Is(err, ErrNotPinned) {
+		t.Fatalf("Pin = %v, want ErrNotPinned", err)
+	}
+	if s.Version() != base {
+		t.Errorf("version = %q", s.Version())
+	}
+	if err := healthServer(t, `{"status":"loading"}`).Pin(context.Background()); err == nil {
+		t.Error("a server that is not ok pinned")
+	}
+}

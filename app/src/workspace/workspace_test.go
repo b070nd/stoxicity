@@ -348,3 +348,31 @@ func TestTagsAndListsPersistAndFeedSearch(t *testing.T) {
 		t.Error("an unknown list should fail the search")
 	}
 }
+
+func TestUniverseFollowsTheReferenceDatabase(t *testing.T) {
+	dir := setup(t)
+	clock := now
+	w, err := Open(Options{Root: dir, Cwd: dir, Now: func() time.Time { return clock }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { w.Close() })
+	if _, ok := w.Universe().Get("ZZZZ"); ok {
+		t.Fatal("ZZZZ is known before it was stored")
+	}
+	// A "stoxicity run" in another process stores a new ticker.
+	ctx := context.Background()
+	rows := []store.RefTicker{{Ticker: "ZZZZ", Name: "Zed Corp", CIK: "0000000009", Exchange: "NYSE"}}
+	if _, err := w.db.ReplaceTickers(ctx, store.RefSource{}, rows, now); err != nil {
+		t.Fatal(err)
+	}
+	// Not looked at again at once...
+	if _, ok := w.Universe().Get("ZZZZ"); ok {
+		t.Error("the universe was rebuilt on every call")
+	}
+	// ...but after a while.
+	clock = clock.Add(time.Minute)
+	if p, ok := w.Universe().Get("ZZZZ"); !ok || p.Name != "Zed Corp" {
+		t.Errorf("ZZZZ = %+v, %v after the database changed", p, ok)
+	}
+}

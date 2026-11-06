@@ -8,8 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -55,6 +57,20 @@ type Listing struct {
 	// FetchedAt is the older of the times the two files were confirmed
 	// current; zero when there is no cache.
 	FetchedAt time.Time
+}
+
+// NewListing makes a Listing of securities, keyed by their normalised symbols.
+func NewListing(secs []Security, fetchedAt time.Time) Listing {
+	l := Listing{bySymbol: make(map[string]Security, len(secs)), FetchedAt: fetchedAt}
+	for _, s := range secs {
+		l.bySymbol[NormalizeSymbol(s.Symbol)] = s
+	}
+	return l
+}
+
+// All returns the securities, sorted by symbol.
+func (l Listing) All() []Security {
+	return slices.SortedFunc(maps.Values(l.bySymbol), func(a, b Security) int { return strings.Compare(a.Symbol, b.Symbol) })
 }
 
 // Len is the number of securities.
