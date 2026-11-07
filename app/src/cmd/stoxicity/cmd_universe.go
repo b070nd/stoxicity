@@ -31,7 +31,7 @@ const (
 	defaultEnrichMax = 300
 )
 
-const universeUsage = "expected: status | update [-force] | changes [-days N] [-limit N] | enrich [-all] [-max N] [-force] [-sites=false] [-feeds N] [TICKER...] | feeds [-search N] | quotes [-max N] [TICKER...] | fundamentals [-force] | insiders [-max N] [TICKER] | find [-limit N] [-days N] [-format table|tsv|json] QUERY... | show TICKER | tag TICKER [-]TAG... | list [ID] | list add|remove ID TICKER..."
+const universeUsage = "expected: status | update [-force] | changes [-days N] [-limit N] | enrich [-all] [-max N] [-force] [-sites=false] [-feeds N] [TICKER...] | feeds [-search N] | quotes [-max N] [TICKER...] | fundamentals [-force] | fundamentals history [-at TIME] [-stored] TICKER | fundamentals classes [-stored] TICKER | insiders [-max N] [TICKER] | find [-limit N] [-days N] [-format table|tsv|json] QUERY... | show TICKER | tag TICKER [-]TAG... | list [ID] | list add|remove ID TICKER..."
 
 // cmdUniverse is the reference list of stocks: every company the program
 // knows, searched, tagged and grouped.
@@ -418,14 +418,21 @@ func (a *app) addFigures(ctx context.Context, f *universe.Facts) {
 	}
 	f.Close, f.Change = map[string]float64{}, map[string]float64{}
 	if latest, err := db.LatestCandles(ctx); err == nil {
+		splits, _ := db.Splits(ctx)
+		cov, _ := db.SplitCoverage(ctx)
+		bySplit := map[string][]marketdata.Split{}
+		for _, s := range splits {
+			k := marketdata.NormTicker(s.Ticker)
+			bySplit[k] = append(bySplit[k], s)
+		}
 		for t, c := range latest {
 			if len(c) == 0 {
 				continue
 			}
 			f.Close[t] = c[0].Close
 			if len(c) > 1 {
-				if ch, ok := marketdata.DayChange(c[1].Close, c[0].Close); ok {
-					f.Change[t] = ch
+				if m := marketdata.Compare(c[1], c[0], bySplit[marketdata.NormTicker(t)], cov); m.Shown() {
+					f.Change[t] = m.Change
 				}
 			}
 		}

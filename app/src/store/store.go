@@ -76,6 +76,17 @@ type Base interface {
 	// limit. Like the other *In reads it restricts the SQL to the allowed set,
 	// and an empty set yields nothing.
 	FetchedAfter(ctx context.Context, after time.Time, allowed map[string]bool, limit int) ([]model.Article, error)
+	// ChangedAfter returns the articles of the allowed sources inserted or
+	// changed by a commit after change number after, in the order of the
+	// commits, at most limit (<= 0 means 500), and the number of the last one
+	// (after itself when there are none). The numbers are given inside the
+	// committing transaction, so a consumer that keeps the last number it
+	// handled cannot miss an article that commits late; this, not a time, is the
+	// cursor of the hit ledger.
+	ChangedAfter(ctx context.Context, after int64, allowed map[string]bool, limit int) ([]model.Article, int64, error)
+	// ChangeSeqAt is the change number reached by the commits fetched at or
+	// before t, to move a position kept as a time to the numbered order.
+	ChangeSeqAt(ctx context.Context, t time.Time) (int64, error)
 }
 
 // Store is the whole database.
@@ -96,7 +107,11 @@ type Store interface {
 // used (see package ledger).
 type Cursor struct {
 	Fetched time.Time
-	Hash    string
+	// Seq is the change number the watch has been evaluated up to (see
+	// Base.ChangedAfter); 0 for a cursor kept before the numbers existed, which
+	// is then read from Fetched.
+	Seq  int64
+	Hash string
 }
 
 // PendingAlert is one alert name of one hit that has not been delivered yet. At
@@ -142,6 +157,14 @@ type TenantStore interface {
 	// MarkDelivered records that the alerts were delivered at the given time.
 	// Recording one twice keeps the first record.
 	MarkDelivered(ctx context.Context, alerts []PendingAlert, at time.Time) error
+	// DeliveredChannels returns the channels, by article ID, that the alert of
+	// the watch was already sent to (see MarkSentTo).
+	DeliveredChannels(ctx context.Context, watchID, alert string) (map[string]map[string]bool, error)
+	// MarkSentTo records that the alerts were sent to the channel. The alert
+	// is not delivered until MarkDelivered says so, which the caller does when
+	// every channel it names has the record. Recording one twice keeps the
+	// first record.
+	MarkSentTo(ctx context.Context, alerts []PendingAlert, channel string, at time.Time) error
 	// LastDelivery returns when the latest alert of a watch with the given
 	// name was delivered, and false when none was. It is what an alert's
 	// cooldown is measured from.

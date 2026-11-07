@@ -227,7 +227,7 @@ func (s *scan) scanTickers() {
 		w := s.text[t.start:t.end]
 		if t.start > 0 && s.text[t.start-1] == '$' {
 			if !wordBefore(s.text, t.start-1) {
-				if ent, end, ok := s.ix.tickerAt(s.text, t.start); ok {
+				if ent, end, ok := s.ix.tickerAt(s.text, t.start); ok && !s.ix.collides(ent) {
 					s.hard[ent] = true
 					s.record(ent, EvidenceCashtag, t.start-1, end)
 				}
@@ -238,7 +238,8 @@ func (s *scan) scanTickers() {
 			pos := skipSpaces(s.text, s.toks[i+n-1].end)
 			if pos < len(s.text) && s.text[pos] == ':' {
 				pos = skipSpaces(s.text, pos+1)
-				if ent, end, ok := s.ix.tickerAt(s.text, pos); ok {
+				venue := venueOfPrefix(s.text[t.start:s.toks[i+n-1].end])
+				if ent, end, ok := s.ix.tickerAt(s.text, pos); ok && s.ix.venueFits(ent, venue) {
 					s.hard[ent] = true
 					s.record(ent, EvidenceExchange, t.start, end)
 				}
@@ -248,7 +249,7 @@ func (s *scan) scanTickers() {
 			continue
 		}
 		ent, ok := s.ix.byTicker[w]
-		if !ok {
+		if !ok || s.ix.collides(ent) {
 			continue
 		}
 		if _, stop := tickerStoplist[w]; stop {

@@ -71,6 +71,9 @@ type phrase struct {
 type Index struct {
 	entities []model.Entity
 	byTicker map[string]int
+	// rivals holds, by ticker, the entities that lost the ticker to an earlier
+	// one; a rival listed in another market area makes the ticker ambiguous.
+	rivals map[string][]model.Entity
 	// names maps the first word of a phrase, in its original spelling, to the
 	// phrases that start with it, longest first.
 	names map[string][]phrase
@@ -84,6 +87,7 @@ func New(entities []model.Entity) *Index {
 	ix := &Index{
 		entities: make([]model.Entity, 0, len(entities)),
 		byTicker: make(map[string]int, len(entities)),
+		rivals:   make(map[string][]model.Entity),
 		names:    make(map[string][]phrase),
 	}
 	for _, e := range entities {
@@ -92,6 +96,7 @@ func New(entities []model.Entity) *Index {
 			continue
 		}
 		if _, dup := ix.byTicker[key]; dup {
+			ix.rivals[key] = append(ix.rivals[key], e)
 			continue
 		}
 		id := len(ix.entities)
@@ -225,4 +230,29 @@ func letterCount(w string) int {
 		}
 	}
 	return n
+}
+
+// collides says another entity with the same ticker is listed in a different
+// market area than the one that holds the ticker, so the ticker alone does not
+// say which security a text means.
+func (ix *Index) collides(ent int) bool {
+	e := ix.entities[ent]
+	area := venueOf(e)
+	for _, r := range ix.rivals[strings.ToUpper(strings.TrimSpace(e.Ticker))] {
+		if contradicts(area, venueOf(r)) {
+			return true
+		}
+	}
+	return false
+}
+
+// venueFits says a ticker written after the exchange prefix whose market area is
+// venue may be the entity: the entity is not listed elsewhere, and a ticker that
+// exists in several areas is accepted only when the prefix names this entity's.
+func (ix *Index) venueFits(ent int, venue string) bool {
+	area := venueOf(ix.entities[ent])
+	if contradicts(venue, area) {
+		return false
+	}
+	return !ix.collides(ent) || (venue != "" && venue == area)
 }

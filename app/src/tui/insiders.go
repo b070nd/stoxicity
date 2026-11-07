@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/b070nd/stoxicity/app/src/feeds/edgar"
+	"github.com/b070nd/stoxicity/app/src/insider"
 	"github.com/b070nd/stoxicity/app/src/model"
 )
 
@@ -15,7 +16,7 @@ const insiderShown = 10
 
 // insiderRows adds the insiders' block of a stock page: what the officers,
 // directors and large holders of the company did with its shares, newest first,
-// and what they did on the open market in the last quarter. Purchases are
+// and what they bought and sold in the last quarter. Purchases are
 // green and sales red; awards, exercises, tax withholding and gifts are dim,
 // because they are pay and bookkeeping, not a view of the company. Nothing is
 // added when no trade is stored.
@@ -29,17 +30,27 @@ func insiderRows(b *builder, ticker string, d Data) {
 	}
 	b.blank()
 	b.heading("Insiders", nil)
-	if n := d.Numbers["buys"][ticker] + d.Numbers["sells"][ticker]; n > 0 {
-		var parts []string
-		if v := d.Numbers["buys"][ticker]; v > 0 {
-			parts = append(parts, fmt.Sprintf("bought %s (%s)", moneyText(v), people(d.Numbers["buyers"][ticker])))
-		}
-		if v := d.Numbers["sells"][ticker]; v > 0 {
-			parts = append(parts, fmt.Sprintf("sold %s (%s)", moneyText(v), people(d.Numbers["sellers"][ticker])))
-		}
-		b.styled(Strong, "  last 90 days on the open market: "+strings.Join(parts, ", "))
-	} else {
-		b.styled(Dim, "  no purchase or sale on the open market in the last 90 days")
+	// The summary is made from the very trades listed below, not from the cached
+	// figures of the list, so the two cannot disagree.
+	var sum insider.Summary
+	if len(trades) > 0 {
+		sum = insider.Summarize(trades, d.Now)[trades[0].CIK]
+	}
+	var parts []string
+	if sum.Buys > 0 {
+		parts = append(parts, fmt.Sprintf("bought %s (%s)", moneyText(sum.Buys), people(float64(sum.Buyers))))
+	}
+	if sum.Sells > 0 {
+		parts = append(parts, fmt.Sprintf("sold %s (%s)", moneyText(sum.Sells), people(float64(sum.Sellers))))
+	}
+	switch {
+	case len(parts) > 0:
+		b.styled(Strong, "  last 90 days, common stock: "+strings.Join(parts, ", "))
+	case sum.UnpricedBuys+sum.UnpricedSells == 0:
+		b.styled(Dim, "  no purchase or sale of common stock in the last 90 days")
+	}
+	if n := sum.UnpricedBuys + sum.UnpricedSells; n > 0 {
+		b.styled(Warn, fmt.Sprintf("  %d purchases and sales of common stock give no price, so their value is unknown and not in the sums", n))
 	}
 	for i, t := range trades {
 		if i == insiderShown {
@@ -51,7 +62,7 @@ func insiderRows(b *builder, ticker string, d Data) {
 			b.add(Row{Text: line, Style: tradeStyle(t), URL: url})
 		}
 	}
-	b.styled(Dim, "  from the Form 4 filings (b opens the filing); a purchase says more than a sale, which is often scheduled in advance")
+	b.styled(Dim, "  from the Form 4 filings (b opens the filing); purchases and sales may be open market or private; a purchase says more than a sale, which is often scheduled in advance")
 }
 
 // insiderLines is one trade in words, on two lines so neither is cut at the
@@ -100,7 +111,7 @@ func people(n float64) string {
 }
 
 // insiderCell is the BUYS or SELLS cell of the company list: the money the
-// insiders moved on the open market in the last quarter, empty when unknown.
+// insiders bought or sold in the last quarter, empty when unknown.
 func insiderCell(d Data, key, ticker string, style Style) Cell {
 	v, ok := d.Numbers[key][ticker]
 	if !ok || v <= 0 {

@@ -16,7 +16,7 @@ import (
 var now = time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
 
 func trade(cik, owner, code string, shares, price float64, day string) model.InsiderTrade {
-	return model.InsiderTrade{CIK: cik, OwnerCIK: owner, Owner: owner, Code: code, Shares: shares, Price: price, Date: day}
+	return model.InsiderTrade{CIK: cik, OwnerCIK: owner, Owner: owner, Code: code, Shares: shares, Price: price, Date: day, Security: "Common Stock"}
 }
 
 func TestSummarizeCountsOnlyOpenMarketTradesOfTheLastQuarterOnce(t *testing.T) {
@@ -129,5 +129,46 @@ func TestRefreshStopsAtTheFirstBlockAndOnAFailedConnectionWithoutMarkingTheFilin
 		if err == nil || rep.Asked != 0 || len(st.puts) != 0 {
 			t.Errorf("%s: %+v, %v, %v", name, rep, err, st.puts)
 		}
+	}
+}
+
+func TestSummarizeLeavesOutOtherSecuritiesCountsUnpricedAndFollowsAmendments(t *testing.T) {
+	pref := trade("A", "ceo", "P", 1000, 25, "2026-11-03")
+	pref.Security = "Series B Preferred Stock"
+	unpriced := trade("A", "cfo", "P", 500, 0, "2026-11-02") // the price is in a footnote
+	orig := trade("A", "dir", "P", 100000, 20, "2026-11-01")
+	orig.Period, orig.Form, orig.Filed, orig.Accession = "2026-11-01", "4", "2026-11-03", "0000000001-26-000001"
+	fix := trade("A", "dir", "P", 1000, 20, "2026-11-01") // corrected from 100,000 shares to 1,000
+	fix.Period, fix.Form, fix.Filed, fix.Accession = "2026-11-01", "4/A", "2026-11-05", "0000000001-26-000002"
+	sums := Summarize([]model.InsiderTrade{pref, unpriced, orig, fix}, now)
+	a := sums["A"]
+	if a.Buys != 20000 || a.Buyers != 1 {
+		t.Errorf("the amendment replaces the original and preferred stock is not common stock: %+v", a)
+	}
+	if a.UnpricedBuys != 1 {
+		t.Errorf("a purchase without a price is counted, not forgotten: %+v", a)
+	}
+}
+
+func TestLatestKeepsFormsFiledAfterTheAmendmentAndTradesWithNoPeriod(t *testing.T) {
+	mk := func(acc, form, filed string, shares float64) model.InsiderTrade {
+		x := trade("A", "dir", "P", shares, 10, "2026-11-01")
+		x.Accession, x.Form, x.Filed, x.Period = acc, form, filed, "2026-11-01"
+		return x
+	}
+	got := Latest([]model.InsiderTrade{
+		mk("1", "4", "2026-11-02", 1), mk("2", "4/A", "2026-11-03", 2), mk("3", "4/A", "2026-11-04", 3), mk("4", "4", "2026-11-05", 4),
+	})
+	var accs []string
+	for _, x := range got {
+		accs = append(accs, x.Accession)
+	}
+	if len(accs) != 2 || accs[0] != "3" || accs[1] != "4" {
+		t.Errorf("the newest amendment and the later form stay: %v", accs)
+	}
+	noPeriod := trade("A", "dir", "P", 5, 10, "2026-11-01")
+	noPeriod.Form = "4/A"
+	if got := Latest([]model.InsiderTrade{noPeriod, mk("1", "4", "2026-11-02", 1)}); len(got) != 2 {
+		t.Errorf("without a period nothing can be matched, so nothing is dropped: %v", got)
 	}
 }

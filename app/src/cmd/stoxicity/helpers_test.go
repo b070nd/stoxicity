@@ -62,7 +62,7 @@ GLOB|Globex Holdings Inc Common Stock|N|GLOB|N|100|N|GLOB
 File Creation Time: 1105202603:02||||||
 `
 
-const acmeRecord = `{"cik":"0001000001","entityType":"operating","sic":"7372","sicDescription":"Services-Prepackaged Software","name":"Acme Corp","fiscalYearEnd":"1231","stateOfIncorporation":"DE","category":"Large accelerated filer","exchanges":["Nasdaq"],"phone":"555-0100","ein":"123456789","addresses":{"business":{"city":"SPRINGFIELD","stateOrCountryDescription":"IL"}},"formerNames":[{"name":"ACME HOLDINGS"}]}`
+const acmeRecord = `{"cik":"0001000001","entityType":"operating","sic":"7372","sicDescription":"Services-Prepackaged Software","name":"Acme Corp","fiscalYearEnd":"1231","stateOfIncorporation":"DE","category":"Large accelerated filer","exchanges":["Nasdaq"],"phone":"555-0100","ein":"123456789","addresses":{"business":{"city":"SPRINGFIELD","stateOrCountryDescription":"IL"}},"formerNames":[{"name":"ACME HOLDINGS"}],"filings":{"recent":{"accessionNumber":["0001000001-26-000009","0001000001-26-000007"],"form":["8-K","10-Q"],"filingDate":["2026-11-01","2026-10-25"],"reportDate":["","2026-09-30"],"primaryDocument":["k.htm","q.htm"]}}}`
 
 // testEnv is a configuration folder in a temporary directory and a feed server.
 type testEnv struct {
@@ -95,7 +95,13 @@ func newTestEnv(t *testing.T) *testEnv {
 	mux.HandleFunc("/otherlisted.txt", func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, otherFile) })
 	mux.HandleFunc("/sub/CIK0001000001.json", func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, acmeRecord) })
 	// Polygon's grouped daily bars: the same two stocks on every day asked for, one
-	// of them with a candle the program must refuse.
+	// of them with a candle the program must refuse; and its list of splits (none).
+	// The SEC's history of Acme's facts and the cover page of its quarterly report.
+	mux.HandleFunc("/fund/companyfacts/CIK0001000001.json", func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, acmeFacts) })
+	mux.HandleFunc("/fund/archives/1000001/000100000126000007/q.htm", func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, acmeCover) })
+	// The SEC's index of the filings of Monday 2 November: two wanted, one not.
+	mux.HandleFunc("/Archives/edgar/daily-index/2026/QTR4/master.20261102.idx", func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, dailyIndex) })
+	mux.HandleFunc("/polygon/splits", func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, `{"results":[]}`) })
 	mux.HandleFunc("/polygon/", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, `{"results":[{"T":"ACME","t":1700000000000,"o":10,"h":12,"l":9.5,"c":11.5,"v":1000},{"T":"GLOB","o":20,"h":19,"l":21,"c":20,"v":5},{"T":"NOTLISTED","o":1,"h":2,"l":1,"c":2,"v":1}]}`)
 	})
@@ -173,3 +179,23 @@ func runWith(t *testing.T, opts runOptions, args ...string) result {
 	code := run(context.Background(), args, &out, &errOut, opts)
 	return result{code: code, out: out.String(), errOut: errOut.String()}
 }
+
+const acmeFacts = `{"cik":1000001,"facts":{"us-gaap":{"Revenues":{"units":{"USD":[
+ {"start":"2024-01-01","end":"2024-12-31","val":100,"accn":"0001000001-25-000001","form":"10-K","filed":"2025-02-20"},
+ {"start":"2024-01-01","end":"2024-12-31","val":110,"accn":"0001000001-25-000099","form":"10-K/A","filed":"2025-06-01"}]}}}}}`
+
+const acmeCover = `<?xml version="1.0"?><html xmlns:ix="http://www.xbrl.org/2013/inlineXBRL" xmlns:xbrli="http://www.xbrl.org/2003/instance"><body>
+<xbrli:context id="c"><xbrli:entity></xbrli:entity><xbrli:period><xbrli:instant>2026-10-20</xbrli:instant></xbrli:period></xbrli:context>
+<ix:nonFraction name="dei:EntityCommonStockSharesOutstanding" contextRef="c" unitRef="shares" scale="0">2,000,000</ix:nonFraction></body></html>`
+
+const dailyIndex = `Description:           Master Index of EDGAR Dissemination Feed
+Last Data Received:    November 2, 2026
+Comments:              webmaster@sec.gov
+Anonymous FTP:         ftp://ftp.sec.gov/edgar/
+
+CIK|Company Name|Form Type|Date Filed|Filename
+--------------------------------------------------------------------------------
+1000001|ACME CORP|8-K|20261102|edgar/data/1000001/0001000001-26-000011.txt
+1000001|ACME CORP|4|20261102|edgar/data/1000001/0001000001-26-000012.txt
+1000001|ACME CORP|424B2|20261102|edgar/data/1000001/0001000001-26-000013.txt
+`

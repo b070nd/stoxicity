@@ -554,7 +554,7 @@ func (a *app) filterEnv(tenantID string) filter.Env {
 // A relative folder or file starts at the folder of the .env file, as the data
 // folder does. A channel that cannot be built is reported on stderr, naming the
 // variable that is missing and never its value, and is left out: the ledger
-// treats an alert for it as delivered, so fetching goes on.
+// keeps the alerts for it pending until it is configured, and fetching goes on.
 func (a *app) channels() map[channel.Kind]channel.Channel {
 	var kinds []channel.Kind
 	seen := map[channel.Kind]bool{}
@@ -780,6 +780,8 @@ func (a *app) syncReference(ctx context.Context) {
 	r := a.referenceKeeper(db, nil)
 	if _, _, _, err := r.Sync(ctx); err != nil {
 		fmt.Fprintf(a.stderr, "stoxicity: reference data not stored: %v\n", err)
+	} else if _, err := db.SyncSecurities(ctx, a.now()); err != nil {
+		fmt.Fprintf(a.stderr, "stoxicity: securities not synced: %v\n", err)
 	}
 	a.univ = nil
 }
@@ -889,7 +891,8 @@ func (a *app) quoteKeeper(db *store.DB, client httpx.Client) *marketdata.Keeper 
 	if client == nil || c.Quotes != "polygon" || c.PolygonKey == "" {
 		return nil
 	}
-	return &marketdata.Keeper{Store: db, Source: marketdata.Polygon{Client: client, Key: c.PolygonKey, URL: c.QuotesURL}, Now: a.now}
+	poly := marketdata.Polygon{Client: client, Key: c.PolygonKey, URL: c.QuotesURL}
+	return &marketdata.Keeper{Store: db, Source: poly, Splits: poly, Now: a.now}
 }
 
 // fundamentalsKeeper is the keeper of revenue, profit and shares; nil when

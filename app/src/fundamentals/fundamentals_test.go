@@ -136,8 +136,10 @@ func TestSummarizeReadsGrowthMarginBalanceAndShares(t *testing.T) {
 }
 
 func TestSummarizeLeavesOutWhatTheFilingsDoNotSay(t *testing.T) {
-	// Income of a year the revenue is not for: no margin. Balance 3 months away
-	// from the year: not the year's balance. Average shares stand in for the cover page.
+	// Income of a year the revenue is not for: the newer one is kept alone (no
+	// revenue of another year beside it, so no margin). Balance 3 months away from
+	// the year: not the year's balance. Average shares are kept apart and never
+	// stand in for the cover page count.
 	s, ok := summarize([]Fact{
 		fact(Revenue, "2024-01-01", "2024-12-31", 100),
 		fact(NetIncome, "2025-01-01", "2025-12-31", 10),
@@ -147,12 +149,12 @@ func TestSummarizeLeavesOutWhatTheFilingsDoNotSay(t *testing.T) {
 	if !ok {
 		t.Fatal("expected a summary")
 	}
-	for _, k := range []string{"margin", "growth", "roe", Equity} {
+	for _, k := range []string{"margin", "growth", "roe", Equity, Revenue, Shares} {
 		if _, has := s.Num[k]; has {
 			t.Errorf("%s should be unknown: %v", k, s.Num)
 		}
 	}
-	if s.Num[Shares] != 8 || s.End != "2025-12-31" {
+	if s.Num[AvgShares] != 8 || s.Num[NetIncome] != 10 || s.End != "2025-12-31" {
 		t.Errorf("%+v", s)
 	}
 	if _, ok := summarize(nil); ok {
@@ -224,5 +226,33 @@ func TestKeeperReadsOnceAWeekUnlessForced(t *testing.T) {
 	clock = now.Add(10 * 24 * time.Hour)
 	if _, ran, _ := k.Refresh(context.Background(), false); !ran {
 		t.Error("an old reading is made again")
+	}
+}
+
+func TestRevenueAndIncomeAreOfTheSameYearAndAClassOfSharesIsNotTheCompany(t *testing.T) {
+	s, _ := summarize([]Fact{
+		fact(Revenue, "2025-01-01", "2025-12-31", 200), fact(Revenue, "2024-01-01", "2024-12-31", 100),
+		fact(NetIncome, "2024-01-01", "2024-12-31", 20), // 2025 income is not reported yet
+	})
+	if s.End != "2024-12-31" || s.Num[Revenue] != 100 || s.Num[NetIncome] != 20 || s.Num["margin"] != 0.2 {
+		t.Errorf("the newest year both are reported for is 2024: %+v", s)
+	}
+
+	sums := map[string]Summary{"0000000001": {Num: map[string]float64{Revenue: 100, NetIncome: 10, Shares: 1e6}}}
+	profiles := []universe.Profile{
+		{Ticker: "AAA", CIK: "0000000001", Kind: universe.KindStock},
+		{Ticker: "AAB", CIK: "0000000001", Kind: universe.KindStock}, // a second class
+	}
+	got := Figures(sums, profiles, map[string]float64{"AAA": 100, "AAB": 10})
+	if got["revenue"]["AAA"] != 100 {
+		t.Errorf("the company's revenue is the same for both: %v", got)
+	}
+	for _, name := range []string{"marketcap", Shares} {
+		if _, has := got[name]["AAA"]; has {
+			t.Errorf("%s of a company with two classes is not known: %v", name, got)
+		}
+		if _, has := got[name]["AAB"]; has {
+			t.Errorf("%s of a company with two classes is not known: %v", name, got)
+		}
 	}
 }

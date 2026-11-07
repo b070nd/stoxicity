@@ -16,7 +16,7 @@ func TestParseOwnershipReadsALiveSaleFromTheSubmissionText(t *testing.T) {
 	}
 	want := model.InsiderTrade{
 		CIK: "0000008818", Owner: "Lopez Andres Alberto", OwnerCIK: "0001568244", Role: "director",
-		Date: "2026-11-05", Code: "S", Acquired: false, Shares: 4000, Price: 193.802, After: 1147, Direct: true,
+		Security: "Common Stock", Form: "4", Period: "2026-11-05", Date: "2026-11-05", Code: "S", Acquired: false, Shares: 4000, Price: 193.802, After: 1147, Direct: true,
 	}
 	if got[0] != want {
 		t.Errorf("got  %+v\nwant %+v", got[0], want)

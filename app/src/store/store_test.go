@@ -141,12 +141,24 @@ func TestSaveImmutableFieldsAndScoreRule(t *testing.T) {
 	db.now = func() time.Time { return t0 }
 	mustSave(t, db, a)
 
+	// Another source with the same ID (the same address) cannot change the
+	// article of the first, whatever it says.
+	x := a
+	x.SourceID, x.Domain = "other", "other.com"
+	x.Title, x.Summary = "Fabricated", "Fabricated"
+	x.Score = model.Score{Relevance: 0.1, Materiality: 1, LensVersion: "v1"}
+	mustSave(t, db, x)
+	if got, err := db.Get(ctx, "a1"); err != nil || !reflect.DeepEqual(got, a) {
+		t.Fatalf("another source changed the article: %+v, %v", got, err)
+	}
+
+	// The source itself may change what is not identity, a score of the same
+	// version is kept unless the text it judged changed.
 	b := a
-	b.SourceID, b.Domain, b.URL = "other", "other.com", "https://other.com/x"
 	b.Published, b.Fetched = t0.Add(48*time.Hour), t0.Add(49*time.Hour)
-	b.Title, b.Summary, b.Form = "New title", "New summary", "10-Q"
+	b.Form = "10-Q"
 	b.Items, b.Tickers, b.Topics, b.ClusterID = []string{"1.01"}, []string{"MSFT"}, []string{"cloud"}, "c9"
-	b.Score = model.Score{Relevance: 0.1, Materiality: 1, LensVersion: "v1"} // same version: ignored
+	b.Score = model.Score{Relevance: 0.1, Materiality: 1, LensVersion: "v1"} // same version, same text: ignored
 	mustSave(t, db, b)
 
 	got, err := db.Get(ctx, "a1")
@@ -154,25 +166,25 @@ func TestSaveImmutableFieldsAndScoreRule(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := a
-	want.Title, want.Summary, want.Form = b.Title, b.Summary, b.Form
+	want.Form = b.Form
 	want.Items, want.Tickers, want.Topics, want.ClusterID = b.Items, b.Tickers, b.Topics, b.ClusterID
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("after update\n got %+v\nwant %+v", got, want)
 	}
 
-	// A new lens version adds a row and becomes the latest score.
-	db.now = func() time.Time { return t0.Add(time.Hour) }
-	c := a
-	c.Score = model.Score{Relevance: 0.3, Materiality: 2, LensVersion: "v2"}
+	// A correction: the text changes, so the old score no longer applies and the
+	// article is visible to the watches again.
+	c := b
+	c.Title, c.Summary = "New title", "New summary"
+	c.Fetched = t0.Add(72 * time.Hour)
+	c.Score = model.Score{Relevance: 0.2, Materiality: 2, Kind: model.EventOther, LensVersion: "v1"}
 	mustSave(t, db, c)
-	got, _ = db.Get(ctx, "a1")
-	if got.Score.LensVersion != "v2" || got.Score.Relevance != 0.3 {
-		t.Errorf("score %+v, want v2", got.Score)
+	got, err = db.Get(ctx, "a1")
+	if err != nil {
+		t.Fatal(err)
 	}
-	var n int
-	db.base.r.QueryRow(`SELECT COUNT(*) FROM scores WHERE article_id = 'a1'`).Scan(&n)
-	if n != 2 {
-		t.Errorf("%d score rows, want 2", n)
+	if got.Title != "New title" || got.Score.Relevance != 0.2 || !got.Fetched.Equal(c.Fetched) {
+		t.Errorf("after the correction: title %q score %+v fetched %v", got.Title, got.Score, got.Fetched)
 	}
 }
 
@@ -705,8 +717,8 @@ func TestPersistenceAcrossReopen(t *testing.T) {
 	}
 	var versions int
 	db.base.r.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&versions)
-	if versions != 9 {
-		t.Errorf("schema version %d", versions)
+	if ms, err := loadMigrations(baseFS, "migrations/base"); err != nil || versions != len(ms) {
+		t.Errorf("schema version %d, want the %d migrations (%v)", versions, len(ms), err)
 	}
 }
 
@@ -960,8 +972,10 @@ func TestSaveTenThousand(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("Save took %v", time.Since(start))
-	if d := time.Since(start); d > 5*time.Second {
-		t.Errorf("Save of %d articles took %v, want under 5s", len(as), d)
+	// Each article is also written to the append-only observation table; the
+	// limit is for a guard against an order of magnitude, under the race detector.
+	if d := time.Since(start); d > 10*time.Second {
+		t.Errorf("Save of %d articles took %v, want under 10s", len(as), d)
 	}
 	got, err := db.Range(context.Background(), t0, t0.Add(24*time.Hour))
 	if err != nil || len(got) != len(as) {

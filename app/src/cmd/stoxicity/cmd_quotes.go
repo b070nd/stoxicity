@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/b070nd/stoxicity/app/src/marketdata"
 	"github.com/b070nd/stoxicity/app/src/refdata"
@@ -17,9 +18,13 @@ const defaultQuoteDays = 10
 func (a *app) universeQuotes(ctx context.Context, args []string) error {
 	fs := newFlags("universe quotes")
 	maxN := fs.Int("max", defaultQuoteDays, "most market days to ask for (one request each, the whole market in it); 0 means no limit")
+	refetch := fs.Int("refetch", 0, "fetch the market days of the last N calendar days again, replacing the stored candles with raw ones (use with a large enough -max)")
 	tickers, err := parseMixed(fs, args)
 	if err != nil {
 		return err
+	}
+	if *refetch < 0 || *refetch > 400 {
+		return usageErrorf("-refetch must be between 0 and 400")
 	}
 	if *maxN < 0 {
 		return usageErrorf("-max must not be negative")
@@ -42,6 +47,10 @@ func (a *app) universeQuotes(ctx context.Context, args []string) error {
 		return err
 	}
 	k := a.quoteKeeper(db, client)
+	k.Refetch = *refetch
+	if *refetch > 0 {
+		k.Pace = 12 * time.Second // the free plan allows five requests a minute
+	}
 	all, err := refdata.QuoteTickers(ctx, db)
 	if err != nil {
 		return err

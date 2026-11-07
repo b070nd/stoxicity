@@ -103,9 +103,10 @@ func (c *Current) Fetch(ctx context.Context, src model.Source, prev feeds.State)
 		best     = map[Accession]filing{}
 		firstErr error
 		finished int
+		partial  []string
 	)
 	for _, form := range forms {
-		found, err := c.readForm(ctx, form, src.Forms, known)
+		found, more, err := c.readForm(ctx, form, src.Forms, known)
 		if err != nil {
 			if mustStop(err) {
 				return feeds.Result{}, err
@@ -113,7 +114,11 @@ func (c *Current) Fetch(ctx context.Context, src model.Source, prev feeds.State)
 			if firstErr == nil {
 				firstErr = err
 			}
+			partial = append(partial, fmt.Sprintf("form %q failed: %v", form, err))
 			continue
+		}
+		if more {
+			partial = append(partial, fmt.Sprintf("form %q: more than %d pages waiting, the older filings are not read", form, c.cfg.MaxPages))
 		}
 		finished++
 		for _, fl := range found {
@@ -143,14 +148,16 @@ func (c *Current) Fetch(ctx context.Context, src model.Source, prev feeds.State)
 	return feeds.Result{
 		Articles: articles,
 		State:    feeds.State{Seen: mergeSeen(ids, prev.Seen, c.cfg.SeenCap), Cursor: prev.Cursor},
+		Partial:  strings.Join(partial, "; "),
 	}, nil
 }
 
 // readForm reads pages of the feed for one form type until a known accession,
 // a short page or the page limit. wanted, when not empty, is the list of forms
-// to keep.
-func (c *Current) readForm(ctx context.Context, form string, wanted []string, known map[string]bool) ([]filing, error) {
-	var out []filing
+// to keep. more says the page limit ended the read while the feed still had
+// full pages and no known accession: older filings are waiting. A page is short
+// by the number of entries the feed sent, not of those that could be read.
+func (c *Current) readForm(ctx context.Context, form string, wanted []string, known map[string]bool) (out []filing, more bool, err error) {
 	for page := range c.cfg.MaxPages {
 		endpoint := c.pageURL(form, page*pageSize)
 		resp, err := c.client.Do(ctx, httpx.Request{
@@ -158,14 +165,14 @@ func (c *Current) readForm(ctx context.Context, form string, wanted []string, kn
 			Header: http.Header{"Accept": {"application/atom+xml, application/xml;q=0.9, */*;q=0.5"}},
 		})
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		if looksLikeHTML(resp.Body) {
-			return nil, blockedError(endpoint, resp.Status)
+			return nil, false, blockedError(endpoint, resp.Status)
 		}
-		entries, err := parseCurrent(resp.Body)
+		entries, raw, err := parseCurrentCounted(resp.Body)
 		if err != nil {
-			return nil, permanentError(endpoint, resp.Status, err)
+			return nil, false, permanentError(endpoint, resp.Status, err)
 		}
 		reachedKnown := false
 		for _, fl := range entries {
@@ -177,11 +184,14 @@ func (c *Current) readForm(ctx context.Context, form string, wanted []string, kn
 				out = append(out, fl)
 			}
 		}
-		if reachedKnown || len(entries) < pageSize {
+		if reachedKnown || raw < pageSize {
 			break
 		}
+		if page == c.cfg.MaxPages-1 {
+			more = true
+		}
 	}
-	return out, nil
+	return out, more, nil
 }
 
 // pageURL is the current-filings feed for one form, starting at entry start.
@@ -219,6 +229,13 @@ func keepForm(form string, wanted []string) bool {
 // cannot be read are skipped, but a feed whose every entry is unreadable is an
 // error: the format has changed.
 func parseCurrent(body []byte) ([]filing, error) {
+	out, _, err := parseCurrentCounted(body)
+	return out, err
+}
+
+// parseCurrentCounted is parseCurrent that also returns how many entries the
+// feed held, readable or not.
+func parseCurrentCounted(body []byte) ([]filing, int, error) {
 	body = bytes.TrimPrefix(body, []byte("\xef\xbb\xbf"))
 	dec := xml.NewDecoder(bytes.NewReader(bytes.TrimLeft(body, " \t\r\n")))
 	dec.Strict = false
@@ -229,10 +246,10 @@ func parseCurrent(body []byte) ([]filing, error) {
 		atomFeed
 	}
 	if err := dec.Decode(&doc); err != nil {
-		return nil, fmt.Errorf("edgar: parse current feed: %w", err)
+		return nil, 0, fmt.Errorf("edgar: parse current feed: %w", err)
 	}
 	if doc.XMLName.Local != "feed" {
-		return nil, fmt.Errorf("edgar: parse current feed: root element <%s> is not feed", doc.XMLName.Local)
+		return nil, 0, fmt.Errorf("edgar: parse current feed: root element <%s> is not feed", doc.XMLName.Local)
 	}
 	var out []filing
 	for _, e := range doc.Entries {
@@ -241,9 +258,9 @@ func parseCurrent(body []byte) ([]filing, error) {
 		}
 	}
 	if len(doc.Entries) > 0 && len(out) == 0 {
-		return nil, fmt.Errorf("edgar: parse current feed: none of %d entries has a readable title and accession number", len(doc.Entries))
+		return nil, 0, fmt.Errorf("edgar: parse current feed: none of %d entries has a readable title and accession number", len(doc.Entries))
 	}
-	return out, nil
+	return out, len(doc.Entries), nil
 }
 
 func parseEntry(e atomEntry) (filing, bool) {

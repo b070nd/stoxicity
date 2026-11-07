@@ -248,7 +248,7 @@ func TestSeenCap(t *testing.T) {
 	if len(res.Articles) != 10 || len(res.State.Seen) != 6 {
 		t.Fatalf("%d articles, %d seen", len(res.Articles), len(res.State.Seen))
 	}
-	if res.State.Seen[0] != res.Articles[0].ID || res.Articles[0].Title != "t9" {
+	if !strings.HasPrefix(res.State.Seen[0], res.Articles[0].ID+seenSep) || res.Articles[0].Title != "t9" {
 		t.Errorf("newest article is not first in Seen")
 	}
 	for _, id := range res.State.Seen {
@@ -381,4 +381,40 @@ func FuzzParse(f *testing.F) {
 		f.Add(b)
 	}
 	f.Fuzz(func(t *testing.T, b []byte) { _, _ = parse(b) })
+}
+
+func TestACorrectionAtTheSameAddressIsReadAgain(t *testing.T) {
+	page := func(title string) []byte {
+		return []byte("<rss><channel><item><title>" + title + "</title><link>https://a.example/p</link>" +
+			"<pubDate>Mon, 02 Nov 2026 10:00:00 GMT</pubDate></item></channel></rss>")
+	}
+	f := newFetcher(&fakeClient{replies: []reply{ok(page("Profit rises 20%"), nil)}}, Config{})
+	first, err := f.Fetch(context.Background(), source, feeds.State{})
+	if err != nil || len(first.Articles) != 1 {
+		t.Fatalf("first read: %+v %v", first, err)
+	}
+
+	// The same page again is not new.
+	f = newFetcher(&fakeClient{replies: []reply{ok(page("Profit rises 20%"), nil)}}, Config{})
+	same, _ := f.Fetch(context.Background(), source, first.State)
+	if len(same.Articles) != 0 {
+		t.Errorf("an unchanged page gave %d articles", len(same.Articles))
+	}
+
+	// A new title at the same address is.
+	f = newFetcher(&fakeClient{replies: []reply{ok(page("Correction: profit falls 20%"), nil)}}, Config{})
+	fixed, _ := f.Fetch(context.Background(), source, first.State)
+	if len(fixed.Articles) != 1 || fixed.Articles[0].ID != first.Articles[0].ID || fixed.Articles[0].Title != "Correction: profit falls 20%" {
+		t.Fatalf("correction not read: %+v", fixed.Articles)
+	}
+	if len(fixed.State.Seen) != 1 {
+		t.Errorf("seen = %v, want the old entry of that ID replaced", fixed.State.Seen)
+	}
+
+	// An ID remembered without a title hash (an older version) counts as unchanged.
+	f = newFetcher(&fakeClient{replies: []reply{ok(page("Anything"), nil)}}, Config{})
+	old, _ := f.Fetch(context.Background(), source, feeds.State{Seen: []string{first.Articles[0].ID}})
+	if len(old.Articles) != 0 {
+		t.Errorf("a bare remembered ID was read again")
+	}
 }

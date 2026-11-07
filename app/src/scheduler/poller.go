@@ -453,7 +453,7 @@ func (p *Poller) wakeUp() {
 // the queue, so no second poll of it can start, until poll puts it back.
 func (p *Poller) poll(ctx context.Context, e *entry, prev feeds.State) {
 	defer p.wg.Done()
-	next, added, err := p.fetch(ctx, e.src, prev)
+	next, added, partial, err := p.fetch(ctx, e.src, prev)
 	if err != nil && ctx.Err() != nil {
 		// Shutting down: the poll was cut short, which says nothing about the source.
 		p.finish(e, false)
@@ -494,9 +494,12 @@ func (p *Poller) poll(ctx context.Context, e *entry, prev feeds.State) {
 		p.opts.Logger.Warn("scheduler: poll failed", "source", e.src.ID, "failures", h.Failures, "next_due", h.NextDue, "err", err)
 	} else {
 		p.opts.Logger.Debug("scheduler: poll done", "source", e.src.ID, "new", added, "next_due", h.NextDue)
+		if partial != "" {
+			p.opts.Logger.Warn("scheduler: poll incomplete", "source", e.src.ID, "why", partial)
+		}
 	}
 	select {
-	case p.events <- Event{SourceID: e.src.ID, New: added, Err: err}:
+	case p.events <- Event{SourceID: e.src.ID, New: added, Partial: partial, Err: err}:
 	default:
 		p.opts.Logger.Debug("scheduler: event dropped, channel full", "source", e.src.ID)
 	}
@@ -504,20 +507,27 @@ func (p *Poller) poll(ctx context.Context, e *entry, prev feeds.State) {
 }
 
 // fetch reads the source and hands the articles to the Sink. It returns the
-// State to keep: the new one only when everything succeeded.
-func (p *Poller) fetch(ctx context.Context, src model.Source, prev feeds.State) (feeds.State, int, error) {
+// State to keep (the new one only when everything succeeded), the number of new
+// articles and, if the read was incomplete, why.
+func (p *Poller) fetch(ctx context.Context, src model.Source, prev feeds.State) (feeds.State, int, string, error) {
 	res, err := p.opts.Fetchers[src.Kind].Fetch(ctx, src, prev)
 	if err != nil {
-		return prev, 0, err
+		return prev, 0, "", err
 	}
 	if res.NotModified || len(res.Articles) == 0 {
-		return res.State, 0, nil
+		return res.State, 0, res.Partial, nil
 	}
 	added, err := p.opts.Sink.Ingest(ctx, src, res.Articles)
 	if err != nil {
-		return prev, 0, err
+		return prev, 0, "", err
 	}
-	return res.State, added, nil
+	if res.Commit != nil {
+		if err := res.Commit(ctx); err != nil {
+			// The articles are stored; reading them again is harmless.
+			return prev, added, "", err
+		}
+	}
+	return res.State, added, res.Partial, nil
 }
 
 // finish releases the worker and, unless the scheduler is stopping, puts the

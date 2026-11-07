@@ -163,11 +163,24 @@ func (f *Fetcher) settle(ctx context.Context, src model.Source, results []outcom
 	sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), saveTimeout*time.Duration(1+len(results)/10))
 	defer cancel()
 	cutoff := now.Add(-f.cfg.Lookback)
+	// A feed that returned articles is saved only after they are stored (see
+	// feeds.Result.Commit); the rest are saved now.
+	var after []store.StockFeed
+	saved := func(feed store.StockFeed, deferred bool) {
+		if deferred {
+			after = append(after, feed)
+			return
+		}
+		if err := f.store.SaveStockFeed(sctx, feed); err != nil && first == nil {
+			first = err
+		}
+	}
 	for _, o := range results {
 		if o.skipped || o.canceled {
 			continue
 		}
 		feed := o.feed
+		kept := 0
 		if o.err != nil {
 			if src.Pool == model.PoolSEC && mustStop(o.err) {
 				stopped = o.err // leave the feed due; the host is cooling down
@@ -181,7 +194,7 @@ func (f *Fetcher) settle(ctx context.Context, src model.Source, results []outcom
 			}
 		} else {
 			read++
-			kept := 0
+			kept = 0
 			for _, a := range o.res.Articles {
 				if a.Published.Before(cutoff) {
 					continue
@@ -196,9 +209,7 @@ func (f *Fetcher) settle(ctx context.Context, src model.Source, results []outcom
 			feed.LastOK, feed.LastNew, feed.Failures, feed.LastError = now, kept, 0, ""
 			feed.NextDue = now.Add(f.around(cycle))
 		}
-		if err := f.store.SaveStockFeed(sctx, feed); err != nil && first == nil {
-			first = err
-		}
+		saved(feed, o.err == nil && kept > 0)
 	}
 	if read == 0 && stopped != nil {
 		return feeds.Result{}, stopped
@@ -209,7 +220,17 @@ func (f *Fetcher) settle(ctx context.Context, src model.Source, results []outcom
 	if len(articles) == 0 {
 		return feeds.Result{NotModified: true}, nil
 	}
-	return feeds.Result{Articles: articles}, nil
+	return feeds.Result{Articles: articles, Commit: func(ctx context.Context) error {
+		cctx, stop := context.WithTimeout(context.WithoutCancel(ctx), saveTimeout*time.Duration(1+len(after)/10))
+		defer stop()
+		var errs []error
+		for _, feed := range after {
+			if err := f.store.SaveStockFeed(cctx, feed); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		return errors.Join(errs...)
+	}}, nil
 }
 
 // derive is the source the reader of one feed is given: the pool's licence and

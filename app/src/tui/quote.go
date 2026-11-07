@@ -11,26 +11,40 @@ import (
 )
 
 // Quote is the newest daily candle of a stock and the close before it, what
-// the stock lists show of its price. Prev is 0 when only one day is known.
+// the stock lists show of its price. Prev is 0 when only one day is known;
+// PrevDay is the day of that earlier close.
 type Quote struct {
 	Day                    string // YYYY-MM-DD
 	Open, High, Low, Close float64
 	Prev                   float64
+	PrevDay                string // YYYY-MM-DD
+	// Move is the move reconciled with the stock splits (marketdata.Compare);
+	// the zero value says none was made, and Change then judges by the two
+	// closes alone.
+	Move marketdata.Move
 }
 
+// Unresolved says the move from the day before may be a corporate action that
+// is not explained yet: shown as such, never as a price move and never hidden.
+func (q Quote) Unresolved() bool { return q.Move.State == marketdata.MoveUnresolved }
+
 // Change is the move of the close from the day before, as a fraction (0.012 is
-// +1.2%); false when there is none or it is not a day's move (see
-// marketdata.DayChange).
-func (q Quote) Change() (float64, bool) { return marketdata.DayChange(q.Prev, q.Close) }
+// +1.2%); false when there is none or it is not a day's move: the earlier close
+// is more than a long weekend before, or the ratio is a stock split's or a
+// mixed series' (see marketdata.SessionChange).
+func (q Quote) Change() (float64, bool) {
+	if q.Move.State != "" {
+		return q.Move.Change, q.Move.Shown()
+	}
+	return marketdata.SessionChange(q.PrevDay, q.Day, q.Prev, q.Close)
+}
 
-// staleAfter is how old the newest candle may be before the list draws it
-// dim: a long weekend with a holiday is four days.
-const staleAfter = 5 * 24 * time.Hour
-
-// stale reports whether the candle is too old to be today's picture.
+// stale reports whether the candle is too old to be today's picture: more than
+// one weekday (a holiday) has passed since its day without a candle. A candle of
+// the previous Friday is today's picture on a Monday, but not on a Wednesday.
 func (q Quote) stale(now time.Time) bool {
-	day, err := time.Parse(time.DateOnly, q.Day)
-	return err != nil || now.Sub(day) > staleAfter
+	missed, ok := marketdata.MissingWeekdays(q.Day, now.Format(time.DateOnly))
+	return !ok || missed > marketdata.MaxMissingWeekdays
 }
 
 // candleWidth is the cells of the day candle in a table.
@@ -88,6 +102,9 @@ func priceText(v float64) string {
 // changeText writes the move as a signed percentage and gives the style it is
 // drawn in.
 func changeText(q Quote, now time.Time) (string, Style) {
+	if q.Unresolved() {
+		return "split?", Warn
+	}
 	ch, ok := q.Change()
 	if !ok {
 		return "", Plain

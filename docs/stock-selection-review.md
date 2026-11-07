@@ -286,3 +286,31 @@ on; 4 to 6 are where the fine-tuning data comes from; 7 is the structural step.
   `RevenueFromContractWithCustomerExcludingAssessedTax`, `NetIncomeLoss`,
   `StockholdersEquity` and `Assets`, for CY2023 and CY2024 (instant concepts at
   `CY2024Q4I`), all from `data.sec.gov`.
+
+
+## Corrections after the red-team review (PROTOCOL.md)
+
+The review in `PROTOCOL.md` found cases where a screen showed a confident wrong
+number. What changed, and what is still open (the status of every finding is in
+`PROTOCOL.md`, "Remediation status"):
+
+- **Day change** is a session change: it is shown only when at most one weekday
+  (a holiday) lies between the two closes, and not when the ratio of the closes
+  is the ratio of a split (2:1, 3:1, 1:10 ... within 1.5%). This is a heuristic
+  on prices adjusted on the day they were fetched, not a corporate-action
+  reconciliation, so a real move of exactly that size is also hidden.
+- **Market capitalisation** uses only the share count on the cover page of the
+  filing (`dei:EntityCommonStockSharesOutstanding`), never the weighted average,
+  and is left out for a company with more than one class of common stock
+  listed under one CIK (GOOG and GOOGL show none), because one class's count is
+  not the company's. **Revenue and income** are paired only when they are of the
+  same fiscal year; otherwise the older one is not shown next to the newer.
+- **Insiders**: purchases (P) and sales (S) are private as well as open market.
+  Only common stock counts (a preferred or note purchase does not), a 4/A
+  replaces the earlier forms of the same owner and period, a trade without a price
+  is counted apart, and the summary on the list and on the stock page come from
+  the same trades. Migration `0010` discards the stored trades so the filings are
+  read again with these fields (`stoxicity universe insiders`, about 80 seconds
+  for 874 filings).
+- **The stock page's "Latest news"** ignores an older answer that arrives after a
+  newer one.

@@ -148,7 +148,7 @@ func TestRefreshDaysFetchesTheMissingMarketDaysOnceAndKeepsOnlyOurStocks(t *test
 	st := newMem()
 	st.rows["KO|2026-11-02"] = Candle{Ticker: "KO", Day: "2026-11-02", Open: 1, High: 2, Low: 1, Close: 1}
 	for _, d := range []string{"2026-11-03", "2026-11-04"} {
-		f.Reply("https://poly.test/"+d+"?adjusted=true&apiKey=k", resp(polygonDay(d)))
+		f.Reply("https://poly.test/"+d+"?adjusted=false&apiKey=k", resp(polygonDay(d)))
 	}
 	k := &Keeper{Store: st, Source: p, Now: func() time.Time { return t0 }}
 	rep, err := k.Refresh(context.Background(), []string{"KO", "BRK-B"}, nil, 10)
@@ -171,8 +171,8 @@ func TestRefreshDaysRemembersAHolidayAndNeedsAKey(t *testing.T) {
 	p := Polygon{Client: f, Key: "k", URL: "https://poly.test/"}
 	st := newMem()
 	st.rows["KO|2026-11-02"] = Candle{Ticker: "KO", Day: "2026-11-02", Open: 1, High: 2, Low: 1, Close: 1}
-	f.Reply("https://poly.test/2026-11-03?adjusted=true&apiKey=k", resp(`{"results":[]}`))
-	f.Reply("https://poly.test/2026-11-04?adjusted=true&apiKey=k", resp(polygonDay("2026-11-04")))
+	f.Reply("https://poly.test/2026-11-03?adjusted=false&apiKey=k", resp(`{"results":[]}`))
+	f.Reply("https://poly.test/2026-11-04?adjusted=false&apiKey=k", resp(polygonDay("2026-11-04")))
 	k := &Keeper{Store: st, Source: p, Now: func() time.Time { return t0 }}
 	if rep, err := k.Refresh(context.Background(), []string{"KO"}, nil, 10); err != nil || rep.None != 1 || rep.Stored != 1 {
 		t.Fatalf("%+v, %v", rep, err)
@@ -184,3 +184,58 @@ func TestRefreshDaysRemembersAHolidayAndNeedsAKey(t *testing.T) {
 		t.Error("no key, no look-up")
 	}
 }
+
+func TestSessionChangeRefusesMissingSessionsAndSplits(t *testing.T) {
+	cases := []struct {
+		name       string
+		prevDay    string
+		day        string
+		prev, last float64
+		want       bool
+	}{
+		{"an ordinary day", "2026-11-04", "2026-11-05", 100, 102, true},
+		{"a weekend", "2026-11-06", "2026-11-09", 100, 98, true},
+		{"a long weekend with a holiday", "2026-11-26", "2026-11-30", 100, 101, true},
+		{"Tuesday to Friday: three sessions are missing", "2026-11-03", "2026-11-06", 100, 120, false},
+		{"the same day twice", "2026-11-05", "2026-11-05", 100, 120, false},
+		{"a 2-for-1 split not applied to the older close", "2026-11-05", "2026-11-06", 100, 50.2, false},
+		{"a 3-for-1 split", "2026-11-05", "2026-11-06", 300, 100, false},
+		{"a 1-for-10 reverse split", "2026-11-05", "2026-11-06", 5, 50, false},
+		{"a real fall of eleven per cent", "2026-11-05", "2026-11-06", 100, 89, true},
+		{"unreadable days", "", "2026-11-06", 100, 101, false},
+	}
+	for _, c := range cases {
+		if _, ok := SessionChange(c.prevDay, c.day, c.prev, c.last); ok != c.want {
+			t.Errorf("%s: shown = %v, want %v", c.name, ok, c.want)
+		}
+	}
+}
+
+// memSplits is a memStore that keeps splits too.
+type memSplits struct {
+	*memStore
+	splits []Split
+	cov    SplitCoverage
+}
+
+func (m *memStore) RawDays(context.Context) (map[string]bool, error) {
+	out := map[string]bool{}
+	for _, c := range m.rows {
+		if c.Raw {
+			out[c.Day] = true
+		}
+	}
+	return out, nil
+}
+
+func newMemSplits() *memSplits { return &memSplits{memStore: newMem()} }
+
+func (m *memSplits) PutSplits(_ context.Context, s []Split, since, at time.Time) error {
+	m.splits = append(m.splits, s...)
+	if m.cov.Since == "" || since.Format(time.DateOnly) < m.cov.Since {
+		m.cov.Since = since.Format(time.DateOnly)
+	}
+	m.cov.Read = at
+	return nil
+}
+func (m *memSplits) SplitCoverage(context.Context) (SplitCoverage, error) { return m.cov, nil }

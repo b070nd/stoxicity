@@ -41,3 +41,33 @@ func TestFundamentalsAreReplacedPerPeriodAndOldOnesDropOut(t *testing.T) {
 		t.Errorf("read at %v", r)
 	}
 }
+
+func TestFactHistoryIsAppendOnlyAndAFramesFactLearnsItsFilingDay(t *testing.T) {
+	db, _ := openTemp(t)
+	ctx := context.Background()
+	frames := fundamentals.Fact{CIK: "0000000001", Metric: fundamentals.Revenue, Start: "2024-01-01", End: "2024-12-31", Value: 100,
+		Accession: "0001-25-000001", Taxonomy: "us-gaap", Concept: "Revenues", Unit: "USD"}
+	if err := db.PutFundamentals(ctx, []fundamentals.Fact{frames}, at(1)); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := db.FactHistory(ctx, "0000000001")
+	if len(got) != 1 || got[0].Filed != "" {
+		t.Fatalf("the frames do not say when it was filed: %+v", got)
+	}
+	hist := frames
+	hist.Filed, hist.Form = "2025-02-20", "10-K"
+	restated := hist
+	restated.Value, restated.Accession, restated.Filed, restated.Form = 110, "0001-25-000099", "2025-06-01", "10-K/A"
+	n, err := db.PutFactHistory(ctx, []fundamentals.Fact{hist, restated}, at(2))
+	if err != nil || n != 1 {
+		t.Fatalf("one new fact (the restatement), the other only learned its day: %d, %v", n, err)
+	}
+	got, _ = db.FactHistory(ctx, "0000000001")
+	if len(got) != 2 || got[0].Filed != "2025-02-20" || got[0].Value != 100 || got[1].Value != 110 {
+		t.Errorf("history: %+v", got)
+	}
+	// The newest-figures table is untouched by the history.
+	if cur, _ := db.Fundamentals(ctx); len(cur) != 1 || cur[0].Value != 100 {
+		t.Errorf("current: %+v", cur)
+	}
+}

@@ -125,14 +125,13 @@ func (p *Pipeline) Ingest(ctx context.Context, src model.Source, articles []mode
 	if len(batch) == 0 {
 		return 0, nil
 	}
-	// Fetchers stamp the start of their poll. Workers finish in any order, so
-	// that time can be older than an article another worker has already saved,
-	// and the ledger's cursor on the fetch time would skip it. The time of the
-	// ingest is the order in which articles become visible. A stored article
-	// keeps the fetch time it was first saved with.
-	ingested := p.cfg.Now()
+	// Fetchers stamp the start of their poll, which can be older than an article
+	// another worker has already saved, and the ledger's cursor on the fetch time
+	// would skip it. The fetch time is therefore left for the store to set when
+	// the batch is committed (see store.Save); a stored article keeps the time it
+	// was first saved with.
 	for i := range batch {
-		batch[i].Fetched = ingested
+		batch[i].Fetched = time.Time{}
 	}
 
 	ids := make([]string, len(batch))
@@ -163,6 +162,7 @@ func (p *Pipeline) Ingest(ctx context.Context, src model.Source, articles []mode
 	if err := p.cfg.Store.Save(ctx, batch); err != nil {
 		return 0, fmt.Errorf("pipeline: save: %w", err)
 	}
+	p.recordEvents(ctx, batch)
 	p.cfg.Logger.Debug("pipeline: ingested", "source", src.ID, "articles", len(batch), "new", added)
 	return added, nil
 }

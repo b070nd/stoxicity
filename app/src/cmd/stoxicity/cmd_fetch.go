@@ -244,6 +244,8 @@ func cmdRun(ctx context.Context, a *app, args []string) error {
 	done := make(chan error, 1)
 	go func() { done <- p.Run(ctx) }()
 	fmt.Fprintf(a.stdout, "polling %d sources; interrupt to stop\n", len(srcs))
+	// Articles stored before a restart may not have been evaluated yet.
+	a.evaluateAll(ctx, led)
 	var redraw <-chan time.Time
 	if live != nil {
 		live.Source(p.Board)
@@ -262,6 +264,9 @@ func cmdRun(ctx context.Context, a *app, args []string) error {
 				a.evaluateAll(ctx, led)
 			}
 		case <-tick.C:
+			// Events are hints that can be lost (a full channel, a restart): the
+			// evaluation catches up from the stored articles on every tick.
+			a.evaluateAll(ctx, led)
 			a.deliverDue(ctx, led)
 		case err := <-done:
 			for {
@@ -286,6 +291,10 @@ func (a *app) printEvent(ev scheduler.Event) {
 	at := a.now().In(a.location()).Format(time.TimeOnly)
 	if ev.Err != nil {
 		fmt.Fprintf(a.stdout, "%s %-24s error (%s): %s\n", at, ev.SourceID, errorClass(ev.Err), oneLine(ev.Err.Error()))
+		return
+	}
+	if ev.Partial != "" {
+		fmt.Fprintf(a.stdout, "%s %-24s %d new, INCOMPLETE: %s\n", at, ev.SourceID, ev.New, oneLine(ev.Partial))
 		return
 	}
 	fmt.Fprintf(a.stdout, "%s %-24s %d new\n", at, ev.SourceID, ev.New)

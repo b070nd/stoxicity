@@ -366,3 +366,48 @@ func BenchmarkNew(b *testing.B) {
 		New(ents)
 	}
 }
+
+func TestAnExchangePrefixMustAgreeWithWhereTheSecurityIsListed(t *testing.T) {
+	ix := New([]model.Entity{
+		{Ticker: "ABC", Name: "Abacus Corp", Exchange: "NASDAQ", MIC: "XNAS"},
+		{Ticker: "XYZ", Name: "Xyzzy Corp", Exchange: "NYSE"},
+		{Ticker: "NOV", Name: "Novel Corp"},
+	})
+	tests := []struct {
+		text string
+		want []string
+	}{
+		{"LSE: ABC reports earnings", nil},                  // London prefix, US listing
+		{"(NASDAQ: ABC) reports earnings", []string{"ABC"}}, // the same venue
+		{"(NYSE American: XYZ) said", []string{"XYZ"}},      // US prefix, US listing by exchange name
+		{"TSX: XYZ said", nil},                              // Toronto prefix, NYSE listing
+		{"(LSE: NOV) said", []string{"NOV"}},                // the listing says nothing: no contradiction
+	}
+	for _, tc := range tests {
+		var got []string
+		for _, m := range ix.Matches(tc.text) {
+			if m.Evidence == EvidenceExchange {
+				got = append(got, m.Entity.Ticker)
+			}
+		}
+		if !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("%q: exchange matches %v, want %v", tc.text, got, tc.want)
+		}
+	}
+}
+
+func TestATickerListedInTwoMarketsIsNotGuessed(t *testing.T) {
+	ix := New([]model.Entity{
+		{Ticker: "ABC", Name: "Abacus Corp", MIC: "XNAS"},
+		{Ticker: "ABC", Name: "Abacus Holdings plc", MIC: "XLON"},
+	})
+	for _, text := range []string{"$ABC rose", "ABC reports earnings and shares rose", "LSE: ABC reports earnings"} {
+		if got := ix.Matches(text); len(got) != 0 {
+			t.Errorf("%q matched %v, want nothing", text, got)
+		}
+	}
+	got := ix.Matches("(NASDAQ: ABC) reports earnings")
+	if len(got) != 1 || got[0].Entity.Name != "Abacus Corp" {
+		t.Errorf("a prefix naming the listing should resolve it, got %v", got)
+	}
+}

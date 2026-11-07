@@ -145,12 +145,12 @@ company:
   feed_search_per_cycle: 60 # company websites read for their news feed in one refresh (0 to 2000)
   quotes: polygon     # where daily candles come from: polygon (needs STOXICITY_POLYGON_KEY) or off
   quotes_per_cycle: 10 # market days brought up to date in one refresh (0 to 5000)
-  quotes_url: ""      # the source's address, for a test
+  quotes_url: ""      # the source's address, for a test (the splits list is read from quotes_url + "splits")
   fundamentals: sec   # where revenue, profit and shares come from: sec (no key) or off
-  fundamentals_url: "" # the SEC frames address, for a test
+  fundamentals_url: "" # the SEC frames address, for a test (company history from + "companyfacts/", filings from + "archives/")
   insiders: sec       # where insider trades come from: sec (the Form 4 filings, no key) or off
   insiders_per_cycle: 300 # unread Form 4 filings read in one refresh (0 to 5000)
-  insiders_url: ""    # the SEC web address, for a test
+  insiders_url: ""    # the SEC web address, for a test (also where `reconcile` reads the daily index)
 ```
 
 `fundamentals` fills the MCAP, REVENUE, GROWTH and MARGIN columns, the figures
@@ -278,7 +278,7 @@ laya:
   model: ""               # empty lets laya choose
   min_confidence: 0.7     # the gate; see below
   timeout: 60s            # the first request loads the model
-  apply: [kind, topics, tone]
+  apply: []               # advisory only until `stoxicity eval` shows a field helps; then add it, e.g. [kind]
   relevance_weight: 0.3   # used only when `relevance` is in apply
   batch_size: 16          # articles per request, 1 to 64
   device: cpu             # torch device of a server that run starts; "" lets laya choose

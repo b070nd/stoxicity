@@ -85,7 +85,7 @@ var sortKeys = []string{"ticker", "name", "news", "industry", "exchange", "kind"
 
 // numOps are the operators that compare a number: money (close, marketcap,
 // revenue, income, assets, equity; buys and sells are what the insiders bought
-// and sold on the open market in the last 90 days), counts (buyers, sellers:
+// and sold, in common stock, in the last 90 days), counts (buyers, sellers:
 // how many different insiders) and ratios (change, growth, margin, roe,
 // equity_ratio), which are written as percentages: margin:>10 and
 // margin:>10% both mean a tenth. A stock the number is unknown for matches

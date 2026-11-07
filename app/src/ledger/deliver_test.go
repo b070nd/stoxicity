@@ -236,11 +236,10 @@ func TestDeliverWithTwoChannelsMarksOnlyAfterBothSucceed(t *testing.T) {
 	if got := len(f.webhook.notifications()); got != 1 {
 		t.Errorf("webhook got %d notifications, want 1", got)
 	}
-	// The file channel got the batch twice with the same time, which overwrites
-	// one file there.
-	got := f.file.notifications()
-	if len(got) != 2 || !got[0].At.Equal(got[1].At) || got[0].Key() != got[1].Key() {
-		t.Errorf("file notifications = %+v, want two attempts with one name", got)
+	// The file channel took the batch the first time and is not sent it again
+	// because the webhook failed.
+	if got := f.file.notifications(); len(got) != 1 {
+		t.Errorf("file notifications = %+v, want exactly one", got)
 	}
 }
 
@@ -257,15 +256,16 @@ func TestDeliverTUIAndUnconfiguredKinds(t *testing.T) {
 	f.evaluate(t, "alice")
 
 	d := f.deliver(t, "alice")
-	if d != (Delivery{Sent: 1}) {
-		t.Errorf("Deliver = %+v, want only the mixed alert sent", d)
+	if d != (Delivery{Blocked: 4}) {
+		t.Errorf("Deliver = %+v, want the four alerts that name an unconfigured kind blocked", d)
 	}
 	if got := f.file.notifications(); len(got) != 1 || got[0].Alert != "mixed" {
 		t.Errorf("file channel got %+v, want the mixed alert", got)
 	}
+	// Only the TUI-only alert is delivered; the others wait for their channel.
 	pending, err := f.db.Tenant("alice").PendingAlerts(context.Background())
-	if err != nil || len(pending) != 0 {
-		t.Errorf("pending = %+v, %v; want none (tui and unconfigured kinds count as delivered)", pending, err)
+	if err != nil || len(pending) != 4 {
+		t.Errorf("pending = %+v, %v; want the four blocked alerts", pending, err)
 	}
 	// One warning per kind and call, however many alerts name it.
 	if n := strings.Count(f.logs.String(), "no channel configured"); n != 2 {
@@ -275,26 +275,41 @@ func TestDeliverTUIAndUnconfiguredKinds(t *testing.T) {
 		t.Errorf("warnings do not name the kinds:\n%s", f.logs.String())
 	}
 
-	// The skipped alerts do not come back.
-	f.logs.Reset()
+	// A later call still waits, and does not send the file again.
 	f.deliver(t, "alice")
-	if strings.Contains(f.logs.String(), "no channel configured") {
-		t.Errorf("a second call warned again:\n%s", f.logs.String())
+	if got := f.file.notifications(); len(got) != 1 {
+		t.Errorf("file channel got %d notifications after a second call, want 1", len(got))
+	}
+
+	// Configuring the kind recovers what was missed, sending only what is left.
+	mail := &fakeChannel{kind: channel.Email}
+	f.l.cfg.Channels[channel.Email] = mail
+	if d := f.deliver(t, "alice"); d != (Delivery{Sent: 3, Blocked: 1}) {
+		t.Errorf("Deliver after email is configured = %+v, want mail-only x2 and mixed sent, feed-only blocked", d)
+	}
+	if got := mail.notifications(); len(got) != 3 {
+		t.Errorf("email got %d notifications, want 3", len(got))
+	}
+	if got := f.file.notifications(); len(got) != 1 {
+		t.Errorf("file channel got %d notifications, want still 1", len(got))
+	}
+	if p, _ := f.db.Tenant("alice").PendingAlerts(context.Background()); len(p) != 1 || p[0].Alert != "feed-only" {
+		t.Errorf("pending = %+v, want only feed-only", p)
 	}
 }
 
-func TestDeliverIgnoresPolicyWhenNothingIsSent(t *testing.T) {
+func TestDeliverKeepsAnAlertWhoseOnlyChannelIsMissingPending(t *testing.T) {
 	f := newFixture(t)
 	a := alert("mail", channel.Email)
 	a.Quiet = "00:00-23:59"
 	f.saveWatch(t, "alice", alertWatch("core", a))
 	f.save(t, article("a1", "pub", "Acme reports annual results", day(9, 0), day(10, 0)))
 	f.evaluate(t, "alice")
-	if d := f.deliver(t, "alice"); d != (Delivery{}) {
-		t.Errorf("Deliver = %+v, want nothing sent or deferred", d)
+	if d := f.deliver(t, "alice"); d != (Delivery{Blocked: 1}) {
+		t.Errorf("Deliver = %+v, want blocked, not deferred or sent", d)
 	}
-	if p, _ := f.db.Tenant("alice").PendingAlerts(context.Background()); len(p) != 0 {
-		t.Errorf("pending = %+v, want none", p)
+	if p, _ := f.db.Tenant("alice").PendingAlerts(context.Background()); len(p) != 1 {
+		t.Errorf("pending = %+v, want the alert to wait for its channel", p)
 	}
 }
 

@@ -19,8 +19,8 @@ func (t *tenantStore) Cursor(ctx context.Context, watchID string) (Cursor, bool,
 	}
 	var c Cursor
 	var fetched int64
-	err = h.r.QueryRowContext(ctx, `SELECT fetched_ms, watch_hash FROM eval_cursor WHERE watch_id = ?`, watchID).
-		Scan(&fetched, &c.Hash)
+	err = h.r.QueryRowContext(ctx, `SELECT fetched_ms, watch_hash, seq FROM eval_cursor WHERE watch_id = ?`, watchID).
+		Scan(&fetched, &c.Hash, &c.Seq)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Cursor{}, false, nil
 	}
@@ -40,9 +40,9 @@ func (t *tenantStore) SetCursor(ctx context.Context, watchID string, c Cursor) e
 	if watchID == "" {
 		return errors.New("store: set cursor: empty watch ID")
 	}
-	_, err = h.w.ExecContext(ctx, `INSERT INTO eval_cursor (watch_id, fetched_ms, watch_hash) VALUES (?, ?, ?)
-		ON CONFLICT (watch_id) DO UPDATE SET fetched_ms = excluded.fetched_ms, watch_hash = excluded.watch_hash`,
-		watchID, ms(c.Fetched), c.Hash)
+	_, err = h.w.ExecContext(ctx, `INSERT INTO eval_cursor (watch_id, fetched_ms, watch_hash, seq) VALUES (?, ?, ?, ?)
+		ON CONFLICT (watch_id) DO UPDATE SET fetched_ms = excluded.fetched_ms, watch_hash = excluded.watch_hash, seq = excluded.seq`,
+		watchID, ms(c.Fetched), c.Hash, c.Seq)
 	if err != nil {
 		return fmt.Errorf("store: set cursor: %w", err)
 	}
@@ -165,6 +165,75 @@ func (t *tenantStore) MarkDigestSent(ctx context.Context, watchID, periodKey str
 		watchID, periodKey, ms(at))
 	if err != nil {
 		return fmt.Errorf("store: mark digest sent: %w", err)
+	}
+	return nil
+}
+
+// DeliveredChannels returns, for each article ID, the channels the alert of the
+// watch was already sent to.
+func (t *tenantStore) DeliveredChannels(ctx context.Context, watchID, alert string) (map[string]map[string]bool, error) {
+	h, err := t.handle()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := h.r.QueryContext(ctx, `SELECT article_id, channel FROM delivered_channel WHERE watch_id = ? AND alert = ?`, watchID, alert)
+	if err != nil {
+		return nil, fmt.Errorf("store: delivered channels: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]map[string]bool{}
+	for rows.Next() {
+		var article, ch string
+		if err := rows.Scan(&article, &ch); err != nil {
+			return nil, fmt.Errorf("store: delivered channels: %w", err)
+		}
+		if out[article] == nil {
+			out[article] = map[string]bool{}
+		}
+		out[article][ch] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: delivered channels: %w", err)
+	}
+	return out, nil
+}
+
+// MarkSentTo records the alerts as sent to the channel, in one transaction. A
+// zero time is stored as now.
+func (t *tenantStore) MarkSentTo(ctx context.Context, alerts []PendingAlert, channel string, at time.Time) error {
+	h, err := t.handle()
+	if err != nil {
+		return err
+	}
+	if len(alerts) == 0 {
+		return nil
+	}
+	if channel == "" {
+		return errors.New("store: mark sent: empty channel")
+	}
+	if at.IsZero() {
+		at = t.db.now()
+	}
+	tx, err := h.w.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: mark sent: %w", err)
+	}
+	defer tx.Rollback()
+	stmt, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO delivered_channel (watch_id, article_id, alert, channel, at_ms) VALUES (?, ?, ?, ?, ?)`)
+	if err != nil {
+		return fmt.Errorf("store: mark sent: %w", err)
+	}
+	defer stmt.Close()
+	for _, p := range alerts {
+		if p.WatchID == "" || p.ArticleID == "" || p.Alert == "" {
+			return errors.New("store: mark sent: alert without watch, article or name")
+		}
+		if _, err := stmt.ExecContext(ctx, p.WatchID, p.ArticleID, p.Alert, channel, ms(at)); err != nil {
+			return fmt.Errorf("store: mark sent: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: mark sent: %w", err)
 	}
 	return nil
 }

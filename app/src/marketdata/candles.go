@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/url"
 	"strings"
 	"time"
@@ -20,6 +21,10 @@ type Candle struct {
 	Day                    string
 	Open, High, Low, Close float64
 	Volume                 int64
+	// Raw says the prices are as traded that day, not adjusted for any split.
+	// Candles made before they were kept raw are adjusted by the source for the
+	// splits it knew when they were fetched, which is not recorded.
+	Raw bool
 }
 
 // Valid reports whether the candle is one a chart can draw: positive prices
@@ -93,6 +98,8 @@ type Polygon struct {
 	Key    string
 	// URL replaces PolygonURL (it ends with a slash); tests point it at a server.
 	URL string
+	// SplitsURL replaces PolygonSplitsURL.
+	SplitsURL string
 }
 
 // Name implements Source.
@@ -107,7 +114,7 @@ func (p Polygon) Day(ctx context.Context, day time.Time) ([]Candle, error) {
 	if base == "" {
 		base = PolygonURL
 	}
-	resp, err := p.Client.Do(ctx, httpx.Request{URL: base + day.Format(time.DateOnly) + "?" + url.Values{"adjusted": {"true"}, "apiKey": {p.Key}}.Encode()})
+	resp, err := p.Client.Do(ctx, httpx.Request{URL: base + day.Format(time.DateOnly) + "?" + url.Values{"adjusted": {"false"}, "apiKey": {p.Key}}.Encode()})
 	if err != nil {
 		return nil, err
 	}
@@ -131,7 +138,7 @@ func (p Polygon) Day(ctx context.Context, day time.Time) ([]Candle, error) {
 				}
 			}
 		}
-		candle := Candle{Ticker: ticker, Day: day.Format(time.DateOnly), Open: o, High: h, Low: l, Close: c, Volume: int64(v)}
+		candle := Candle{Ticker: ticker, Day: day.Format(time.DateOnly), Open: o, High: h, Low: l, Close: c, Volume: int64(v), Raw: true}
 		if candle.Valid() {
 			out = append(out, candle)
 		}
@@ -146,4 +153,78 @@ func SameTicker(a, b string) bool { return NormTicker(a) == NormTicker(b) }
 // NormTicker is the spelling tickers are compared by.
 func NormTicker(t string) string {
 	return strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(t), ".", "-"))
+}
+
+// MaxMissingWeekdays is how many weekdays may lie between two closes that are
+// still one day's move: none on an ordinary day or over a weekend, one when the
+// exchange was closed for a holiday. More means sessions are missing from the
+// store, and the move between the two closes is that of several days.
+const MaxMissingWeekdays = 1
+
+// weekdaysBetween counts the Monday-to-Friday days strictly between a and b.
+func weekdaysBetween(a, b time.Time) int {
+	n := 0
+	for d := a.AddDate(0, 0, 1); d.Before(b); d = d.AddDate(0, 0, 1) {
+		if wd := d.Weekday(); wd != time.Saturday && wd != time.Sunday {
+			n++
+		}
+	}
+	return n
+}
+
+// MissingWeekdays counts the Monday-to-Friday days strictly between two days
+// (YYYY-MM-DD), false when either is not a day. It is how many sessions a series
+// ending at the earlier day has missed by the later one, holidays included.
+func MissingWeekdays(from, to string) (int, bool) {
+	a, errA := time.Parse(time.DateOnly, from)
+	b, errB := time.Parse(time.DateOnly, to)
+	if errA != nil || errB != nil {
+		return 0, false
+	}
+	return weekdaysBetween(a, b), true
+}
+
+// splitRatios are the closing-price ratios a stock split makes: a 2-for-1
+// halves the price, a 1-for-10 reverse split multiplies it by ten.
+var splitRatios = func() []float64 {
+	out := []float64{1.5, 1 / 1.5}
+	for k := 2; k <= 20; k++ {
+		out = append(out, float64(k), 1/float64(k))
+	}
+	return out
+}()
+
+// LooksLikeSplit says whether the ratio of two closes is, within 1.5%, one a
+// stock split makes. The candles are stored as the source adjusted them on the
+// day they were fetched; a split that took effect since then leaves the older
+// rows on the old basis, so the ratio across it is the split ratio and not a
+// move. A real fall of exactly half in a day looks the same, which is rare
+// enough that no change is shown rather than a false one.
+func LooksLikeSplit(ratio float64) bool {
+	for _, s := range splitRatios {
+		if math.Abs(ratio/s-1) < 0.015 {
+			return true
+		}
+	}
+	return false
+}
+
+// SessionChange is DayChange for two stored candles: it also refuses a move
+// between closes with more than MaxMissingWeekdays weekdays between them
+// (sessions are missing, so it is not the day's move) and one that looks like a stock split (see
+// LooksLikeSplit). prevDay and day are YYYY-MM-DD.
+func SessionChange(prevDay, day string, prev, close float64) (float64, bool) {
+	p, err1 := time.Parse(time.DateOnly, prevDay)
+	d, err2 := time.Parse(time.DateOnly, day)
+	if err1 != nil || err2 != nil {
+		return 0, false
+	}
+	if !d.After(p) || weekdaysBetween(p, d) > MaxMissingWeekdays {
+		return 0, false
+	}
+	ch, ok := DayChange(prev, close)
+	if !ok || LooksLikeSplit(close/prev) {
+		return 0, false
+	}
+	return ch, true
 }

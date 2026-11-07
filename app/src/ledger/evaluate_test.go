@@ -110,7 +110,7 @@ func TestChangedDefinitionResetsTheCursor(t *testing.T) {
 	a1.Tickers = []string{"MSFT"}
 	old := article("old", "pub", "Microsoft old news", day(1, 0), day(1, 0).AddDate(0, 0, -5))
 	old.Tickers = []string{"MSFT"}
-	f.save(t, a1, old)
+	f.save(t, old, a1) // in the order they were fetched
 
 	if got := f.evaluate(t, "alice"); got["apple"] != 0 {
 		t.Fatalf("Evaluate = %v, want no hit for AAPL", got)

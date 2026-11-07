@@ -65,6 +65,7 @@ func Blocked(err error) bool { return mustStop(err) }
 // reads the inner text.
 type ownership struct {
 	DocumentType string `xml:"documentType"`
+	Period       string `xml:"periodOfReport"`
 	Issuer       struct {
 		CIK    string `xml:"issuerCik"`
 		Symbol string `xml:"issuerTradingSymbol"`
@@ -85,8 +86,9 @@ type ownership struct {
 	} `xml:"reportingOwner"`
 	Plan   string `xml:"aff10b5One"`
 	Trades []struct {
-		Date   inner `xml:"transactionDate"`
-		Coding struct {
+		Security inner `xml:"securityTitle"`
+		Date     inner `xml:"transactionDate"`
+		Coding   struct {
 			Code string `xml:"transactionCode"`
 		} `xml:"transactionCoding"`
 		Amounts struct {
@@ -110,8 +112,8 @@ type inner struct {
 // ParseOwnership reads the transactions in ordinary shares from a Form 4, given
 // either the XML document itself or the filing's submission text that contains
 // it. Accession, Seq and Filed are left for the caller to set. An amendment
-// (4/A) is read like the form; whether it replaces a trade already counted is
-// not known from the document.
+// (4/A) is read like the form and says so in Form; which earlier trades it
+// replaces is decided by insider.Latest from the owner and the period.
 func ParseOwnership(body []byte) ([]model.InsiderTrade, error) {
 	const start, end = "<ownershipDocument", "</ownershipDocument>"
 	if i := bytes.Index(body, []byte(start)); i >= 0 {
@@ -154,7 +156,9 @@ func ParseOwnership(body []byte) ([]model.InsiderTrade, error) {
 		after, _ := number(t.Post.Shares.Value)
 		out = append(out, model.InsiderTrade{
 			CIK: cik, Owner: owner, OwnerCIK: ownerCIK, Role: role,
-			Date: strings.TrimSpace(t.Date.Value), Code: code,
+			Security: strings.TrimSpace(t.Security.Value), Form: strings.ToUpper(strings.TrimSpace(doc.DocumentType)),
+			Period: strings.TrimSpace(doc.Period),
+			Date:   strings.TrimSpace(t.Date.Value), Code: code,
 			Acquired: strings.EqualFold(strings.TrimSpace(t.Amounts.Acquired.Value), "A"),
 			Shares:   shares, Price: price, After: after,
 			Direct: !strings.EqualFold(strings.TrimSpace(t.Nature.Direct.Value), "I"),

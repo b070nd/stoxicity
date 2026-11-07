@@ -55,8 +55,8 @@ type Config struct {
 	// Watches returns the watch store of a tenant. Required.
 	Watches func(tenantID string) watch.Store
 	// Channels are the senders by kind. The TUI needs none. An alert that names
-	// a kind that is not here is treated as delivered, with a warning in the
-	// log, so its hits do not wait for ever.
+	// a kind that is not here is blocked, with a warning in the log: its hits
+	// stay pending until the kind is configured.
 	Channels map[channel.Kind]channel.Channel
 	// Threshold is the relevance a watch uses when it sets no lens.threshold.
 	Threshold float64
@@ -159,9 +159,20 @@ func (l *Ledger) evaluate(ctx context.Context, ts store.TenantStore, allowed map
 	if err != nil {
 		return 0, fmt.Errorf("ledger: watch %q: %w", w.ID, err)
 	}
-	after := now.Add(-l.cfg.Window)
-	if found && cur.Hash == hash {
-		after = cur.Fetched
+	// Where to read from, as a change number. A new watch (or one whose
+	// definition changed) starts at the end of the window; a cursor kept as a
+	// time before the numbers existed is moved to its number once.
+	var after int64
+	switch {
+	case found && cur.Hash == hash && cur.Seq > 0:
+		after = cur.Seq
+	case found && cur.Hash == hash:
+		after, err = l.cfg.Store.ChangeSeqAt(ctx, cur.Fetched)
+	default:
+		after, err = l.cfg.Store.ChangeSeqAt(ctx, now.Add(-l.cfg.Window))
+	}
+	if err != nil {
+		return 0, fmt.Errorf("ledger: watch %q: %w", w.ID, err)
 	}
 
 	opts := watch.Options{
@@ -172,8 +183,9 @@ func (l *Ledger) evaluate(ctx context.Context, ts store.TenantStore, allowed map
 	added := 0
 	newest := after
 	wrote := false
+	fetched := cur.Fetched
 	for {
-		page, err := l.cfg.Store.FetchedAfter(ctx, newest, allowed, pageSize)
+		page, last, err := l.cfg.Store.ChangedAfter(ctx, newest, allowed, pageSize)
 		if err != nil {
 			return added, fmt.Errorf("ledger: watch %q: %w", w.ID, err)
 		}
@@ -185,8 +197,13 @@ func (l *Ledger) evaluate(ctx context.Context, ts store.TenantStore, allowed map
 			return added, fmt.Errorf("ledger: watch %q: %w", w.ID, err)
 		}
 		added += n
-		newest = page[len(page)-1].Fetched
-		if err := ts.SetCursor(ctx, w.ID, store.Cursor{Fetched: newest, Hash: hash}); err != nil {
+		newest = last
+		for _, a := range page {
+			if a.Fetched.After(fetched) {
+				fetched = a.Fetched
+			}
+		}
+		if err := ts.SetCursor(ctx, w.ID, store.Cursor{Fetched: fetched, Seq: newest, Hash: hash}); err != nil {
 			return added, fmt.Errorf("ledger: watch %q: %w", w.ID, err)
 		}
 		wrote = true
@@ -194,9 +211,9 @@ func (l *Ledger) evaluate(ctx context.Context, ts store.TenantStore, allowed map
 			break
 		}
 	}
-	if !wrote && (!found || cur.Hash != hash) {
-		// Nothing new, but the watch has a cursor now, and its new definition.
-		if err := ts.SetCursor(ctx, w.ID, store.Cursor{Fetched: newest, Hash: hash}); err != nil {
+	if !wrote && (!found || cur.Hash != hash || cur.Seq == 0) {
+		// Nothing new, but the watch has a cursor now: its number and definition.
+		if err := ts.SetCursor(ctx, w.ID, store.Cursor{Fetched: fetched, Seq: newest, Hash: hash}); err != nil {
 			return added, fmt.Errorf("ledger: watch %q: %w", w.ID, err)
 		}
 	}

@@ -9,6 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/b070nd/stoxicity/app/src/marketdata"
 	"github.com/b070nd/stoxicity/app/src/nav"
 	"github.com/b070nd/stoxicity/app/src/pages"
 )
@@ -39,15 +40,15 @@ func TestCandleBarDrawsTheDayFromLowToHigh(t *testing.T) {
 }
 
 func TestChangeAndPriceText(t *testing.T) {
-	up := Quote{Day: "2026-11-05", Close: 102, Prev: 100}
+	up := Quote{Day: "2026-11-05", Close: 102, Prev: 100, PrevDay: "2026-11-04"}
 	if s, st := changeText(up, quoteNow); s != "+2.00%" || st != Good {
 		t.Errorf("up: %q %v", s, st)
 	}
-	down := Quote{Day: "2026-11-05", Close: 98.5, Prev: 100}
+	down := Quote{Day: "2026-11-05", Close: 98.5, Prev: 100, PrevDay: "2026-11-04"}
 	if s, st := changeText(down, quoteNow); s != "-1.50%" || st != Bad {
 		t.Errorf("down: %q %v", s, st)
 	}
-	if s, st := changeText(Quote{Day: "2026-11-05", Close: 100, Prev: 100}, quoteNow); s != "+0.00%" || st != Dim {
+	if s, st := changeText(Quote{Day: "2026-11-05", Close: 100, Prev: 100, PrevDay: "2026-11-04"}, quoteNow); s != "+0.00%" || st != Dim {
 		t.Errorf("flat: %q %v", s, st)
 	}
 	if s, _ := changeText(Quote{Day: "2026-11-05", Close: 100}, quoteNow); s != "" {
@@ -89,8 +90,8 @@ func (h *harness) quotesFor(q map[string]Quote) {
 func TestCompaniesShowTypeDomainCandleCloseAndChange(t *testing.T) {
 	h := newHarness(t)
 	h.quotesFor(map[string]Quote{
-		"NVDA": {Day: "2026-11-04", Open: 100, High: 112, Low: 99, Close: 110, Prev: 100},
-		"KO":   {Day: "2026-11-04", Open: 60, High: 61, Low: 58, Close: 59, Prev: 60},
+		"NVDA": {Day: "2026-11-04", Open: 100, High: 112, Low: 99, Close: 110, Prev: 100, PrevDay: "2026-11-03"},
+		"KO":   {Day: "2026-11-04", Open: 60, High: 61, Low: 58, Close: 59, Prev: 60, PrevDay: "2026-11-03"},
 	})
 	h.m.goTo(nav.Route{Kind: nav.Companies, Arg: "group:none"})
 	h.run(h.m.loadCmd(false))
@@ -138,8 +139,8 @@ func TestCompaniesSortByChangeAndWithoutPricesNoPriceColumns(t *testing.T) {
 	}
 
 	h.quotesFor(map[string]Quote{
-		"NVDA": {Day: "2026-11-04", Open: 100, High: 112, Low: 99, Close: 110, Prev: 100},
-		"KO":   {Day: "2026-11-04", Open: 60, High: 61, Low: 58, Close: 59, Prev: 60},
+		"NVDA": {Day: "2026-11-04", Open: 100, High: 112, Low: 99, Close: 110, Prev: 100, PrevDay: "2026-11-03"},
+		"KO":   {Day: "2026-11-04", Open: 60, High: 61, Low: 58, Close: 59, Prev: 60, PrevDay: "2026-11-03"},
 	})
 	h.m.goTo(nav.Route{Kind: nav.Companies, Arg: "sort:-change group:none"})
 	h.run(h.m.loadCmd(false))
@@ -167,7 +168,7 @@ func (h *harness) numbersFor(n map[string]map[string]float64) {
 
 func TestCompaniesShowMarketCapRevenueGrowthAndMarginAndSortByThem(t *testing.T) {
 	h := newHarness(t)
-	h.quotesFor(map[string]Quote{"NVDA": {Day: "2026-11-04", Open: 100, High: 112, Low: 99, Close: 110, Prev: 100}})
+	h.quotesFor(map[string]Quote{"NVDA": {Day: "2026-11-04", Open: 100, High: 112, Low: 99, Close: 110, Prev: 100, PrevDay: "2026-11-03"}})
 	h.numbersFor(map[string]map[string]float64{
 		"marketcap": {"NVDA": 2.7e12, "KO": 2.6e11},
 		"revenue":   {"NVDA": 6.0e10, "KO": 4.6e10},
@@ -210,7 +211,7 @@ func TestMoneyAndPercentText(t *testing.T) {
 
 func TestStockPageShowsTheLastCloseAndTheDay(t *testing.T) {
 	h := newHarness(t)
-	h.quotesFor(map[string]Quote{"NVDA": {Day: "2026-11-04", Open: 100, High: 112, Low: 99, Close: 110, Prev: 100}})
+	h.quotesFor(map[string]Quote{"NVDA": {Day: "2026-11-04", Open: 100, High: 112, Low: 99, Close: 110, Prev: 100, PrevDay: "2026-11-03"}})
 	h.m.goTo(nav.Route{Kind: nav.Stock, Arg: "NVDA"})
 	h.run(h.m.loadCmd(false))
 	h.mustContain("last close", "110.00 on 2026-11-04 (+10.00%)", "low 99.00 · open 100.00 · close 110.00 · high 112.00")
@@ -274,10 +275,11 @@ func TestToneAndNewsStylesCoverTheirRange(t *testing.T) {
 }
 
 func TestChangeIsNotShownForAMoveNoSingleDayMakes(t *testing.T) {
-	if ch, ok := (Quote{Prev: 100, Close: 102}).Change(); !ok || ch < 0.0199 || ch > 0.0201 {
+	if ch, ok := (Quote{Day: "2026-11-05", PrevDay: "2026-11-04", Prev: 100, Close: 102}).Change(); !ok || ch < 0.0199 || ch > 0.0201 {
 		t.Errorf("an ordinary day: %v %v", ch, ok)
 	}
-	for _, q := range []Quote{{Prev: 1, Close: 8.1}, {Prev: 10, Close: 1}, {Prev: 0, Close: 5}, {Prev: 5, Close: 0}} {
+	d := func(p, c float64) Quote { return Quote{Day: "2026-11-05", PrevDay: "2026-11-04", Prev: p, Close: c} }
+	for _, q := range []Quote{d(1, 8.1), d(10, 1), d(0, 5), d(5, 0), {Prev: 100, Close: 102}} {
 		if ch, ok := q.Change(); ok {
 			t.Errorf("%+v shows a change of %v", q, ch)
 		}
@@ -305,5 +307,41 @@ func TestAnEightKSaysWhatItReportsInTheListAndInTheArticle(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Errorf("detail lacks %q:\n%s", want, text)
 		}
+	}
+}
+
+func TestACandleIsStaleAfterMoreThanAHolidayWithoutOne(t *testing.T) {
+	at := func(s string) time.Time { v, _ := time.Parse(time.DateOnly, s); return v.Add(10 * time.Hour) }
+	friday := Quote{Day: "2026-11-06"} // a Friday
+	for now, want := range map[string]bool{
+		"2026-11-06": false, // the day itself
+		"2026-11-09": false, // Monday: the weekend is not missing
+		"2026-11-10": false, // Tuesday: one weekday, a Monday holiday, passed
+		"2026-11-11": true,  // Wednesday: two sessions are missing
+		"2026-11-16": true,
+	} {
+		if got := friday.stale(at(now)); got != want {
+			t.Errorf("Friday candle on %s: stale = %v, want %v", now, got, want)
+		}
+	}
+	if !(Quote{Day: "garbage"}).stale(at("2026-11-09")) {
+		t.Error("a candle without a valid day is not stale")
+	}
+}
+
+func TestAMoveNoSplitExplainsIsFlaggedNotShownAsAPriceMove(t *testing.T) {
+	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+	q := Quote{Day: "2026-11-04", Close: 50, Prev: 100, PrevDay: "2026-11-03",
+		Move: marketdata.Move{State: marketdata.MoveUnresolved}}
+	if text, _ := changeText(q, now); text != "split?" || !q.Unresolved() {
+		t.Errorf("text %q", text)
+	}
+	q.Move = marketdata.Move{State: marketdata.MoveSplit, Change: 0.05}
+	if text, _ := changeText(q, now); text != "+5.00%" {
+		t.Errorf("a move reconciled with its split is shown: %q", text)
+	}
+	q.Move = marketdata.Move{State: marketdata.MoveGap}
+	if text, _ := changeText(q, now); text != "" {
+		t.Errorf("sessions missing: %q", text)
 	}
 }

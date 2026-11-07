@@ -1,6 +1,7 @@
 package edgar
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -211,6 +212,9 @@ func TestCurrentStopsAtPageLimit(t *testing.T) {
 	if len(c.reqs) != DefaultMaxPages || len(res.Articles) != 100*DefaultMaxPages {
 		t.Errorf("%d requests, %d articles", len(c.reqs), len(res.Articles))
 	}
+	if !strings.Contains(res.Partial, "older filings are not read") {
+		t.Errorf("Partial = %q: a backlog the page limit cut off must be reported", res.Partial)
+	}
 	if c.query(t, DefaultMaxPages-1, "start") != "400" {
 		t.Errorf("last start %s", c.query(t, DefaultMaxPages-1, "start"))
 	}
@@ -221,6 +225,32 @@ func TestCurrentStopsAtPageLimit(t *testing.T) {
 	if _, err := NewCurrent(c, cfg).Fetch(context.Background(), currentSrc, feeds.State{}); err != nil || len(c.reqs) != 2 {
 		t.Errorf("MaxPages 2: err %v, %d requests", err, len(c.reqs))
 	}
+}
+
+// A page of 100 entries one of which cannot be read is still a full page: the
+// read must go on to the next.
+func TestCurrentUnreadableEntryDoesNotMakeAPageShort(t *testing.T) {
+	c := &fakeClient{fn: func(req httpx.Request) (*httpx.Response, error) {
+		u, _ := url.Parse(req.URL)
+		if u.Query().Get("start") != "0" {
+			return &httpx.Response{Status: 200, Body: atomPage("8-K", []int{1})}, nil
+		}
+		page := atomPage("8-K", seq(2, 100)) // 99 readable entries
+		page = bytes.Replace(page, []byte("</feed>"), []byte("<entry><title>junk</title></entry></feed>"), 1)
+		return &httpx.Response{Status: 200, Body: page}, nil
+	}}
+	res, err := NewCurrent(c, testConfig()).Fetch(context.Background(), currentSrc, feeds.State{})
+	if err != nil || len(c.reqs) != 2 || len(res.Articles) != 100 {
+		t.Errorf("err %v, %d requests, %d articles; want the second page read", err, len(c.reqs), len(res.Articles))
+	}
+}
+
+func seq(from, to int) []int {
+	var out []int
+	for i := from; i <= to; i++ {
+		out = append(out, i)
+	}
+	return out
 }
 
 func TestCurrentShortPageEndsRead(t *testing.T) {
@@ -352,6 +382,9 @@ func TestCurrentErrorHandling(t *testing.T) {
 		res, err := NewCurrent(twoForms(boom), testConfig()).Fetch(context.Background(), src, feeds.State{})
 		if err != nil || len(res.Articles) != 1 {
 			t.Errorf("err %v, %d articles", err, len(res.Articles))
+		}
+		if !strings.Contains(res.Partial, "10-K") {
+			t.Errorf("Partial = %q: the failed form must be reported", res.Partial)
 		}
 	})
 	t.Run("throttle is not hidden", func(t *testing.T) {

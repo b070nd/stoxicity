@@ -16,8 +16,8 @@ Five sources, each optional, joined by ticker:
 | Nasdaq Trader `nasdaqlisted.txt`, `otherlisted.txt` | ETF or stock, test symbol, market tier, financial status, the listing venue | the same command, when `company.listing` is on |
 | SEC `submissions/CIK##########.json` | industry (SIC code and words), the exchange its stock trades on (the only one for most over-the-counter companies), business address and phone, EIN and LEI, state of incorporation, fiscal year end, filer category, former names | `stoxicity universe enrich` |
 | Wikidata (open data, CC0), through its query service | the official website of the ticker's company, matched on the company's name so that a ticker another company uses elsewhere lends nothing (the SEC leaves its own website field empty) | `stoxicity universe enrich` (`company.sites_url` replaces the address) |
-| SEC XBRL frames `data.sec.gov/api/xbrl/frames/...` | revenue and net income of the latest fiscal years, assets and equity at a date, shares on the cover page (market value = shares times the last close); no key | `stoxicity universe fundamentals` (and the background refresh, weekly) |
-| SEC Form 4 filings (the complete submission text of each, `Archives/edgar/data/<cik>/<accession>.txt`) | who in a company bought or sold its shares on the open market, how many, at what price, and what they are to the company; no key | `stoxicity universe insiders` (and the background refresh, 300 filings a cycle) |
+| SEC XBRL frames `data.sec.gov/api/xbrl/frames/...` | revenue and net income of the latest fiscal years, assets and equity at a date, shares on the cover page (market value = shares times the last close); no key | `stoxicity universe fundamentals` (and the background refresh, weekly); every reading is also kept as history (`fundamental_fact`), and `universe fundamentals history TICKER [-at TIME]` reads one company's whole history from the SEC and shows its figures as known at a time |
+| SEC Form 4 filings (the complete submission text of each, `Archives/edgar/data/<cik>/<accession>.txt`) | who in a company bought or sold its common stock (code P or S: open market or private), how many, at what price, and what they are to the company; no key | `stoxicity universe insiders` (and the background refresh, 300 filings a cycle) |
 | your layer, `tenants/<tenant>/stocks.yaml` | lists, tags, and companies the SEC lacks (non-US listings) | you, or `universe tag` / `universe list` / the interface |
 
 The first three are cached under `data/company/`. The interface never fetches;
@@ -202,7 +202,7 @@ growth:>5%  margin:>10%  revenue growth over the year before; net income over
 roe:>15  equity_ratio:>20 revenue; net income over equity; equity over assets
                          (a ratio takes a percentage, with or without the %)
 buys:>=100k  sells:>1m   money the insiders (officers, directors, 10% owners)
-                         spent on open market purchases, or took in on sales,
+                         spent on purchases, or took in on sales,
                          in the last 90 days (Form 4 codes P and S; awards, tax
                          withholding, exercises and gifts are not counted)
 buyers:>=2  sellers:>=3  how many different insiders did; a stock none of whose
@@ -280,3 +280,22 @@ the TUI. `Universe.Exchanges` counts the companies of each (the biggest first),
 `Universe.ScopeNews` narrows articles to the news of one exchange (see
 [tui.md](tui.md#exchanges)). `exchange:nyse` in a query matches the whole name, so
 it does not take in NYSE Arca; write `exchange:nyse*` for both.
+
+
+## Splits and the basis of prices
+
+Candles are fetched raw (as traded that day) and marked so. Polygon's list of
+splits is read once a day (`split`, with the span it covers in `split_run`).
+A move between two closes is `marketdata.Compare`d with the splits between
+them: a split is applied to the earlier close and the move is shown on one
+basis, however large it is. When a candle's basis is unknown (candles stored
+before this change) next to a later split, or a move looks like a split that
+the known splits do not cover, the lists show `split?` instead of a number.
+Nothing is hidden because of its size.
+
+## Share classes
+
+`stoxicity universe fundamentals classes TICKER` reads the cover page (inline
+XBRL) of the company's latest 10-K or 10-Q, stores the shares outstanding per
+class and prints each class's value at its own symbol's price. The issuer's
+value is printed only when every class has a price.

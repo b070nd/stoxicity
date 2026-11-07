@@ -532,3 +532,44 @@ func TestAQuarterlyReportIsRoutineAndAnAnnualReportIsNot(t *testing.T) {
 		t.Error("an annual report counts, a quarterly one does not")
 	}
 }
+
+func TestAThreatToTheCompanyOutranksADividendInTheSameStory(t *testing.T) {
+	l := New(config.Lens{}, Options{})
+	for title, want := range map[string]model.EventKind{
+		"Acme files for bankruptcy, suspends dividend":            model.EventBankruptcy,
+		"Acme declares dividend after restating its 2024 results": model.EventNonReliance,
+		"Acme buyback paused as it restates earnings":             model.EventNonReliance,
+	} {
+		if got := l.Score(model.Article{Title: title}).Kind; got != want {
+			t.Errorf("%q: kind = %s, want %s", title, got, want)
+		}
+	}
+}
+
+func TestADeniedThreatIsNotTheEvent(t *testing.T) {
+	l := New(config.Lens{}, Options{})
+	for title, want := range map[string]model.EventKind{
+		"Acme denies bankruptcy rumours":                    model.EventOther,
+		"Acme says it faces no bankruptcy risk":             model.EventOther,
+		"Acme: not delisted, no delisting notice received":  model.EventOther,
+		"Acme declares dividend; no restatement is planned": model.EventDividend,
+		"Acme files for bankruptcy. No dividend this year":  model.EventBankruptcy,
+	} {
+		if got := l.Score(model.Article{Title: title}).Kind; got != want {
+			t.Errorf("%q: kind = %s, want %s", title, got, want)
+		}
+	}
+}
+
+func TestADeniedGoingConcernDoubtAddsNoMagnitude(t *testing.T) {
+	l := New(config.Lens{}, Options{})
+	plain := l.Score(model.Article{Title: "Acme raises dividend"})
+	denied := l.Score(model.Article{Title: "Acme raises dividend, no going concern doubt"})
+	if denied.Materiality != plain.Materiality {
+		t.Errorf("materiality %d with a denied going concern doubt, %d without", denied.Materiality, plain.Materiality)
+	}
+	real := l.Score(model.Article{Title: "Acme raises dividend, going concern doubt"})
+	if real.Materiality <= plain.Materiality {
+		t.Errorf("a real going concern doubt adds no materiality: %d vs %d", real.Materiality, plain.Materiality)
+	}
+}

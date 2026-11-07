@@ -78,6 +78,10 @@ type Model struct {
 	// latest is the newest news of each stock opened (any age), by ticker; the
 	// stock page lists it. latestOK says it was asked for.
 	latest map[string][]model.Article
+	// latestAsked is the generation of the newest request for each ticker's news:
+	// a slower, older answer must not replace a newer one.
+	latestAsked map[string]int
+	latestGen   int
 	// marks are the tickers marked with space.
 	marks map[string]bool
 	// diffNext: the next rebuild follows a reload, so the rows that are new or
@@ -154,6 +158,7 @@ type (
 	latestMsg struct {
 		ticker string
 		watch  string
+		gen    int
 		arts   []model.Article
 		err    error
 	}
@@ -173,7 +178,7 @@ func New(ctx context.Context, opts Options) *Model {
 		be: be, opts: opts, ctx: ctx, stack: nav.New(),
 		width: 100, height: 30, cursors: map[string]int{},
 		sorts: map[nav.Kind]Sort{}, marks: map[string]bool{}, fresh: map[string]time.Time{},
-		verdicts: map[string]labels.Verdict{}, latest: map[string][]model.Article{},
+		verdicts: map[string]labels.Verdict{}, latest: map[string][]model.Article{}, latestAsked: map[string]int{},
 	}
 	watch := opts.Watch
 	if watch == "" {
@@ -253,11 +258,14 @@ func (m *Model) latestCmd() tea.Cmd {
 	if len(terms) > 1 {
 		query = "(" + strings.Join(terms, " OR ") + ")"
 	}
+	m.latestGen++
+	gen := m.latestGen
+	m.latestAsked[ticker] = gen
 	return func() tea.Msg {
 		c, cancel := context.WithTimeout(ctx, loadTimeout)
 		defer cancel()
 		arts, err := be.Search(c, watch, query, time.Time{}, time.Time{}, latestLimit)
-		return latestMsg{ticker: ticker, watch: watch, arts: arts, err: err}
+		return latestMsg{ticker: ticker, watch: watch, gen: gen, arts: arts, err: err}
 	}
 }
 

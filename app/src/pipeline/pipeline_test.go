@@ -119,14 +119,17 @@ func TestIngestDomainFallsBackToSource(t *testing.T) {
 	}
 }
 
-func TestIngestStampsFetchedWithTheIngestTime(t *testing.T) {
+func TestEachCommitGetsAFetchTimeAfterTheEarlierOnes(t *testing.T) {
 	f := newFixture(t)
 	a := article("a1", "First quarterly report published today", testNow)
-	a.Fetched = testNow.Add(-time.Hour)
+	a.Fetched = testNow.Add(-time.Hour) // the start of a slow poll
+	b := article("b1", "Second annual report published today", testNow)
 
+	f.ingest(t, pubSource, b)
 	f.ingest(t, pubSource, a)
-	if got := f.get(t, "a1").Fetched; !got.Equal(testNow) {
-		t.Errorf("Fetched = %v, want the ingest time %v", got, testNow)
+	got, later := f.get(t, "a1").Fetched, f.get(t, "b1").Fetched
+	if !got.After(later) {
+		t.Errorf("a1 fetched %v, b1 %v: the later commit must have the later fetch time, whatever the poll started", got, later)
 	}
 }
 

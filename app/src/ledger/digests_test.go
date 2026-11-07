@@ -236,9 +236,12 @@ func TestDigestTUIAndUnconfiguredChannels(t *testing.T) {
 	if n := strings.Count(f.logs.String(), "no channel configured"); n != 1 {
 		t.Errorf("%d warnings, want 1 for email:\n%s", n, f.logs.String())
 	}
-	for _, id := range []string{"tui", "mail", "mail2"} {
-		if sent, _ := f.db.Tenant("alice").DigestSent(context.Background(), id, "2026-11-03"); !sent {
-			t.Errorf("digest of %s is not recorded as handled", id)
+	if sent, _ := f.db.Tenant("alice").DigestSent(context.Background(), "tui", "2026-11-03"); !sent {
+		t.Error("the TUI digest is not recorded as handled")
+	}
+	for _, id := range []string{"mail", "mail2"} {
+		if sent, _ := f.db.Tenant("alice").DigestSent(context.Background(), id, "2026-11-03"); sent {
+			t.Errorf("digest of %s is recorded as sent though no email channel exists", id)
 		}
 	}
 }

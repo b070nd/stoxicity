@@ -102,6 +102,17 @@ func TestSECPoolReadsDueFeedsAndSchedulesThemAgain(t *testing.T) {
 	if res.Articles[0].SourceID != "stock-feeds-sec" {
 		t.Errorf("source id %q: articles belong to the pool", res.Articles[0].SourceID)
 	}
+	// Until the articles are stored the feed has not moved: a crash now would
+	// otherwise leave its items marked as seen and never stored.
+	if before := st.get(store.FeedSEC, "ACME", url); before.State.ETag != "" || !before.LastOK.IsZero() {
+		t.Errorf("feed saved before its articles were stored: %+v", before)
+	}
+	if res.Commit == nil {
+		t.Fatal("no Commit to run after the articles are stored")
+	}
+	if err := res.Commit(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	f := st.get(store.FeedSEC, "ACME", url)
 	if !f.LastOK.Equal(clock) || f.LastNew != 1 || f.Failures != 0 {
 		t.Errorf("feed after a good read: %+v", f)

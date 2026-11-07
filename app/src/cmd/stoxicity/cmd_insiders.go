@@ -14,7 +14,7 @@ import (
 )
 
 // universeInsiders reads the Form 4 filings the feed found and keeps their
-// trades, then prints what the insiders did on the open market. With a ticker
+// trades, then prints what the insiders purchased and sold. With a ticker
 // it lists that company's trades instead (no filing is read).
 func (a *app) universeInsiders(ctx context.Context, args []string) error {
 	fs := newFlags("universe insiders")
@@ -94,7 +94,7 @@ func (a *app) universeInsiders(ctx context.Context, args []string) error {
 		}
 	}
 	slices.SortFunc(rows, func(x, y row) int { return cmp.Compare(y.Buys, x.Buys) })
-	fmt.Fprintf(a.stdout, "open market purchases in the last %d days: %d companies\n", insider.FigureDays, len(rows))
+	fmt.Fprintf(a.stdout, "purchases of common stock in the last %d days: %d companies\n", insider.FigureDays, len(rows))
 	fmt.Fprintln(tw, "TICKER\tBUYS\tBUYERS\tLAST BUY\tSELLS\tSELLERS")
 	for i, r := range rows {
 		if i == 20 {

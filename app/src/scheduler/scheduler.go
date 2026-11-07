@@ -58,7 +58,10 @@ type Health struct {
 type Event struct {
 	SourceID string
 	New      int // articles stored for the first time
-	Err      error
+	// Partial says the poll succeeded but did not read all of the source (see
+	// feeds.Result.Partial).
+	Partial string
+	Err     error
 }
 
 // Scheduler runs until its context ends.

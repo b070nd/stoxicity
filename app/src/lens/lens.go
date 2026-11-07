@@ -268,11 +268,18 @@ type kindRule struct {
 }
 
 // match returns the text the first pattern matched, or "" if some pattern
-// does not match.
+// does not match. For a kind in deniable a match the text denies is skipped.
 func (r kindRule) match(text string) string {
 	first := ""
 	for i, re := range r.all {
-		m := re.FindString(text)
+		m := ""
+		for _, loc := range re.FindAllStringIndex(text, -1) {
+			if deniable[r.kind] && negated(text, loc[0]) {
+				continue
+			}
+			m = text[loc[0]:loc[1]]
+			break
+		}
 		if m == "" {
 			return ""
 		}
@@ -281,6 +288,30 @@ func (r kindRule) match(text string) string {
 		}
 	}
 	return first
+}
+
+// deniable lists the kinds whose keyword a text may deny: "no going concern
+// doubt", "denies a restatement", "not bankrupt". The other kinds are about
+// something that happened or was said, and "no dividend" is still news about
+// the dividend.
+var deniable = map[model.EventKind]bool{
+	model.EventBankruptcy:  true,
+	model.EventNonReliance: true,
+	model.EventCyber:       true,
+	model.EventDelisting:   true,
+}
+
+// denial matches the words that deny what follows within the next few words.
+var denial = regexp.MustCompile(`\b(?:no|not|never|without|neither|nor|denies|denied|deny|denying|rules? out|ruled out|avoids?|avoided|averts?|averted|unlikely|dismiss\w*)\b(?:\s+[\w'-]+){0,3}\s*$`)
+
+// negated says the match that starts at index start is denied by the few words
+// before it, in the same sentence.
+func negated(text string, start int) bool {
+	before := text[:start]
+	if i := strings.LastIndexAny(before, ".;:!?\n"); i >= 0 {
+		before = before[i+1:]
+	}
+	return denial.MatchString(before)
 }
 
 func rule(kind model.EventKind, patterns ...string) kindRule {
@@ -292,18 +323,22 @@ func rule(kind model.EventKind, patterns ...string) kindRule {
 }
 
 // kindRules is the ordered keyword table; the first rule that matches wins.
+// The events that threaten the company (bankruptcy, a restatement) stand first,
+// so that a dividend or a buyback mentioned in the same story does not hide
+// them. A keyword of one of those kinds that the text denies ("denies any
+// restatement", "no bankruptcy") does not count; see negated.
 // Text is lower-cased before matching. Specific corporate events come first,
 // then analyst notes (so "price target ahead of earnings" is an analyst note,
 // not results), then reporting and people, and price chatter last because
 // almost any story can mention a share price move.
 var kindRules = []kindRule{
-	rule(model.EventBuyback, `\bbuy[- ]?backs?\b`),
-	rule(model.EventBuyback, `\brepurchas(?:e|es|ed|ing)\b`),
-	rule(model.EventDividend, `\bdividends?\b`),
 	rule(model.EventBankruptcy, `\bchapter 11\b`),
 	rule(model.EventBankruptcy, `\bbankrupt(?:cy|cies)?\b`),
 	rule(model.EventNonReliance, `\brestat(?:e|es|ed|ing|ement|ements)\b`),
 	rule(model.EventNonReliance, `\bnon-?reliance\b`),
+	rule(model.EventBuyback, `\bbuy[- ]?backs?\b`),
+	rule(model.EventBuyback, `\brepurchas(?:e|es|ed|ing)\b`),
+	rule(model.EventDividend, `\bdividends?\b`),
 	rule(model.EventCyber, `\bcyber\w*`, `\b(?:incidents?|attacks?|breach\w*|ransomware)\b`),
 	rule(model.EventDelisting, `\bdelist(?:s|ed|ing|ings)?\b`),
 	rule(model.EventSpinoff, `\bspin[- ]?offs?\b`),
@@ -386,7 +421,15 @@ var phraseAliases = map[string][]string{
 // firstMagnitude returns the first magnitude phrase in text, or "". A record
 // date is a dividend term, not a record result, and is ignored.
 func firstMagnitude(text string) string {
-	return firstMatch(magnitudeRules, strings.ReplaceAll(text, "record date", " "))
+	text = strings.ReplaceAll(text, "record date", " ")
+	for _, re := range magnitudeRules {
+		for _, loc := range re.FindAllStringIndex(text, -1) {
+			if !negated(text, loc[0]) {
+				return text[loc[0]:loc[1]]
+			}
+		}
+	}
+	return ""
 }
 
 func firstMatch(res []*regexp.Regexp, text string) string {
@@ -487,6 +530,7 @@ func encodeRules() string {
 		}
 		b.WriteByte('\n')
 	}
+	fmt.Fprintf(&b, "denial %q %v\n", denial.String(), deniableKinds())
 	fmt.Fprintf(&b, "form %q %q %q %q\n", formsRule, formBuy.String(), formSell.String(), form13DG.String())
 	for _, re := range magnitudeRules {
 		fmt.Fprintf(&b, "magnitude %q\n", re.String())
@@ -517,4 +561,14 @@ func encodeRules() string {
 func digest(boost, demote []string) string {
 	sum := sha256.Sum256([]byte(fmt.Sprintf("%sboost %q\ndemote %q\n", rulesEncoding, boost, demote)))
 	return hex.EncodeToString(sum[:])[:8]
+}
+
+// deniableKinds lists the deniable kinds, sorted, for the rule encoding.
+func deniableKinds() []string {
+	var out []string
+	for k := range deniable {
+		out = append(out, string(k))
+	}
+	sort.Strings(out)
+	return out
 }

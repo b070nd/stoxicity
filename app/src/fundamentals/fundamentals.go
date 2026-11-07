@@ -43,6 +43,11 @@ type Fact struct {
 	Metric     string
 	Start, End string // YYYY-MM-DD
 	Value      float64
+
+	// Where the figure comes from. Accession is the filing (with dashes); Filed
+	// is the day it was filed, empty when the source does not say (the frames).
+	// Dimensions is empty for the consolidated figure.
+	Accession, Taxonomy, Concept, Unit, Form, Filed, Dimensions string
 }
 
 // source is a concept in a taxonomy, in the order of preference for its metric.
@@ -70,7 +75,9 @@ type Fetcher struct {
 	Client httpx.Client
 	// URL replaces the SEC's address (it ends with a slash); tests point it at a server.
 	URL string
-	Now func() time.Time
+	// HistoryURL replaces CompanyFactsURL.
+	HistoryURL string
+	Now        func() time.Time
 }
 
 func (f Fetcher) now() time.Time {
@@ -180,6 +187,7 @@ func parseFrame(body []byte, s source) ([]Fact, error) {
 			Start string  `json:"start"`
 			End   string  `json:"end"`
 			Val   float64 `json:"val"`
+			Accn  string  `json:"accn"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &ans); err != nil {
@@ -190,7 +198,8 @@ func parseFrame(body []byte, s source) ([]Fact, error) {
 		if d.CIK <= 0 || d.End == "" || math.IsNaN(d.Val) || math.IsInf(d.Val, 0) {
 			continue
 		}
-		x := Fact{CIK: fmt.Sprintf("%010d", d.CIK), Metric: s.metric, End: d.End, Value: d.Val}
+		x := Fact{CIK: fmt.Sprintf("%010d", d.CIK), Metric: s.metric, End: d.End, Value: d.Val,
+			Accession: d.Accn, Taxonomy: s.taxonomy, Concept: s.concept, Unit: s.unit}
 		if !s.instant {
 			days, ok := daysBetween(d.Start, d.End)
 			if !ok || days < 350 || days > 380 {
@@ -262,31 +271,48 @@ func summarize(fs []Fact) (Summary, bool) {
 	var s Summary
 
 	rev, inc := of(Revenue), of(NetIncome)
-	if len(rev) > 0 {
-		num[Revenue] = rev[0].Value
-		s.End = rev[0].End
-		for _, p := range rev[1:] {
-			if d, ok := daysBetween(p.End, rev[0].End); ok && d >= 340 && d <= 390 {
+	// Revenue and income are shown as one fiscal year, so they must be of the
+	// same year: the newest year-end both are reported for. If there is none
+	// in common, the newer of the two is kept and the other left out, rather
+	// than show the revenue of one year beside the profit of another.
+	var r, i *Fact
+	for k := range rev {
+		for l := range inc {
+			if rev[k].End == inc[l].End {
+				r, i = &rev[k], &inc[l]
+				break
+			}
+		}
+		if r != nil {
+			break
+		}
+	}
+	switch {
+	case r == nil && len(rev) > 0 && (len(inc) == 0 || rev[0].End >= inc[0].End):
+		r = &rev[0]
+	case r == nil && len(inc) > 0:
+		i = &inc[0]
+	}
+	if r != nil {
+		num[Revenue] = r.Value
+		s.End = r.End
+		for _, p := range rev {
+			if d, ok := daysBetween(p.End, r.End); ok && d >= 340 && d <= 390 {
 				if p.Value > 0 {
-					num["growth"] = rev[0].Value/p.Value - 1
+					num["growth"] = r.Value/p.Value - 1
 				}
 				break
 			}
 		}
 	}
-	if len(inc) > 0 {
-		num[NetIncome] = inc[0].Value
-		if s.End == "" || inc[0].End > s.End {
-			s.End = inc[0].End
-		}
-		if len(rev) > 0 && rev[0].End == inc[0].End && rev[0].Value > 0 {
-			num["margin"] = inc[0].Value / rev[0].Value
+	if i != nil {
+		num[NetIncome] = i.Value
+		s.End = i.End
+		if r != nil && r.Value > 0 {
+			num["margin"] = i.Value / r.Value
 		}
 	}
 	target := s.End
-	if len(inc) > 0 {
-		target = inc[0].End
-	}
 	near := func(metric string) (Fact, bool) {
 		best, ok := Fact{}, false
 		var bestGap = 46
@@ -316,10 +342,14 @@ func summarize(fs []Fact) (Summary, bool) {
 			num["equity_ratio"] = e.Value / a
 		}
 	}
+	// Market value needs the shares outstanding on the cover page. The average
+	// over the year is a different quantity (a company that bought back half its
+	// shares has far fewer than the average), so it is kept apart and never
+	// stands in for the count.
 	if sh := of(Shares); len(sh) > 0 && sh[0].Value > 0 {
 		num[Shares] = sh[0].Value
 	} else if av := of(AvgShares); len(av) > 0 && av[0].Value > 0 {
-		num[Shares] = av[0].Value
+		num[AvgShares] = av[0].Value
 	}
 	if len(num) == 0 {
 		return Summary{}, false

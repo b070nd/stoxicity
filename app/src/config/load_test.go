@@ -75,19 +75,16 @@ func TestLoadRepositoryConfig(t *testing.T) {
 	}
 	want := Laya{
 		Enabled: true, URL: "http://127.0.0.1:8000", MinConfidence: 0.7, Timeout: "60s",
-		Apply: []string{"kind", "topics", "tone"}, RelevanceWeight: 0.3, BatchSize: 16,
+		Apply: []string{}, RelevanceWeight: 0.3, BatchSize: 16,
 		Manage: true, Command: "laya-serve", StartTimeout: "3m",
 		Device: "cpu", Offline: true,
 	}
 	if !reflect.DeepEqual(cfg.Laya, want) {
 		t.Errorf("Laya = %+v, want %+v", cfg.Laya, want)
 	}
-	for _, f := range []string{"kind", "topics", "tone"} {
-		if !cfg.Laya.Applies(f) {
-			t.Errorf("Laya.Applies(%q) = false", f)
-		}
-	}
-	for _, f := range []string{"sector", "materiality", "relevance"} {
+	// The checked-in file applies nothing: a model reading untrusted text may not
+	// change a score before the user's own labels show it helps.
+	for _, f := range LayaFields {
 		if cfg.Laya.Applies(f) {
 			t.Errorf("Laya.Applies(%q) = true, want advisory only", f)
 		}

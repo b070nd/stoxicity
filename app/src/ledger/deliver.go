@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -33,6 +34,10 @@ type Delivery struct {
 	// Failed is the number whose sending failed. They stay pending and are
 	// tried again by the next call.
 	Failed int
+	// Blocked is the number that name a channel kind that is not configured.
+	// They stay pending, and the channels that are configured are not sent the
+	// same notification again; configuring the kind sends the rest.
+	Blocked int
 }
 
 // group is the pending alerts of one watch and alert name.
@@ -45,17 +50,17 @@ type group struct {
 // Deliver sends the alerts of the tenant's hits that were not delivered yet.
 // For each watch and alert it builds one Notification that holds all the
 // articles pending for it, titled "<watch name>: <alert name> (N)", and sends
-// it to every channel the alert names that is configured. A notification is
-// recorded as delivered, and so never sent again, only when every send
-// succeeded.
+// it to every channel the alert names. What each channel took is recorded, so a
+// retry sends only to the channels that have not: a notification is recorded as
+// delivered, and so never sent again, only when every channel it names has it.
 //
 // The alert's policy decides when: inside its quiet hours (in the Ledger's
 // zone) or within its cooldown of the previous delivery of the same alert the
 // notification is deferred, not dropped; the articles stay pending and go out
 // in the next call that is allowed. The tui channel needs nothing sent. A kind
-// with no configured channel is logged once per call and counted as delivered,
-// so hits do not pile up for ever; an alert with nothing to send is not held by
-// its policy. A pending alert whose watch or alert no longer exists stays
+// with no configured channel is logged once per call and counted in
+// Delivery.Blocked; the alert stays pending, so configuring the kind later sends
+// what was missed (to that kind only, if the others have it). A pending alert whose watch or alert no longer exists stays
 // pending, and one whose article the tenant may not see, or that is gone, is
 // recorded as delivered without being sent.
 //
@@ -121,27 +126,69 @@ func (l *Ledger) Deliver(ctx context.Context, tenantID string) (Delivery, error)
 			continue
 		}
 
-		senders := l.route(alert.Channels, warned, fmt.Sprintf("watch %q alert %q", w.ID, alert.Name))
-		if len(senders) == 0 {
+		required := requiredKinds(alert.Channels)
+		if len(required) == 0 { // the TUI shows its hits itself: nothing to send
 			if err := ts.MarkDelivered(ctx, items, now); err != nil {
 				errs = append(errs, fmt.Errorf("ledger: %w", err))
 			}
 			continue
 		}
-		deferred, err := l.held(ctx, ts, w, alert, now)
+		senders, missing := l.route(required, warned, fmt.Sprintf("watch %q alert %q", w.ID, alert.Name))
+		if len(senders) > 0 {
+			deferred, err := l.held(ctx, ts, w, alert, now)
+			if err != nil {
+				errs = append(errs, err)
+				continue
+			}
+			if deferred {
+				d.Deferred++
+				continue
+			}
+		}
+		done, err := ts.DeliveredChannels(ctx, w.ID, alert.Name)
 		if err != nil {
-			errs = append(errs, err)
+			errs = append(errs, fmt.Errorf("ledger: %w", err))
 			continue
 		}
-		if deferred {
-			d.Deferred++
-			continue
+		failed := false
+		for _, ch := range senders {
+			kind := string(ch.Kind())
+			var todo []store.PendingAlert
+			var todoArticles []model.Article
+			for i, it := range items {
+				if !done[it.ArticleID][kind] {
+					todo = append(todo, it)
+					todoArticles = append(todoArticles, articles[i])
+				}
+			}
+			if len(todo) == 0 {
+				continue
+			}
+			n := alertNotification(tenantID, w, alert, todo, todoArticles)
+			if err := ch.Send(ctx, n); err != nil {
+				failed = true
+				errs = append(errs, fmt.Errorf("ledger: watch %q alert %q: send to %s: %w", w.ID, alert.Name, ch.Kind(), err))
+				continue
+			}
+			if err := ts.MarkSentTo(ctx, todo, kind, now); err != nil {
+				failed = true
+				errs = append(errs, fmt.Errorf("ledger: %w", err))
+				continue
+			}
+			for _, it := range todo {
+				if done[it.ArticleID] == nil {
+					done[it.ArticleID] = map[string]bool{}
+				}
+				done[it.ArticleID][kind] = true
+			}
 		}
-
-		n := alertNotification(tenantID, w, alert, items, articles)
-		if err := send(ctx, senders, n); err != nil {
+		switch {
+		case failed:
 			d.Failed++
-			errs = append(errs, fmt.Errorf("ledger: watch %q alert %q: %w", w.ID, alert.Name, err))
+		case len(missing) > 0:
+			d.Blocked++
+		}
+		if failed || len(missing) > 0 {
 			continue
 		}
 		if err := ts.MarkDelivered(ctx, items, now); err != nil {
@@ -151,6 +198,18 @@ func (l *Ledger) Deliver(ctx context.Context, tenantID string) (Delivery, error)
 		d.Sent++
 	}
 	return d, errors.Join(errs...)
+}
+
+// requiredKinds are the channel kinds an alert or digest names that need a
+// sender: each once, without the TUI.
+func requiredKinds(kinds []channel.Kind) []channel.Kind {
+	var out []channel.Kind
+	for _, k := range kinds {
+		if k != channel.TUI && !slices.Contains(out, k) {
+			out = append(out, k)
+		}
+	}
+	return out
 }
 
 // groups collects the pending alerts by watch and alert name, in the order of
@@ -198,39 +257,23 @@ func (l *Ledger) held(ctx context.Context, ts store.TenantStore, w watch.Watch, 
 	return ok && now.Sub(last) < p.Cooldown, nil
 }
 
-// route returns the channels to send to for the kinds an alert or digest names.
-// The TUI needs no sender. A kind that has no configured channel is logged, once
-// per call (warned remembers which), and skipped.
-func (l *Ledger) route(kinds []channel.Kind, warned map[channel.Kind]bool, what string) []channel.Channel {
-	var out []channel.Channel
-	seen := map[channel.Kind]bool{}
+// route returns the channels to send to for the kinds, and the kinds that have
+// no configured channel. A missing kind is logged, once per call (warned
+// remembers which); what is meant for it stays pending.
+func (l *Ledger) route(kinds []channel.Kind, warned map[channel.Kind]bool, what string) (senders []channel.Channel, missing []channel.Kind) {
 	for _, k := range kinds {
-		if k == channel.TUI || seen[k] {
-			continue
-		}
-		seen[k] = true
 		ch := l.cfg.Channels[k]
 		if ch == nil {
+			missing = append(missing, k)
 			if !warned[k] {
 				warned[k] = true
-				l.cfg.Logger.Warn("ledger: no channel configured, treated as delivered", "channel", string(k), "first_for", what)
+				l.cfg.Logger.Warn("ledger: no channel configured, the alert stays pending until it is", "channel", string(k), "first_for", what)
 			}
 			continue
 		}
-		out = append(out, ch)
+		senders = append(senders, ch)
 	}
-	return out
-}
-
-// send sends n to every channel and returns the errors of those that failed.
-func send(ctx context.Context, senders []channel.Channel, n channel.Notification) error {
-	var errs []error
-	for _, ch := range senders {
-		if err := ch.Send(ctx, n); err != nil {
-			errs = append(errs, fmt.Errorf("send to %s: %w", ch.Kind(), err))
-		}
-	}
-	return errors.Join(errs...)
+	return senders, missing
 }
 
 // alertNotification builds the one notification for the pending alerts of a
@@ -311,20 +354,48 @@ func (l *Ledger) Digests(ctx context.Context, tenantID string) (int, error) {
 			continue
 		}
 
-		senders := l.route(w.Digest.Channels, warned, fmt.Sprintf("watch %q digest", w.ID))
-		if len(senders) == 0 {
+		required := requiredKinds(w.Digest.Channels)
+		if len(required) == 0 {
 			if err := ts.MarkDigestSent(ctx, w.ID, key, now); err != nil {
 				errs = append(errs, fmt.Errorf("ledger: %w", err))
 			}
 			continue
 		}
-		n, err := l.digestNotification(ctx, tenantID, w, key, scheduled, now, span)
+		senders, missing := l.route(required, warned, fmt.Sprintf("watch %q digest", w.ID))
+		part := store.PendingAlert{WatchID: w.ID, ArticleID: "digest:" + key, Alert: digestAlert}
+		sentTo, err := ts.DeliveredChannels(ctx, w.ID, digestAlert)
 		if err != nil {
-			errs = append(errs, err)
+			errs = append(errs, fmt.Errorf("ledger: %w", err))
 			continue
 		}
-		if err := send(ctx, senders, n); err != nil {
-			errs = append(errs, fmt.Errorf("ledger: watch %q digest %s: %w", w.ID, key, err))
+		var n channel.Notification
+		built := false
+		failed := false
+		for _, ch := range senders {
+			kind := string(ch.Kind())
+			if sentTo[part.ArticleID][kind] {
+				continue
+			}
+			if !built {
+				n, err = l.digestNotification(ctx, tenantID, w, key, scheduled, now, span)
+				if err != nil {
+					errs = append(errs, err)
+					failed = true
+					break
+				}
+				built = true
+			}
+			if err := ch.Send(ctx, n); err != nil {
+				failed = true
+				errs = append(errs, fmt.Errorf("ledger: watch %q digest %s: send to %s: %w", w.ID, key, ch.Kind(), err))
+				continue
+			}
+			if err := ts.MarkSentTo(ctx, []store.PendingAlert{part}, kind, now); err != nil {
+				failed = true
+				errs = append(errs, fmt.Errorf("ledger: %w", err))
+			}
+		}
+		if failed || len(missing) > 0 {
 			continue
 		}
 		if err := ts.MarkDigestSent(ctx, w.ID, key, now); err != nil {

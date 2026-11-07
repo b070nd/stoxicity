@@ -180,3 +180,41 @@ func TestSummarizeEmpty(t *testing.T) {
 		t.Fatalf("Summarize(nil) = %q, want none", texts(got.Lines))
 	}
 }
+
+func TestACorrectionIsNotDroppedAsARepeatOfTheClaimItCorrects(t *testing.T) {
+	arts := []model.Article{
+		article("a", "c1", 0, 5, "Acme will acquire Beta for cash this year."),
+		article("b", "c1", 1, 3, "Acme will not acquire Beta for cash this year."),
+		article("c", "c2", 0, 2, "Acme will pay 4 billion dollars for Beta this year."),
+		article("d", "c3", 1, 1, "Acme will pay 5 billion dollars for Beta this year."),
+	}
+	got := texts(Summarize(arts, 10).Lines)
+	for _, want := range []string{"Acme will acquire Beta for cash this year.", "Acme will not acquire Beta for cash this year."} {
+		if !contains(got, want) {
+			t.Errorf("%q missing from %q", want, got)
+		}
+	}
+	if !contains(got, "Acme will pay 4 billion dollars for Beta this year.") || !contains(got, "Acme will pay 5 billion dollars for Beta this year.") {
+		t.Errorf("a changed number was treated as a repeat: %q", got)
+	}
+}
+
+func TestARepeatThatClaimsTheSameStillGoes(t *testing.T) {
+	arts := []model.Article{
+		article("a", "c1", 0, 5, "Acme will acquire Beta for cash this year."),
+		article("b", "c1", 1, 3, "Acme will acquire Beta for cash this year!"),
+		article("c", "", 1, 3, "Acme to acquire Beta for cash this year."),
+	}
+	if got := texts(Summarize(arts, 10).Lines); len(got) != 1 {
+		t.Errorf("repeats kept: %q", got)
+	}
+}
+
+func contains(list []string, s string) bool {
+	for _, x := range list {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}

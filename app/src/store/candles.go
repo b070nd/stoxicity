@@ -23,16 +23,17 @@ func (db *DB) PutCandles(ctx context.Context, rows []marketdata.Candle) error {
 		return fmt.Errorf("store: candles: %w", err)
 	}
 	defer tx.Rollback()
-	st, err := tx.PrepareContext(ctx, `INSERT OR REPLACE INTO candle (ticker, day, open, high, low, close, volume) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+	st, err := tx.PrepareContext(ctx, `INSERT OR REPLACE INTO candle (ticker, day, open, high, low, close, volume, raw, fetched_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return fmt.Errorf("store: candles: %w", err)
 	}
 	defer st.Close()
+	at := ms(db.now())
 	for _, c := range rows {
 		if !c.Valid() {
 			continue
 		}
-		if _, err := st.ExecContext(ctx, c.Ticker, c.Day, c.Open, c.High, c.Low, c.Close, c.Volume); err != nil {
+		if _, err := st.ExecContext(ctx, c.Ticker, c.Day, c.Open, c.High, c.Low, c.Close, c.Volume, c.Raw, at); err != nil {
 			return fmt.Errorf("store: candles: %w", err)
 		}
 	}
@@ -69,7 +70,7 @@ func (db *DB) LatestCandles(ctx context.Context) (map[string][]marketdata.Candle
 	if err != nil {
 		return nil, err
 	}
-	rows, err := h.r.QueryContext(ctx, `SELECT ticker, day, open, high, low, close, volume FROM
+	rows, err := h.r.QueryContext(ctx, `SELECT ticker, day, open, high, low, close, volume, raw FROM
 		(SELECT *, ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY day DESC) AS n FROM candle) WHERE n <= 2 ORDER BY ticker, day DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("store: candles: %w", err)
@@ -78,7 +79,7 @@ func (db *DB) LatestCandles(ctx context.Context) (map[string][]marketdata.Candle
 	out := map[string][]marketdata.Candle{}
 	for rows.Next() {
 		var c marketdata.Candle
-		if err := rows.Scan(&c.Ticker, &c.Day, &c.Open, &c.High, &c.Low, &c.Close, &c.Volume); err != nil {
+		if err := rows.Scan(&c.Ticker, &c.Day, &c.Open, &c.High, &c.Low, &c.Close, &c.Volume, &c.Raw); err != nil {
 			return nil, fmt.Errorf("store: candles: %w", err)
 		}
 		out[c.Ticker] = append(out[c.Ticker], c)
@@ -147,4 +148,26 @@ func (db *DB) CandleStats(ctx context.Context) (stocks int, newest string, err e
 		newest = *n
 	}
 	return stocks, newest, err
+}
+
+// RawDays returns the days for which raw candles are stored.
+func (db *DB) RawDays(ctx context.Context) (map[string]bool, error) {
+	h, err := db.baseHandle()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := h.r.QueryContext(ctx, `SELECT DISTINCT day FROM candle WHERE raw = 1`)
+	if err != nil {
+		return nil, fmt.Errorf("store: candles: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var d string
+		if err := rows.Scan(&d); err != nil {
+			return nil, fmt.Errorf("store: candles: %w", err)
+		}
+		out[d] = true
+	}
+	return out, rows.Err()
 }

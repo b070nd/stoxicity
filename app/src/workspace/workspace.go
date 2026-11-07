@@ -23,6 +23,7 @@ import (
 	"github.com/b070nd/stoxicity/app/src/fundamentals"
 	"github.com/b070nd/stoxicity/app/src/insider"
 	"github.com/b070nd/stoxicity/app/src/labels"
+	"github.com/b070nd/stoxicity/app/src/marketdata"
 	"github.com/b070nd/stoxicity/app/src/model"
 	"github.com/b070nd/stoxicity/app/src/reader"
 	"github.com/b070nd/stoxicity/app/src/refdata"
@@ -78,7 +79,7 @@ type Workspace struct {
 	numbersAt time.Time
 	sums      map[string]fundamentals.Summary
 	sumsAt    time.Time
-	// The insiders' open market trades of the last quarter, summed by company.
+	// The insiders' purchases and sales of common stock of the last quarter, summed by company.
 	insiders map[string]insider.Summary
 }
 
@@ -254,6 +255,13 @@ func (w *Workspace) Quotes() map[string]tui.Quote {
 		w.quotes = map[string]tui.Quote{}
 		return w.quotes
 	}
+	splits, _ := w.db.Splits(context.Background())
+	cov, _ := w.db.SplitCoverage(context.Background())
+	bySplit := map[string][]marketdata.Split{}
+	for _, s := range splits {
+		k := marketdata.NormTicker(s.Ticker)
+		bySplit[k] = append(bySplit[k], s)
+	}
 	out := make(map[string]tui.Quote, len(latest))
 	for t, c := range latest {
 		if len(c) == 0 {
@@ -261,7 +269,8 @@ func (w *Workspace) Quotes() map[string]tui.Quote {
 		}
 		q := tui.Quote{Day: c[0].Day, Open: c[0].Open, High: c[0].High, Low: c[0].Low, Close: c[0].Close}
 		if len(c) > 1 {
-			q.Prev = c[1].Close
+			q.Prev, q.PrevDay = c[1].Close, c[1].Day
+			q.Move = marketdata.Compare(c[1], c[0], bySplit[marketdata.NormTicker(t)], cov)
 		}
 		out[t] = q
 	}

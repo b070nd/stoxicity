@@ -98,7 +98,11 @@ laya:
   # technology), so sector, materiality and relevance stay advisory until eval
   # shows they agree with your keep/drop labels. kind only fills in what the
   # rules left as "other", and tone and topics only fill what is empty.
-  apply: [kind, topics, tone]
+  # Empty on purpose: the answers come from a model reading text that anyone can
+  # write, so none of them may change a score, a watch match or an alert before
+  # `stoxicity eval` shows, on your own labels, that it helps. Add one field at
+  # a time, e.g. [kind], after that.
+  apply: []
   # Weight (0 to 1) of laya's relevance when `relevance` is in apply.
   relevance_weight: 0.3
   # Articles per request to the server (1 to 64).

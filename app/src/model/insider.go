@@ -1,5 +1,10 @@
 package model
 
+import (
+	"slices"
+	"strings"
+)
+
 // InsiderTrade is one transaction in a company's own shares that an officer,
 // director or large holder reported on a Form 4. Only the transactions in
 // ordinary (non-derivative) securities are kept: they are the ones that say
@@ -18,12 +23,21 @@ type InsiderTrade struct {
 	Owner    string
 	OwnerCIK string
 	Role     string
+	// Security is the title of the security traded as the form gives it
+	// ("Common Stock", "Series A Preferred Stock"); only a trade in common
+	// shares says something about the common stock (see IsCommon).
+	Security string
+	// Form is "4" or its amendment "4/A", Period the day the form reports on
+	// (periodOfReport). An amendment replaces the earlier forms of the same
+	// owner and period.
+	Form   string
+	Period string
 	// Date is the day of the transaction, Filed the day the form was filed
 	// (both YYYY-MM-DD). A form may be filed up to two business days late.
 	Date  string
 	Filed string
-	// Code is the SEC transaction code ("P" bought on the open market, "S" sold
-	// on it, "A" granted, "F" shares withheld for tax, "M" an option exercised,
+	// Code is the SEC transaction code ("P" a purchase, "S" a sale, both on the
+	// open market or private, "A" granted, "F" shares withheld for tax, "M" an option exercised,
 	// "G" given away...); see InsiderCodes.
 	Code string
 	// Acquired says the owner got the shares (A) rather than gave them up (D).
@@ -42,16 +56,17 @@ type InsiderTrade struct {
 	Plan bool
 }
 
-// Insider trade kinds: only open market trades are a signal of what an insider
-// thinks, the rest is pay, tax and bookkeeping.
+// Insider trade kinds: purchases and sales are a signal of what an insider
+// thinks, the rest is pay, tax and bookkeeping. The codes P and S cover private
+// transactions as well as the open market, so they are called purchases and
+// sales, not open market trades.
 const (
 	TradeBuy  = "buy"
 	TradeSell = "sell"
 )
 
-// Kind is TradeBuy for a purchase on the open market, TradeSell for a sale on
-// it, and empty for everything else (awards, exercises, tax withholding,
-// gifts).
+// Kind is TradeBuy for a purchase (code P), TradeSell for a sale (code S), and
+// empty for everything else (awards, exercises, tax withholding, gifts).
 func (t InsiderTrade) Kind() string {
 	switch t.Code {
 	case "P":
@@ -62,13 +77,32 @@ func (t InsiderTrade) Kind() string {
 	return ""
 }
 
+// commonWords and otherWords decide whether a security title is common shares.
+var (
+	commonWords = []string{"common", "ordinary", "capital stock", "beneficial interest"}
+	otherWords  = []string{"preferred", "preference", "note", "warrant", "option", "right", "unit", "debenture", "bond",
+		"convertible", "phantom", "appreciation", "depositary"}
+)
+
+// IsCommon says the trade is in common (or ordinary) shares: the title names
+// them and names nothing else. A purchase of preferred stock, notes or warrants
+// is not a vote of confidence in the common stock. An empty title (a filing
+// read before titles were kept) is not known to be common.
+func (t InsiderTrade) IsCommon() bool {
+	title := strings.ToLower(t.Security)
+	if !slices.ContainsFunc(commonWords, func(w string) bool { return strings.Contains(title, w) }) {
+		return false
+	}
+	return !slices.ContainsFunc(otherWords, func(w string) bool { return strings.Contains(title, w) })
+}
+
 // Value is the money the trade moved: shares times price.
 func (t InsiderTrade) Value() float64 { return t.Shares * t.Price }
 
 // InsiderCodes names the transaction codes of Form 4 in plain words.
 var InsiderCodes = map[string]string{
-	"P": "bought on the open market",
-	"S": "sold on the open market",
+	"P": "purchase",
+	"S": "sale",
 	"A": "granted or awarded",
 	"D": "sold back to the company",
 	"F": "shares withheld to pay tax or exercise cost",

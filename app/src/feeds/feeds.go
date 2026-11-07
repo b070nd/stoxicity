@@ -27,6 +27,15 @@ type Result struct {
 	Articles    []model.Article // new articles only; already sanitized
 	State       State           // pass back on the next poll
 	NotModified bool            // the source answered 304; Articles is empty
+	// Partial, when not empty, says why the read is incomplete although it
+	// succeeded: a part of the source failed, or more is waiting than one poll
+	// reads. The poller reports it; it is not an error.
+	Partial string
+	// Commit, when set, records progress the fetcher keeps outside State (for a
+	// pool, the validators and seen items of each feed). The caller runs it only
+	// after Articles are durably stored; if storing fails it is not run, so the
+	// next poll reads the same items again instead of finding them "seen".
+	Commit func(ctx context.Context) error
 }
 
 // Fetcher reads one source.

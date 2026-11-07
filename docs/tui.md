@@ -207,8 +207,11 @@ before (green up, red down) and net income over revenue. A stock's page lists
 all the figures with the note of where they come from. Try
 `type:stock marketcap:>10b margin:>15% growth:>5% sort:-marketcap`.
 **BUYS** and **SELLS** (green and red) appear once Form 4 filings are read (see
-`company.insiders`): the money the company's insiders spent on open market
-purchases, and took in on sales, in the last 90 days. A stock's page then has an
+`company.insiders`): the money the company's insiders spent on purchases of its common stock
+(open market or private: Form 4 code P) and took in on sales (code S) in the last
+90 days, counting each filing once, with an amendment (4/A) replacing the form it
+amends. Trades without a price are counted apart and shown as a warning, not as
+zero. A stock's page then has an
 **Insiders** block: the last ten trades, each on two lines (day, what was done,
 shares at price and value; who, their role, how many shares they hold after, and
 whether it was under a Rule 10b5-1 plan or held indirectly), purchases green,

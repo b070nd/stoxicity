@@ -163,3 +163,20 @@ func TestDetectEmpty(t *testing.T) {
 		t.Fatalf("Detect(nil) = %+v, want none", got)
 	}
 }
+
+func TestSyndicatedCopiesOfOneStoryCountOnce(t *testing.T) {
+	copyOf := func(id string) model.Article {
+		a := topic(0.9, "ai")
+		a.ID, a.ClusterID = id, "one-story"
+		return a
+	}
+	today := []model.Article{copyOf("a"), copyOf("b"), copyOf("c")}
+	if got := Detect(today, nil, 1, Options{Threshold: 0.5}); len(got) != 0 {
+		t.Errorf("three copies of one story made a trend: %+v", got)
+	}
+	today = append(today, topic(0.9, "ai"), topic(0.9, "ai"))
+	got := Detect(today, nil, 1, Options{Threshold: 0.5})
+	if len(got) != 1 || got[0].Today != 3 {
+		t.Errorf("trends = %+v, want today 3 (one story plus two others)", got)
+	}
+}

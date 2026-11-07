@@ -5,6 +5,7 @@ package discover
 import (
 	"sort"
 	"strings"
+	"unicode"
 
 	"github.com/b070nd/stoxicity/app/src/model"
 )
@@ -64,7 +65,7 @@ func Find(articles []model.Article, watchlist []string, opts Options) []Candidat
 		seen := make(map[string]bool, len(a.Tickers))
 		for _, t := range a.Tickers {
 			s := symbol(t)
-			if s == "" || watched[s] || seen[s] {
+			if s == "" || watched[s] || seen[s] || !mayBeSubject(a, s) {
 				continue
 			}
 			seen[s] = true
@@ -125,4 +126,28 @@ func newer(a, b model.Article) bool {
 		return a.Published.After(b.Published)
 	}
 	return a.ID < b.ID
+}
+
+// maxPlainTickers is the most tickers an article may carry for each of them to
+// count without being named in the title. An article that lists more is a
+// roundup, a table or a footer of cashtags, and a ticker it only lists is a
+// background mention, not the company the story is about.
+const maxPlainTickers = 3
+
+// mayBeSubject says the article can be about the ticker's company: it names
+// few companies, or the ticker stands in its title. The articles do not record
+// which company is the subject (see PROTOCOL.md), so this keeps out the plain
+// roundups and footers but cannot tell a counterparty from the subject.
+func mayBeSubject(a model.Article, ticker string) bool {
+	if len(a.Tickers) <= maxPlainTickers {
+		return true
+	}
+	for _, w := range strings.FieldsFunc(strings.ToUpper(a.Title), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '.' && r != '-'
+	}) {
+		if strings.Trim(w, ".-") == ticker {
+			return true
+		}
+	}
+	return false
 }

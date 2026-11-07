@@ -38,6 +38,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.watch != m.stack.Watch() {
 			break // the user changed watch meanwhile
 		}
+		if msg.gen != m.latestAsked[msg.ticker] {
+			break // a newer request for this stock is out: this answer is older than the screen
+		}
 		if msg.err != nil {
 			m.fail("latest news of %s: %v", msg.ticker, msg.err)
 			break

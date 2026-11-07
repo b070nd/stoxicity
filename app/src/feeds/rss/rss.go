@@ -110,26 +110,45 @@ func (f *Fetcher) Fetch(ctx context.Context, src model.Source, prev feeds.State)
 	}
 
 	now := f.cfg.Now().UTC()
-	known := make(map[string]bool, len(prev.Seen))
-	for _, id := range prev.Seen {
-		known[id] = true
+	// State.Seen holds "<id>#<title hash>" for what this reader stored, or a bare
+	// ID from an older version. An entry whose ID is known but whose title is not
+	// the stored one is a correction and is read again; a bare ID is taken to be
+	// unchanged.
+	titles := make(map[string]map[string]bool, len(prev.Seen))
+	for _, k := range prev.Seen {
+		id, h, _ := strings.Cut(k, seenSep)
+		if titles[id] == nil {
+			titles[id] = map[string]bool{}
+		}
+		titles[id][h] = true
 	}
 	var articles []model.Article
+	fresh := map[string]bool{}
 	for _, it := range items {
 		a, ok := f.article(src, it, now)
-		if !ok || known[a.ID] {
+		if !ok {
 			continue
 		}
-		known[a.ID] = true
+		h := titleHash(a.Title)
+		if hs, known := titles[a.ID]; known && (hs[h] || hs[""]) || fresh[a.ID+seenSep+h] {
+			continue
+		}
+		fresh[a.ID+seenSep+h] = true
 		articles = append(articles, a)
 	}
 	slices.SortStableFunc(articles, func(a, b model.Article) int { return b.Published.Compare(a.Published) })
 
 	seen := make([]string, 0, len(articles)+len(prev.Seen))
+	replaced := map[string]bool{}
 	for _, a := range articles {
-		seen = append(seen, a.ID)
+		seen = append(seen, a.ID+seenSep+titleHash(a.Title))
+		replaced[a.ID] = true
 	}
-	seen = append(seen, prev.Seen...)
+	for _, k := range prev.Seen {
+		if id, _, _ := strings.Cut(k, seenSep); !replaced[id] {
+			seen = append(seen, k)
+		}
+	}
 	if len(seen) > f.cfg.SeenCap {
 		seen = seen[:f.cfg.SeenCap]
 	}
@@ -142,6 +161,16 @@ func (f *Fetcher) Fetch(ctx context.Context, src model.Source, prev feeds.State)
 			Cursor:       prev.Cursor,
 		},
 	}, nil
+}
+
+// seenSep joins an article ID and the hash of its title in State.Seen.
+const seenSep = "#"
+
+// titleHash is a short fingerprint of a title, to notice a correction made at
+// the same address.
+func titleHash(title string) string {
+	sum := sha256.Sum256([]byte(title))
+	return hex.EncodeToString(sum[:4])
 }
 
 // article turns one parsed entry into an Article. It reports false for an

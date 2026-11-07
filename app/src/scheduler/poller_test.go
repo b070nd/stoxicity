@@ -1169,3 +1169,30 @@ func TestRestartKeepsTheRoundRobinOrder(t *testing.T) {
 		t.Fatalf("poll order = %s, want %s", got, want)
 	}
 }
+
+func TestCommitRunsOnlyAfterTheArticlesAreStored(t *testing.T) {
+	h := newHarness(t, sources("a"), nil)
+	commits := 0
+	h.fetch.fn = func(context.Context, model.Source, feeds.State) (feeds.Result, error) {
+		return feeds.Result{
+			Articles: []model.Article{{ID: "x", Title: "t"}},
+			Commit:   func(context.Context) error { commits++; return nil },
+		}, nil
+	}
+	h.sink.fn = func(context.Context, model.Source, []model.Article) (int, error) { return 0, errBoom }
+	h.start()
+	if ev := h.event(); !errors.Is(ev.Err, errBoom) {
+		t.Fatalf("event = %+v, want errBoom", ev)
+	}
+	if commits != 0 {
+		t.Fatalf("Commit ran %d times though storing failed", commits)
+	}
+	h.sink.fn = nil
+	h.clock.Advance(h.untilNextDue("a"))
+	if ev := h.event(); ev.Err != nil || ev.New != 1 {
+		t.Fatalf("event = %+v, want one new", ev)
+	}
+	if commits != 1 {
+		t.Errorf("Commit ran %d times after storing succeeded, want 1", commits)
+	}
+}

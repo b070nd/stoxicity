@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -69,20 +71,58 @@ func (db *DB) Save(ctx context.Context, articles []model.Article) error {
 		return fmt.Errorf("store: save: %w", err)
 	}
 	upsert, err := tx.PrepareContext(ctx, `INSERT INTO articles
-		(id, source_id, domain, url, title, summary, published_ms, fetched_ms, form, items, tickers, topics, cluster_id, cik)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		(id, source_id, domain, url, title, summary, published_ms, fetched_ms, form, items, tickers, topics, cluster_id, cik, change_seq)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (id) DO UPDATE SET
 			title = excluded.title, summary = excluded.summary, form = excluded.form,
 			items = excluded.items, tickers = excluded.tickers, topics = excluded.topics,
-			cluster_id = excluded.cluster_id, cik = excluded.cik
-		WHERE title IS NOT excluded.title OR summary IS NOT excluded.summary OR form IS NOT excluded.form
+			cluster_id = excluded.cluster_id, cik = excluded.cik, change_seq = excluded.change_seq,
+			fetched_ms = CASE WHEN title IS NOT excluded.title OR summary IS NOT excluded.summary
+				THEN excluded.fetched_ms ELSE fetched_ms END
+		WHERE (source_id = excluded.source_id OR articles.form <> '')
+			AND (title IS NOT excluded.title OR summary IS NOT excluded.summary OR form IS NOT excluded.form
 			OR items IS NOT excluded.items OR tickers IS NOT excluded.tickers
 			OR topics IS NOT excluded.topics OR cluster_id IS NOT excluded.cluster_id
-			OR cik IS NOT excluded.cik`)
+			OR cik IS NOT excluded.cik)`)
 	if err != nil {
 		return fmt.Errorf("store: save: %w", err)
 	}
 	defer upsert.Close()
+	existing, err := tx.PrepareContext(ctx, `SELECT title, summary FROM articles WHERE id = ?`)
+	if err != nil {
+		return fmt.Errorf("store: save: %w", err)
+	}
+	defer existing.Close()
+	// An observation is added unless the source's latest one already says the same.
+	obs, err := tx.PrepareContext(ctx, `INSERT INTO observation (article_id, source_id, domain, url, title, summary,
+		published_ms, received_ms, recorded_ms, content_hash, form, cik, items)
+		SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13
+		WHERE NOT EXISTS (SELECT 1 FROM observation o WHERE o.article_id = ?1 AND o.source_id = ?2
+			AND o.seq = (SELECT MAX(seq) FROM observation WHERE article_id = ?1 AND source_id = ?2)
+			AND (o.content_hash = ?10 OR (o.content_hash = '' AND o.title = ?5 AND o.summary = ?6)))`)
+	if err != nil {
+		return fmt.Errorf("store: save: %w", err)
+	}
+	defer obs.Close()
+	first, err := tx.PrepareContext(ctx, `INSERT INTO observation (article_id, source_id, domain, url, title, summary,
+		published_ms, received_ms, recorded_ms, content_hash, form, cik, items) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		return fmt.Errorf("store: save: %w", err)
+	}
+	defer first.Close()
+	var lastChange int64
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(change_seq), 0) FROM articles`).Scan(&lastChange); err != nil {
+		return fmt.Errorf("store: save: %w", err)
+	}
+	// A score of a lens version is kept as first written, unless the text it
+	// scored was changed (a correction), when it is written again.
+	rescore, err := tx.PrepareContext(ctx, `INSERT OR REPLACE INTO scores
+		(article_id, lens_version, relevance, materiality, tone, kind, sector, reasons, created_ms)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		return fmt.Errorf("store: save: %w", err)
+	}
+	defer rescore.Close()
 	score, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO scores
 		(article_id, lens_version, relevance, materiality, tone, kind, sector, reasons, created_ms)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
@@ -91,18 +131,56 @@ func (db *DB) Save(ctx context.Context, articles []model.Article) error {
 	}
 	defer score.Close()
 
+	// An article without a fetch time becomes visible now, at commit: the time
+	// is later than every stored fetch time, so a consumer that has read up to
+	// some fetch time never misses an article committed afterwards. (A time
+	// taken before slow work, or the same millisecond as an earlier commit,
+	// could land behind a cursor that had already moved on.)
+	stamp := now
+	var newest sql.NullInt64
+	if err := tx.QueryRowContext(ctx, `SELECT MAX(fetched_ms) FROM articles`).Scan(&newest); err != nil {
+		return fmt.Errorf("store: save: %w", err)
+	}
+	if newest.Valid && ms(stamp) <= newest.Int64 {
+		stamp = fromMS(newest.Int64 + 1)
+	}
 	for _, a := range mergeDuplicates(articles) {
 		fetched := a.Fetched
 		if fetched.IsZero() {
-			fetched = now
+			fetched = stamp
 		}
-		if _, err := upsert.ExecContext(ctx, a.ID, a.SourceID, a.Domain, a.URL, a.Title, a.Summary,
-			ms(a.Published), ms(fetched), a.Form,
-			encodeList(a.Items), encodeList(a.Tickers), encodeList(a.Topics), a.ClusterID, a.CIK); err != nil {
+		var oldTitle, oldSummary string
+		existed := true
+		if err := existing.QueryRowContext(ctx, a.ID).Scan(&oldTitle, &oldSummary); errors.Is(err, sql.ErrNoRows) {
+			existed = false
+		} else if err != nil {
 			return fmt.Errorf("store: save %q: %w", a.ID, err)
 		}
+		res, err := upsert.ExecContext(ctx, a.ID, a.SourceID, a.Domain, a.URL, a.Title, a.Summary,
+			ms(a.Published), ms(fetched), a.Form,
+			encodeList(a.Items), encodeList(a.Tickers), encodeList(a.Topics), a.ClusterID, a.CIK, lastChange+1)
+		if err != nil {
+			return fmt.Errorf("store: save %q: %w", a.ID, err)
+		}
+		put := score
+		n, _ := res.RowsAffected()
+		if existed && n > 0 && (oldTitle != a.Title || oldSummary != a.Summary) {
+			put = rescore // the text changed: the old score judged other words
+		}
+		if n > 0 { // inserted or changed: it takes the next place in the order of commits
+			lastChange++
+		}
+		// Whatever the source said is kept, also when the article row refused it.
+		insert := obs
+		if !existed {
+			insert = first // nothing to compare with
+		}
+		if _, err := insert.ExecContext(ctx, a.ID, a.SourceID, a.Domain, a.URL, a.Title, a.Summary,
+			ms(a.Published), ms(fetched), ms(now), contentHash(a.Article), a.Form, a.CIK, encodeList(a.Items)); err != nil {
+			return fmt.Errorf("store: save observation of %q: %w", a.ID, err)
+		}
 		for _, s := range a.scores {
-			if _, err := score.ExecContext(ctx, a.ID, s.LensVersion, s.Relevance, s.Materiality, s.Tone,
+			if _, err := put.ExecContext(ctx, a.ID, s.LensVersion, s.Relevance, s.Materiality, s.Tone,
 				string(s.Kind), s.Sector, encodeList(s.Reasons), ms(now)); err != nil {
 				return fmt.Errorf("store: save score of %q: %w", a.ID, err)
 			}
@@ -118,6 +196,12 @@ func (db *DB) Save(ctx context.Context, articles []model.Article) error {
 		return fmt.Errorf("store: save: %w", err)
 	}
 	return nil
+}
+
+// contentHash fingerprints what a source says in an article: title and summary.
+func contentHash(a model.Article) string {
+	sum := sha256.Sum256([]byte(a.Title + "\x00" + a.Summary))
+	return hex.EncodeToString(sum[:12])
 }
 
 // scored is an article together with every non-empty score it came with.
@@ -362,7 +446,7 @@ type querier interface {
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 }
 
-func scanArticle(rows *sql.Rows) (model.Article, error) {
+func scanArticle(rows *sql.Rows, extra ...any) (model.Article, error) {
 	var (
 		a                           model.Article
 		pubMS, fetMS                int64
@@ -371,9 +455,10 @@ func scanArticle(rows *sql.Rows) (model.Article, error) {
 		relevance, tone             sql.NullFloat64
 		materiality                 sql.NullInt64
 	)
-	err := rows.Scan(&a.ID, &a.SourceID, &a.Domain, &a.URL, &a.Title, &a.Summary,
+	dest := append([]any{&a.ID, &a.SourceID, &a.Domain, &a.URL, &a.Title, &a.Summary,
 		&pubMS, &fetMS, &a.Form, &items, &tickers, &topics, &a.ClusterID, &a.CIK,
-		&lens, &relevance, &materiality, &tone, &kind, &sector, &reasons)
+		&lens, &relevance, &materiality, &tone, &kind, &sector, &reasons}, extra...)
+	err := rows.Scan(dest...)
 	if err != nil {
 		return a, err
 	}

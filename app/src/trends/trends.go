@@ -3,6 +3,7 @@
 package trends
 
 import (
+	"fmt"
 	"math"
 	"sort"
 	"strings"
@@ -38,11 +39,12 @@ type Options struct {
 }
 
 // Detect returns the topics whose coverage today is high against the baseline.
-// Today counts the relevant articles from today that carry the topic. Baseline
+// Today counts the relevant stories from today that carry the topic. Baseline
 // is the relevant articles from the baseline that carry it, divided by
 // baselineDays (values below 1 count as 1). Lift is Today divided by the
 // baseline, floored as described at baselineFloor. Topics are sorted by lift,
-// then today's count, then name. Each article counts once per topic.
+// then today's count, then name. Each story counts once per topic: articles
+// in one cluster are one story, not independent evidence.
 func Detect(today, baseline []model.Article, baselineDays int, opts Options) []Trend {
 	minToday := opts.MinToday
 	if minToday <= 0 {
@@ -83,20 +85,28 @@ func Detect(today, baseline []model.Article, baselineDays int, opts Options) []T
 	return out
 }
 
-// count is the number of relevant articles carrying each topic.
+// count is the number of independent stories carrying each topic. Articles
+// that share a non-empty ClusterID are copies or follow-ups of one story and
+// count once per topic; an article without a cluster stands alone.
 func count(articles []model.Article, threshold float64) map[string]int {
 	out := make(map[string]int)
-	for _, a := range articles {
+	type storyTopic struct{ story, topic string }
+	seen := make(map[storyTopic]bool)
+	for i, a := range articles {
 		if !a.Score.Relevant(threshold) {
 			continue
 		}
-		seen := make(map[string]bool, len(a.Topics))
+		story := fmt.Sprintf("position:%d", i) // an article without a cluster stands alone
+		if a.ClusterID != "" {
+			story = "cluster:" + a.ClusterID
+		}
 		for _, t := range a.Topics {
 			t = strings.TrimSpace(t)
-			if t == "" || seen[t] {
+			k := storyTopic{story, t}
+			if t == "" || seen[k] {
 				continue
 			}
-			seen[t] = true
+			seen[k] = true
 			out[t]++
 		}
 	}

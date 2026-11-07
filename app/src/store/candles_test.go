@@ -41,3 +41,39 @@ func TestCandlesAreReplacedPerDayAndTheLatestTwoComeBack(t *testing.T) {
 		t.Errorf("checks = %+v", got)
 	}
 }
+
+func TestCandlesKeepTheirBasisAndSplitsAreOnlyAdded(t *testing.T) {
+	db, _ := openTemp(t)
+	ctx := context.Background()
+	rows := []marketdata.Candle{
+		{Ticker: "KO", Day: "2026-11-03", Open: 70, High: 75, Low: 69, Close: 71, Raw: true},
+		{Ticker: "KO", Day: "2026-11-02", Open: 70, High: 75, Low: 69, Close: 70},
+	}
+	if err := db.PutCandles(ctx, rows); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := db.LatestCandles(ctx)
+	if len(got["KO"]) != 2 || !got["KO"][0].Raw || got["KO"][1].Raw {
+		t.Errorf("a candle remembers whether it is raw: %+v", got["KO"])
+	}
+	cov, err := db.SplitCoverage(ctx)
+	if err != nil || cov.Since != "" || !cov.Read.IsZero() {
+		t.Errorf("nothing was read yet: %+v, %v", cov, err)
+	}
+	s := marketdata.Split{Ticker: "KO", Day: "2026-11-03", From: 1, To: 2}
+	if err := db.PutSplits(ctx, []marketdata.Split{s, {Ticker: "X", Day: "2026-11-03", From: 0, To: 2}}, at(10), at(20)); err != nil {
+		t.Fatal(err)
+	}
+	// The same split again, from a later reading that starts later.
+	if err := db.PutSplits(ctx, []marketdata.Split{s}, at(500), at(600)); err != nil {
+		t.Fatal(err)
+	}
+	all, _ := db.Splits(ctx)
+	if len(all) != 1 || all[0] != s {
+		t.Errorf("splits = %+v", all)
+	}
+	cov, _ = db.SplitCoverage(ctx)
+	if cov.Since != at(10).Format("2006-01-02") || !cov.Read.Equal(at(600)) {
+		t.Errorf("coverage keeps the earliest start and the latest reading: %+v", cov)
+	}
+}

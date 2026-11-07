@@ -67,17 +67,17 @@ func (f *fakeChannel) notifications() []channel.Notification {
 	return append([]channel.Notification(nil), f.sent...)
 }
 
-// countingStore counts what FetchedAfter hands out.
+// countingStore counts what ChangedAfter hands out.
 type countingStore struct {
 	store.Store
 	calls, articles int
 }
 
-func (c *countingStore) FetchedAfter(ctx context.Context, after time.Time, allowed map[string]bool, limit int) ([]model.Article, error) {
-	out, err := c.Store.FetchedAfter(ctx, after, allowed, limit)
+func (c *countingStore) ChangedAfter(ctx context.Context, after int64, allowed map[string]bool, limit int) ([]model.Article, int64, error) {
+	out, last, err := c.Store.ChangedAfter(ctx, after, allowed, limit)
 	c.calls++
 	c.articles += len(out)
-	return out, err
+	return out, last, err
 }
 
 // fixture is a Ledger over a real store in a temporary folder.

@@ -153,3 +153,28 @@ func ids(as []model.Article) []string {
 	}
 	return out
 }
+
+func TestATickerOnlyListedInARoundupIsNotAStoryAboutIt(t *testing.T) {
+	roundup := func(id string) model.Article {
+		return model.Article{ID: id, Title: "Acme beats estimates", Tickers: []string{"ACME", "XYZ", "AAA", "BBB"},
+			Score: model.Score{Relevance: 0.9, Materiality: 4}}
+	}
+	got := Find([]model.Article{roundup("1"), roundup("2")}, nil, Options{Threshold: 0.5})
+	for _, c := range got {
+		if c.Ticker == "XYZ" {
+			t.Errorf("XYZ, only listed in two roundups, became a candidate: %+v", c)
+		}
+	}
+	named := model.Article{ID: "3", Title: "XYZ wins contract", Tickers: []string{"ACME", "XYZ", "AAA", "BBB"},
+		Score: model.Score{Relevance: 0.9, Materiality: 4}}
+	named2 := named
+	named2.ID = "4"
+	got = Find([]model.Article{named, named2}, nil, Options{Threshold: 0.5})
+	found := false
+	for _, c := range got {
+		found = found || c.Ticker == "XYZ"
+	}
+	if !found {
+		t.Error("XYZ, named in the titles, should be a candidate")
+	}
+}

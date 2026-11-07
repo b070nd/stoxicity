@@ -270,3 +270,26 @@ func TestLedgerStateRejectsInvalidTenant(t *testing.T) {
 		t.Errorf("files changed:\nbefore %v\nafter  %v", before, after)
 	}
 }
+
+func TestSentToChannelsAreRememberedPerChannel(t *testing.T) {
+	db, _ := openTemp(t)
+	ctx := context.Background()
+	ts := db.Tenant("acme")
+	p := PendingAlert{WatchID: "w", ArticleID: "a1", Alert: "any"}
+	if err := ts.MarkSentTo(ctx, []PendingAlert{p}, "file", t0); err != nil {
+		t.Fatal(err)
+	}
+	if err := ts.MarkSentTo(ctx, []PendingAlert{p}, "file", t0); err != nil {
+		t.Fatalf("recording twice: %v", err)
+	}
+	got, err := ts.DeliveredChannels(ctx, "w", "any")
+	if err != nil || !got["a1"]["file"] || got["a1"]["email"] || len(got) != 1 {
+		t.Errorf("DeliveredChannels = %v, %v; want only file for a1", got, err)
+	}
+	if other, _ := ts.DeliveredChannels(ctx, "w", "other"); len(other) != 0 {
+		t.Errorf("another alert has records: %v", other)
+	}
+	if err := ts.MarkSentTo(ctx, []PendingAlert{p}, "", t0); err == nil {
+		t.Error("an empty channel was accepted")
+	}
+}
