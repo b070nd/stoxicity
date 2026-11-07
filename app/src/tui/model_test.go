@@ -1267,7 +1267,7 @@ func TestCompaniesSortWithTheColumnKeysAndTheQueryWinsWhenTyped(t *testing.T) {
 	h := newHarness(t)
 	h.press("c")
 	h.mustContain("TICKER▲")
-	h.press(">") // name
+	h.press("<") // wraps round to the last column, name
 	h.mustContain("NAME▲")
 	if got := h.m.scr.Sort; got.Key != "name" {
 		t.Fatalf("sort = %+v", got)

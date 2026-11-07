@@ -180,7 +180,7 @@ type:preferred           stock, preferred, warrant, unit, right, adr, etf, test
                          (read from the name and the ticker, finer than kind:)
 domain:finance           the SIC division: agriculture, mining, construction,
                          manufacturing, infrastructure, wholesale, retail,
-                         finance & re, services, public admin
+                         finance & real estate, services, public administration
 industry:software        words of the SIC description
 sic:3571  sic:73*
 state:de                 state of incorporation

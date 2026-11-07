@@ -175,13 +175,19 @@ stock, and the status line counts stocks only.
 The table is colour-coded. **TYPE** is read from the exchanges' name for the
 security and the shape of its ticker: stock, preferred, warrant, unit, right,
 adr, etf or test (a reading, not a fact; `type:warrant` filters on it).
-**DOMAIN** is the SEC's industry division (Manufacturing, Finance & RE,
-Services, Infrastructure, Retail, Mining ...), one colour each; the finer
-INDUSTRY sits further right. **DAY** is the day's candle drawn as a bar: the
+**DOMAIN** is the SEC's industry division (Manufacturing, Finance & Real
+Estate, Services, Infrastructure, Retail, Mining and so on), one colour each;
+the finer industry is on the stock's page and in `industry:` and `sort:industry`. **DAY** is the day's candle drawn as a bar: the
 whole bar is the range from low to high, the thick part is open to close, so a
 body at the right end closed near its high; green closed above its open, red
 below, dim when the candle is old (more than five days) or the day closed flat.
 **CLOSE** and **CHG** (the move from the day before) take the same colour.
+The ticker is bold, the exchange has a colour of its own (Nasdaq blue, NYSE
+magenta, OTC yellow, CBOE cyan), the news count turns yellow with one article
+and bold yellow with five, tags are magenta, and the star is yellow. The full
+name comes last, so a long one runs to the edge of the screen and is never cut.
+No table cuts a text or shortens it with an ellipsis: a column is as wide as its
+longest entry.
 `sort:close`, `sort:change`, `sort:type` and `sort:domain` order by them (a
 stock with no candle is last whichever way round); the columns appear once
 prices exist (see `company.quotes` in [configuration.md](configuration.md)).

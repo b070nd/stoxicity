@@ -134,3 +134,43 @@ func domainStyle(domain string) Style {
 	}
 	return Plain
 }
+
+// exchangeStyle gives the listing venues colours of their own.
+func exchangeStyle(name string) Style {
+	switch strings.ToLower(name) {
+	case "nasdaq":
+		return Blue
+	case "nyse":
+		return Accent
+	case "otc":
+		return Warn
+	case "cboe":
+		return Info
+	case "txse":
+		return Good
+	}
+	return Plain
+}
+
+// newsStyle warms with the number of articles: none plain, a few yellow, many
+// bold yellow.
+func newsStyle(n int) Style {
+	switch {
+	case n >= 5:
+		return Hot
+	case n > 0:
+		return Warn
+	}
+	return Plain
+}
+
+// toneStyle is green for positive news, red for negative, dim for neutral.
+func toneStyle(t float64) Style {
+	switch {
+	case t >= 0.05:
+		return Good
+	case t <= -0.05:
+		return Bad
+	}
+	return Dim
+}

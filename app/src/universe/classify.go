@@ -92,9 +92,9 @@ func (p Profile) work() string {
 }
 
 // divisions are the SEC's ten SIC divisions, the coarse "domain" a company
-// works in, named short enough for a column. Each takes the two-digit major
+// works in, Each takes the two-digit major
 // groups of its range; Infrastructure is transport, communications, electric,
-// gas and sanitary services, and Finance & RE is finance, insurance and real
+// gas and sanitary services, and Finance & Real Estate is finance, insurance and real
 // estate.
 var divisions = []struct {
 	Name     string
@@ -107,9 +107,9 @@ var divisions = []struct {
 	{"Infrastructure", 40, 49},
 	{"Wholesale", 50, 51},
 	{"Retail", 52, 59},
-	{"Finance & RE", 60, 67},
+	{"Finance & Real Estate", 60, 67},
 	{"Services", 70, 89},
-	{"Public Admin", 91, 99},
+	{"Public Administration", 91, 99},
 }
 
 // Domains are the names Domain gives, in the order of the SIC codes.

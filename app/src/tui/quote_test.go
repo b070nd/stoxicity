@@ -169,3 +169,55 @@ func TestStockPageShowsTheLastCloseAndTheDay(t *testing.T) {
 		t.Error("KO has no candle but the page shows a last close")
 	}
 }
+
+func TestCompanyRowsAreNeverCutAndEachKindOfFactHasItsColour(t *testing.T) {
+	h := newHarness(t)
+	h.be.mu.Lock()
+	h.be.layer.AddTag("NVDA", "moat")
+	h.be.rebuildUniverse()
+	h.be.mu.Unlock()
+	h.m.goTo(nav.Route{Kind: nav.Companies, Arg: "group:none"})
+	h.run(h.m.loadCmd(false))
+	var nvda, ko Row
+	for _, r := range h.m.scr.Rows {
+		if r.Go != nil && r.Go.Arg == "NVDA" {
+			nvda = r
+		}
+		if r.Go != nil && r.Go.Arg == "KO" {
+			ko = r
+		}
+		if strings.Contains(r.Text, "…") {
+			t.Errorf("a row was cut: %q", r.Text)
+		}
+	}
+	paint := func(r Row) map[Style]string {
+		out := map[Style]string{}
+		rs := []rune(r.Text)
+		for _, sp := range r.Spans {
+			out[sp.Style] += string(rs[sp.From:sp.To]) + "|"
+		}
+		return out
+	}
+	p := paint(nvda)
+	if p[Strong] != "NVDA|" || p[exchangeStyle("Nasdaq")] != "Nasdaq|" || p[Warn] != "2|" || p[Accent] != "#moat|" {
+		t.Errorf("NVDA is painted %v in %q", p, nvda.Text)
+	}
+	if k := paint(ko); k[Warn] != "★|1|" || k[exchangeStyle("NYSE")] != "NYSE|" {
+		t.Errorf("KO is painted %v in %q", k, ko.Text)
+	}
+	// The full name closes the line, after everything else.
+	if !strings.HasSuffix(nvda.Text, "Nvidia Corp") {
+		t.Errorf("the name is not the last column: %q", nvda.Text)
+	}
+}
+
+func TestToneAndNewsStylesCoverTheirRange(t *testing.T) {
+	for v, want := range map[float64]Style{0.5: Good, 0.05: Good, 0.01: Dim, -0.01: Dim, -0.05: Bad, -0.9: Bad} {
+		if got := toneStyle(v); got != want {
+			t.Errorf("toneStyle(%v) = %v, want %v", v, got, want)
+		}
+	}
+	if newsStyle(0) != Plain || newsStyle(1) != Warn || newsStyle(4) != Warn || newsStyle(5) != Hot {
+		t.Error("newsStyle tiers")
+	}
+}

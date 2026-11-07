@@ -31,6 +31,8 @@ const (
 	Cloud3
 	Cloud4
 	Cloud5
+	Strong // bold: the ticker, the thing you look for
+	Hot    // bold yellow: a lot of news
 	Info   // cyan: funds
 	Accent // magenta: the securities that are not shares
 	Blue
@@ -178,7 +180,7 @@ const cloudWidth = 76
 // Build makes the screen of a route. It is a pure function of its inputs.
 func Build(r nav.Route, d Data) Screen {
 	s := build(r, d)
-	if d.Exchange != "" && r.Kind != nav.Exchange && s.Notice != "loading…" {
+	if d.Exchange != "" && r.Kind != nav.Exchange && s.Notice != "loading" {
 		s.Title += " · exchange " + d.Exchange
 	}
 	return s
@@ -414,7 +416,7 @@ var stockColumns = []Column{
 	{Title: "TICKER", Key: "ticker", Width: 6},
 	{Title: "NAME", Key: "name", Width: 28},
 	{Title: "NEWS", Key: "mentions", Width: 4, Right: true, Desc: true},
-	{Title: "MAT", Key: "materiality", Width: 4, Right: true, Desc: true},
+	{Title: "MATERIALITY", Key: "materiality", Width: 4, Right: true, Desc: true},
 	{Title: "TONE", Key: "tone", Width: 5, Right: true, Desc: true},
 }
 
@@ -428,12 +430,12 @@ func stockTable(rows []pages.StockRow, d Data) Table {
 		}
 		t.Items = append(t.Items, Item{
 			Cells: []Cell{
-				Str(star),
-				Str(r.Ticker),
-				Str(clip(d.name(r.Ticker), 28)),
-				Num(fmt.Sprint(r.Mentions), float64(r.Mentions)),
-				Num(fmt.Sprintf("%.1f", r.Materiality), r.Materiality),
-				Num(tonePct(r.Tone), r.Tone),
+				Str(star).Styled(Warn),
+				Str(r.Ticker).Styled(Strong),
+				Str(d.name(r.Ticker)),
+				Num(fmt.Sprint(r.Mentions), float64(r.Mentions)).Styled(newsStyle(r.Mentions)),
+				Num(fmt.Sprintf("%.1f", r.Materiality), r.Materiality).Styled(newsStyle(int(r.Materiality + 0.5))),
+				Num(tonePct(r.Tone), r.Tone).Styled(toneStyle(r.Tone)),
 			},
 			Row: Row{Go: route(nav.Stock, r.Ticker)},
 		})
@@ -443,20 +445,9 @@ func stockTable(rows []pages.StockRow, d Data) Table {
 
 func domainLine(st domains.Stat) Row {
 	return Row{
-		Text: fmt.Sprintf("  %-32s %3d relevant of %-4d %3.0f%%", clip(st.Domain, 32), st.Relevant, st.Total, st.Ratio()*100),
+		Text: fmt.Sprintf("  %-32s %3d relevant of %-4d %3.0f%%", st.Domain, st.Relevant, st.Total, st.Ratio()*100),
 		Go:   route(nav.Domain, st.Domain),
 	}
-}
-
-func clip(s string, n int) string {
-	r := []rune(s)
-	if len(r) <= n {
-		return s
-	}
-	if n <= 1 {
-		return string(r[:n])
-	}
-	return string(r[:n-1]) + "…"
 }
 
 func buildStocks(d Data) Screen {
@@ -493,7 +484,7 @@ func buildStock(ticker string, d Data) Screen {
 		b.heading("News", nil)
 		switch {
 		case !d.LatestOK:
-			b.styled(Dim, "  Loading the latest news…")
+			b.styled(Dim, "  Loading the latest news")
 		default:
 			b.styled(Dim, "  No article names "+ticker+", in "+d.Params.Describe()+" or before.")
 		}
@@ -616,7 +607,7 @@ func buildTopic(topic string, d Data) Screen {
 		b.blank()
 		b.heading("Stocks ›", &nav.Route{Kind: nav.Stocks})
 		for _, t := range pages.Head(page.Stocks, 10) {
-			b.add(Row{Text: fmt.Sprintf("  %-8s %-28s %d", t.Text, clip(d.name(t.Text), 28), t.Count), Go: route(nav.Stock, t.Text)})
+			b.add(Row{Text: fmt.Sprintf("  %-8s %-28s %d", t.Text, d.name(t.Text), t.Count), Go: route(nav.Stock, t.Text)})
 		}
 	}
 	if len(page.Domains) > 0 {
@@ -882,7 +873,7 @@ func buildWatches(d Data) Screen {
 		if w.ID == d.WatchID {
 			cur = "›"
 		}
-		b.add(Row{Text: fmt.Sprintf("%s %-24s %s", cur, clip(w.Name, 24), unread), Watch: w.ID, HasWatch: true})
+		b.add(Row{Text: fmt.Sprintf("%s %-24s %s", cur, w.Name, unread), Watch: w.ID, HasWatch: true})
 	}
 	s.Rows = b.rows
 	return s
@@ -902,7 +893,7 @@ func latestRows(b *builder, ticker string, d Data) {
 			b.styled(Dim, fmt.Sprintf("  and %d older: search ticker:%s", more, ticker))
 		}
 	case !d.LatestOK:
-		b.styled(Dim, "  loading…")
+		b.styled(Dim, "  loading")
 	default:
 		b.styled(Dim, "  nothing yet")
 	}

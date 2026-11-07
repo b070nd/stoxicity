@@ -104,13 +104,30 @@ func TestTablePresortedKeepsItemOrderButLabelsTheHeader(t *testing.T) {
 	}
 }
 
-func TestTableClipsLongCellsToTheirColumn(t *testing.T) {
+func TestTableWidensAColumnToItsLongestTextAndCutsNothing(t *testing.T) {
 	tb := sampleTable()
 	tb.Items[0].Cells[0] = Str("a very long name indeed")
-	for _, r := range tb.Body(Sort{}) {
-		if strings.HasPrefix(r.Text, "a very … ") {
-			return
+	rows := tb.Rows(Sort{})
+	for _, r := range rows {
+		if strings.Contains(r.Text, "…") {
+			t.Errorf("a cell was cut: %q", r.Text)
 		}
 	}
-	t.Errorf("no row carries the clipped cell: %v", tb.Body(Sort{}))
+	var long, other, head string
+	for _, r := range rows {
+		switch {
+		case strings.HasPrefix(r.Text, "a very long name indeed"):
+			long = r.Text
+		case strings.HasPrefix(r.Text, "Apple"):
+			other = r.Text
+		case strings.HasPrefix(r.Text, "NAME"):
+			head = r.Text
+		}
+	}
+	if long == "" || other == "" || head == "" {
+		t.Fatalf("rows missing: %v", rows)
+	}
+	if !strings.HasPrefix(head, "NAME"+strings.Repeat(" ", len("a very long name indeed")-len("NAME")+1)) {
+		t.Errorf("the header is not as wide as the longest cell: %q", head)
+	}
 }

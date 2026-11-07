@@ -20,8 +20,9 @@ type Column struct {
 	Title string
 	// Key names the column for sorting; a column without one cannot be sorted by.
 	Key string
-	// Width is the cells the column takes; the last column may leave it 0 to
-	// take what is left, unpadded.
+	// Width is the least cells the column takes; it grows to the longest text
+	// in it, so no text is ever cut. The last column may leave it 0 to take what
+	// is left, unpadded.
 	Width int
 	Right bool
 	// Desc: the natural order of the column is largest first (counts, times),
@@ -70,6 +71,29 @@ type Table struct {
 	// it was given (a list too long to sort here, ordered by its own module); the
 	// table only marks the header.
 	Presorted bool
+
+	// widths are the cells each column takes, measured over all the items.
+	widths []int
+}
+
+// sized is the table with its column widths measured over every item, so the
+// rows of a table that is split into groups still line up.
+func (t Table) sized() Table {
+	if t.widths != nil {
+		return t
+	}
+	t.widths = make([]int, len(t.Columns))
+	for i, c := range t.Columns {
+		t.widths[i] = c.width()
+	}
+	for _, it := range t.Items {
+		for i := range t.Columns {
+			if i < len(it.Cells) && t.widths[i] > 0 {
+				t.widths[i] = max(t.widths[i], utf8.RuneCountInString(oneLine(it.Cells[i].Text)))
+			}
+		}
+	}
+	return t
 }
 
 // Effective is s if it names a column of the table, else the default.
@@ -104,13 +128,17 @@ func (t Table) column(key string) int {
 
 // Rows is the header and then the items ordered by s.
 func (t Table) Rows(s Sort) []Row {
+	t = t.sized()
 	s = t.Effective(s)
 	return append([]Row{{Text: t.header(s), Style: Heading}}, t.body(s)...)
 }
 
 // Body is the items alone, ordered by s, for a table shown inside a screen
 // that has a heading of its own.
-func (t Table) Body(s Sort) []Row { return t.body(t.Effective(s)) }
+func (t Table) Body(s Sort) []Row {
+	t = t.sized()
+	return t.body(t.Effective(s))
+}
 
 func (t Table) body(s Sort) []Row {
 	items := t.Items
@@ -189,6 +217,14 @@ func (c Column) width() int {
 	return c.Width
 }
 
+// widthOf is the cells column i takes: the measured width, else its own.
+func (t Table) widthOf(i int) int {
+	if i < len(t.widths) {
+		return t.widths[i]
+	}
+	return t.Columns[i].width()
+}
+
 // join pads the texts to their columns and puts a space between them.
 func (t Table) join(texts []string) string {
 	s, _ := t.layout(texts)
@@ -205,8 +241,7 @@ func (t Table) layout(texts []string) (string, [][2]int) {
 	for i, c := range t.Columns {
 		text := oneLine(texts[i])
 		lead, trail := 0, 0
-		if w := c.width(); w > 0 {
-			text = clip(text, w)
+		if w := t.widthOf(i); w > 0 {
 			pad := max(w-utf8.RuneCountInString(text), 0)
 			if c.Right {
 				lead = pad

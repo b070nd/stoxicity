@@ -33,8 +33,8 @@ func TestTypeReadsTheNameThenTheTicker(t *testing.T) {
 
 func TestDomainIsTheSICDivision(t *testing.T) {
 	for sic, want := range map[string]string{
-		"3571": "Manufacturing", "7372": "Services", "6512": "Finance & RE", "0100": "Agriculture",
-		"1311": "Mining", "5411": "Retail", "4911": "Infrastructure", "": "", "9": "", "ab12": "", "9999": "Public Admin", "1900": "",
+		"3571": "Manufacturing", "7372": "Services", "6512": "Finance & Real Estate", "0100": "Agriculture",
+		"1311": "Mining", "5411": "Retail", "4911": "Infrastructure", "": "", "9": "", "ab12": "", "9999": "Public Administration", "1900": "",
 	} {
 		if got := Domain(sic); got != want {
 			t.Errorf("Domain(%q) = %q, want %q", sic, got, want)

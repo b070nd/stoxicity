@@ -56,6 +56,10 @@ func (s Style) lip() lipgloss.Style {
 		return styleWarn
 	case Cloud1, Cloud2, Cloud3, Cloud4, Cloud5:
 		return cloud[s-Cloud1]
+	case Strong:
+		return styleBold
+	case Hot:
+		return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("11"))
 	case Info:
 		return lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
 	case Accent:
@@ -370,7 +374,7 @@ func (m *Model) keyBar() string {
 func (m *Model) statusLine() string {
 	var parts []string
 	if m.loading {
-		parts = append(parts, "loading…")
+		parts = append(parts, "loading")
 	} else if !m.refreshed.IsZero() {
 		parts = append(parts, "refreshed "+m.refreshed.In(m.be.Zone()).Format("15:04"))
 	}
@@ -405,9 +409,9 @@ func (m *Model) helpLines() []string {
 	for i, b := range DefaultKeys {
 		keys := strings.Join(b.Keys, " ")
 		if len(b.Keys) > 3 {
-			keys = b.Keys[0] + " … " + b.Keys[len(b.Keys)-1]
+			keys = b.Keys[0] + " to " + b.Keys[len(b.Keys)-1]
 		}
-		entries[i] = clip(fmt.Sprintf("%-14s %s", keys, b.Help), col-2)
+		entries[i] = fit(fmt.Sprintf("%-14s %s", keys, b.Help), col-2)
 	}
 	half := (len(entries) + 1) / 2
 	for i := range half {

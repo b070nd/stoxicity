@@ -208,7 +208,7 @@ func (m *Model) entered() tea.Cmd {
 
 // showLoading replaces the screen with a placeholder until the load answers.
 func (m *Model) showLoading() {
-	m.scr = Screen{Title: m.stack.Current().Label(), Notice: "loading…"}
+	m.scr = Screen{Title: m.stack.Current().Label(), Notice: "loading"}
 	m.builtFor = ""
 	m.vp.Clear()
 }
@@ -723,7 +723,7 @@ func (m *Model) openURL() tea.Cmd {
 	return func() tea.Msg { return openedMsg{err: open(link)} }
 }
 
-func clipURL(s string) string { return clip(oneLine(s), 60) }
+func clipURL(s string) string { return oneLine(s) }
 
 // bodyHeight is how many rows the body shows.
 func (m *Model) bodyHeight() int { return max(m.height-chromeLines, minHeight-chromeLines) }

@@ -200,7 +200,6 @@ func companyTable(q universe.Query, priced bool) Table {
 	cols := []Column{
 		{Width: 1},
 		{Title: "TICKER", Key: "ticker", Width: 7},
-		{Title: "NAME", Key: "name", Width: 26},
 		{Title: "TYPE", Key: "type", Width: 9},
 		{Title: "DOMAIN", Key: "domain", Width: 14},
 	}
@@ -213,8 +212,8 @@ func companyTable(q universe.Query, priced bool) Table {
 	cols = append(cols,
 		Column{Title: "LISTED", Key: "exchange", Width: 6},
 		Column{Title: "NEWS", Key: "news", Width: 5, Right: true, Desc: true},
-		Column{Title: "INDUSTRY", Key: "industry", Width: 22},
-		Column{Title: "TAGS"})
+		Column{Title: "TAGS", Width: 4},
+		Column{Title: "NAME", Key: "name"})
 	t := Table{Columns: cols, Presorted: true}
 	key, desc := q.SortKey()
 	switch {
@@ -288,7 +287,7 @@ func companyItem(h universe.Hit, watched bool, quotes map[string]Quote, priced b
 		tags = append(tags, "#"+t)
 	}
 	typ, dom := p.Type(), p.Domain()
-	cells := []Cell{Str(star), Str(p.Ticker), Str(p.Name), Str(typ).Styled(typeStyle(typ)), Str(dom).Styled(domainStyle(dom))}
+	cells := []Cell{Str(star).Styled(Warn), Str(p.Ticker).Styled(Strong), Str(typ).Styled(typeStyle(typ)), Str(dom).Styled(domainStyle(dom))}
 	if priced {
 		var bar, close, move Cell
 		if q, ok := quotes[p.Ticker]; ok {
@@ -300,7 +299,8 @@ func companyItem(h universe.Hit, watched bool, quotes map[string]Quote, priced b
 		}
 		cells = append(cells, bar, close, move)
 	}
-	cells = append(cells, Str(p.Exchange), Num(news, float64(h.News)), Str(p.Industry), Str(strings.Join(tags, " ")))
+	cells = append(cells, Str(p.Exchange).Styled(exchangeStyle(p.Exchange)), Num(news, float64(h.News)).Styled(newsStyle(h.News)),
+		Str(strings.Join(tags, " ")).Styled(Accent), Str(p.Name))
 	return Item{Cells: cells, Row: Row{Go: route(nav.Stock, p.Ticker)}}
 }
 
@@ -321,7 +321,7 @@ func profileRows(b *builder, ticker string, d Data) (known bool) {
 	if len(p.Siblings) > 0 {
 		b.text(fmt.Sprintf("  %-10s %s", "also", "the same company trades as:"))
 		for _, sib := range p.Siblings {
-			b.add(Row{Text: fmt.Sprintf("  %-10s %-8s %s", "", sib, clip(d.name(sib), 40)), Go: route(nav.Stock, sib)})
+			b.add(Row{Text: fmt.Sprintf("  %-10s %-8s %s", "", sib, d.name(sib)), Go: route(nav.Stock, sib)})
 		}
 	}
 	listing := p.Exchange
@@ -465,7 +465,7 @@ func feedRows(b *builder, p universe.Profile, d Data) {
 		state := "not read yet"
 		switch {
 		case f.Failures > 0:
-			state = fmt.Sprintf("failing (%d×): %s", f.Failures, clip(f.LastError, 50))
+			state = fmt.Sprintf("failing (%d×): %s", f.Failures, f.LastError)
 		case !f.LastOK.IsZero():
 			state = "read " + shortAgo(d.Now.Sub(f.LastOK))
 			if f.LastNew > 0 {
@@ -474,7 +474,7 @@ func feedRows(b *builder, p universe.Profile, d Data) {
 		}
 		text := fmt.Sprintf("  %-10s %-12s %s", label, kind, state)
 		if f.Kind != store.FeedSEC && f.Title != "" {
-			text += " · " + clip(f.Title, 40)
+			text += " · " + f.Title
 		}
 		b.add(Row{Text: text + "   (b opens)", URL: url})
 	}
