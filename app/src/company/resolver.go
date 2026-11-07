@@ -16,9 +16,10 @@ import (
 type Resolver struct {
 	*entity.Index
 	display map[string]model.Entity
+	byCIK   map[string][]model.Entity
 }
 
-var _ entity.Resolver = (*Resolver)(nil)
+var _ entity.CIKResolver = (*Resolver)(nil)
 
 // NewResolver builds a Resolver from the master list and extra tickers that
 // the user follows (the watchlist, the tickers in watches). An extra ticker
@@ -80,7 +81,21 @@ func NewResolver(m Master, extra []string) *Resolver {
 		matching = append(matching, e)
 	}
 	slices.SortFunc(matching, func(a, b model.Entity) int { return strings.Compare(a.Ticker, b.Ticker) })
-	return &Resolver{Index: entity.New(matching), display: display}
+	ciks := make(map[string][]model.Entity, len(byCIK))
+	for _, e := range display {
+		if e.CIK != "" {
+			ciks[e.CIK] = append(ciks[e.CIK], e)
+		}
+	}
+	for _, list := range ciks {
+		slices.SortFunc(list, func(a, b model.Entity) int { return strings.Compare(a.Ticker, b.Ticker) })
+	}
+	return &Resolver{Index: entity.New(matching), display: display, byCIK: ciks}
+}
+
+// ByCIK returns every ticker of the company with the CIK, with its name.
+func (r *Resolver) ByCIK(cik string) []model.Entity {
+	return slices.Clone(r.byCIK[strings.TrimSpace(cik)])
 }
 
 // Lookup returns the entity with the ticker, with its name and CIK.

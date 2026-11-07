@@ -106,6 +106,9 @@ type Model struct {
 	truncated bool
 
 	verdicts map[string]labels.Verdict
+	// queue and progress are the Label screen's: the articles to judge and how the labelling stands.
+	queue    []labels.Pick
+	progress labels.Progress
 	sources  []status.Source
 
 	detail  *model.Article
@@ -134,6 +137,8 @@ type (
 		// haveSources: sources was read (it may be empty).
 		haveSources bool
 		verdicts    map[string]labels.Verdict
+		queue       []labels.Pick
+		progress    labels.Progress
 		shared      bool
 		truncated   bool
 		err         error
@@ -211,7 +216,7 @@ func (m *Model) params() pages.Params {
 // needsShared reports whether the screen is built from the shared window.
 func needsShared(k nav.Kind) bool {
 	switch k {
-	case nav.Day, nav.Search, nav.Sources, nav.Watches:
+	case nav.Day, nav.Search, nav.Sources, nav.Watches, nav.Label:
 		return false
 	}
 	return true
@@ -222,6 +227,9 @@ func needsShared(k nav.Kind) bool {
 func (m *Model) loadCmd(force bool) tea.Cmd {
 	return tea.Batch(m.loadWindow(force), m.latestCmd())
 }
+
+// labelQueueSize is how many articles the Label screen asks to judge.
+const labelQueueSize = 20
 
 // latestLimit is how many articles the stock page asks for, newest first.
 const latestLimit = 40
@@ -278,6 +286,10 @@ func (m *Model) loadWindow(force bool) tea.Cmd {
 			out.sources, err = be.Sources(c)
 		case nav.Watches:
 			// The watch list is refreshed separately; nothing else to load.
+		case nav.Label:
+			if out.queue, err = be.LabelQueue(c, labelQueueSize); err == nil {
+				out.progress, err = be.LabelProgress(c)
+			}
 		case nav.Day:
 			var day time.Time
 			day, err = time.ParseInLocation(time.DateOnly, r.Arg, zone)
@@ -334,7 +346,8 @@ func (m *Model) rebuild() {
 		Params: p, Watchlist: m.be.Watchlist(), Topics: m.be.TopicNames(),
 		Name: m.be.CompanyName, Verdicts: m.verdicts, Sources: m.sources,
 		Watches: m.watches, WatchID: m.stack.Watch(), Now: m.be.Now(), Truncated: m.truncated,
-		Universe: m.be.Universe(), Following: m.be.Following, Feeds: m.be.StockFeeds, Quotes: m.be.Quotes(),
+		Queue: m.queue, Progress: m.progress,
+		Universe: m.be.Universe(), Following: m.be.Following, Feeds: m.be.StockFeeds, Insiders: m.be.Insiders, Quotes: m.be.Quotes(), Numbers: m.be.Numbers(),
 	}
 	d.Exchange, d.Chosen = m.scopeOf(r), m.exchange
 	if needsShared(r.Kind) {

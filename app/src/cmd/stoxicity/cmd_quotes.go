@@ -28,7 +28,7 @@ func (a *app) universeQuotes(ctx context.Context, args []string) error {
 		return fmt.Errorf("quotes are off: set company.quotes to polygon")
 	}
 	if a.cfg.Company.PolygonKey == "" {
-		return fmt.Errorf("daily candles come from Polygon, which needs a key of your own: set STOXICITY_POLYGON_KEY (in .env.local); a free key allows five requests a minute, enough for the whole market")
+		return fmt.Errorf("daily candles come from Polygon, which needs a key of your own: set STOXICITY_POLYGON_KEY or MASSIVE_API_KEY (in .env.local); a free key allows five requests a minute, enough for the whole market")
 	}
 	if a.companies().Empty() {
 		return fmt.Errorf("no company list yet: run \"stoxicity universe update\"")

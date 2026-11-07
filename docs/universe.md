@@ -16,6 +16,8 @@ Five sources, each optional, joined by ticker:
 | Nasdaq Trader `nasdaqlisted.txt`, `otherlisted.txt` | ETF or stock, test symbol, market tier, financial status, the listing venue | the same command, when `company.listing` is on |
 | SEC `submissions/CIK##########.json` | industry (SIC code and words), the exchange its stock trades on (the only one for most over-the-counter companies), business address and phone, EIN and LEI, state of incorporation, fiscal year end, filer category, former names | `stoxicity universe enrich` |
 | Wikidata (open data, CC0), through its query service | the official website of the ticker's company, matched on the company's name so that a ticker another company uses elsewhere lends nothing (the SEC leaves its own website field empty) | `stoxicity universe enrich` (`company.sites_url` replaces the address) |
+| SEC XBRL frames `data.sec.gov/api/xbrl/frames/...` | revenue and net income of the latest fiscal years, assets and equity at a date, shares on the cover page (market value = shares times the last close); no key | `stoxicity universe fundamentals` (and the background refresh, weekly) |
+| SEC Form 4 filings (the complete submission text of each, `Archives/edgar/data/<cik>/<accession>.txt`) | who in a company bought or sold its shares on the open market, how many, at what price, and what they are to the company; no key | `stoxicity universe insiders` (and the background refresh, 300 filings a cycle) |
 | your layer, `tenants/<tenant>/stocks.yaml` | lists, tags, and companies the SEC lacks (non-US listings) | you, or `universe tag` / `universe list` / the interface |
 
 The first three are cached under `data/company/`. The interface never fetches;
@@ -176,8 +178,9 @@ name:nvidia              name, aliases and former names (company: is the same)
 cik:320193
 exchange:nyse            the SEC's exchange, or Nasdaq's venue ("NYSE Arca")
 kind:etf                 stock, etf or test
-type:preferred           stock, preferred, warrant, unit, right, adr, etf, test
-                         (read from the name and the ticker, finer than kind:)
+type:preferred           stock, preferred, warrant, unit, right, adr, note, etf, test
+                         (read from the Nasdaq security name, the company name
+                         and the ticker; finer than kind:)
 domain:finance           the SIC division: agriculture, mining, construction,
                          manufacturing, infrastructure, wholesale, retail,
                          finance & real estate, services, public administration
@@ -191,8 +194,24 @@ list:compounders         member of one of your lists
 tag:moat                 carries your tag
 watched:yes              on your watchlist or in a watch
 news:>=3  news:yes       relevant articles in the window
+close:>=10 change:<-5%   last close and the move from the day before (need prices)
+marketcap:>10b           shares outstanding times the last close; k, m, b, t
+revenue:1b..5b           revenue of the latest fiscal year; a range with ..
+income:>0  assets:>1b  equity:>0
+growth:>5%  margin:>10%  revenue growth over the year before; net income over
+roe:>15  equity_ratio:>20 revenue; net income over equity; equity over assets
+                         (a ratio takes a percentage, with or without the %)
+buys:>=100k  sells:>1m   money the insiders (officers, directors, 10% owners)
+                         spent on open market purchases, or took in on sales,
+                         in the last 90 days (Form 4 codes P and S; awards, tax
+                         withholding, exercises and gifts are not counted)
+buyers:>=2  sellers:>=3  how many different insiders did; a stock none of whose
+                         insiders traded has no figure, not a zero
 sort:name  sort:-news    the order: ticker, name, news, industry, exchange, kind,
-                         type, domain, close, change (close and change need prices)
+                         type, domain, close, change, marketcap, revenue, income,
+                         growth, margin, roe, buys, sells (the last ones need prices or the
+                         SEC figures; a stock without the number is last either
+                         way round, and matches none of the number filters)
 group:exchange|kind|industry|none
                          how the catalogue arranges the list under headings; the
                          default is by exchange. Not a filter.

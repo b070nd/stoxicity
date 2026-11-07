@@ -37,7 +37,7 @@ read. The loader is described in `app/src/envfile/envfile.go`.
 | `STOXICITY_GMAIL_REFRESH_TOKEN` | `.env.local` | **yes** | Optional. `stoxicity gmail auth` stores the token in `data/gmail/refresh_token` (owner-only); this variable overrides the file |
 | `STOXICITY_MAIL_FROM`, `_TO` | `.env.local` | personal | Sender (your Gmail address) and recipient |
 | `STOXICITY_WEBHOOK_URL` | `.env.local` | **yes** | Webhook channel: the https address notifications are posted to (the URL carries the secret) |
-| `STOXICITY_POLYGON_KEY` | `.env.local` | **yes** | Polygon API key for daily candles (`company.quotes`); unset: no prices |
+| `STOXICITY_POLYGON_KEY` or `MASSIVE_API_KEY` | `.env.local` | **yes** | API key of Polygon.io, now called Massive, for daily candles (`company.quotes`); the first name wins; unset: no prices |
 | `STOXICITY_LAYA_API_KEY` | `.env.local` | **yes** | laya-serve key, sent as a Bearer token; must equal the sidecar's `LAYA_API_KEY` |
 
 A licensed source adds one variable of its own and names it with `auth_env:`.
@@ -146,7 +146,34 @@ company:
   quotes: polygon     # where daily candles come from: polygon (needs STOXICITY_POLYGON_KEY) or off
   quotes_per_cycle: 10 # market days brought up to date in one refresh (0 to 5000)
   quotes_url: ""      # the source's address, for a test
+  fundamentals: sec   # where revenue, profit and shares come from: sec (no key) or off
+  fundamentals_url: "" # the SEC frames address, for a test
+  insiders: sec       # where insider trades come from: sec (the Form 4 filings, no key) or off
+  insiders_per_cycle: 300 # unread Form 4 filings read in one refresh (0 to 5000)
+  insiders_url: ""    # the SEC web address, for a test
 ```
+
+`fundamentals` fills the MCAP, REVENUE, GROWTH and MARGIN columns, the figures
+on a stock's page and the `marketcap:`, `revenue:`, `income:`, `assets:`,
+`equity:`, `growth:`, `margin:`, `roe:` and `equity_ratio:` queries. The source
+is the SEC's XBRL frames API (`data.sec.gov/api/xbrl/frames`), which needs no
+key: one request answers for every filer, so a reading is about 45 small
+requests (about 10 seconds, a few megabytes) and is repeated at most once a week.
+Companies whose fiscal year is not the calendar year are read with their own
+year-end. Only common stock has figures, never its warrants, units or preferred
+stock. `stoxicity universe fundamentals [-force]` reads by hand and prints how
+many companies each figure exists for.
+
+`insiders` reads the Form 4 filings that the filings feed found. The feed says
+only that a Form 4 was filed; each filing is then read once, newest first, with
+one request for its complete submission text (about 6 KB), so a day's few
+hundred filings cost a minute of requests at the SEC's pace and the first
+backlog of 874 filings took 79 seconds. A rate-limit page stops the reading at
+once and is retried next cycle; a filing that cannot be read is noted and not
+asked again. The result fills the BUYS and SELLS columns, the Insiders block of
+a stock's page and the `buys:`, `sells:`, `buyers:` and `sellers:` queries.
+`stoxicity universe insiders [-max N] [TICKER]` reads by hand and lists the
+purchases of the last 90 days, or one company's trades of the last year.
 
 `quotes` fills the DAY, CLOSE and CHG columns of the stock lists and the "last
 close" of a stock's page. The only source is [Polygon](https://polygon.io)'s
@@ -270,11 +297,11 @@ only fills a gap:
 
 | Field | Applied when |
 |---|---|
-| `kind` | the lens found none (`other`) and laya names a real kind, confidently. Materiality becomes at least the kind's base and relevance moves 0.12 per step gained; the noise kinds (`analyst_target`, `price_chatter`) cap relevance at 0.35 |
+| `kind` | the lens found none (`other`) and laya names a real kind, confidently. Materiality becomes at least the kind's base and relevance moves 0.15 per step gained; the noise kinds (`analyst_target`, `price_chatter`) cap relevance at 0.35 |
 | `tone` | the lens left it at zero |
 | `sector` | the classifier found none; a sector from your `sectors:` is never overridden |
 | `topics` | always, added to the topics already set |
-| `materiality` | replaces the lens's by the rounded mean of both, relevance moves 0.12 per step |
+| `materiality` | replaces the lens's by the rounded mean of both, relevance moves 0.15 per step |
 | `relevance` | blended: `(1 - w) * lens + w * laya` with `w = relevance_weight` |
 
 When laya confidently names another kind than the lens, the lens keeps its
@@ -360,10 +387,19 @@ as negative, Tesla came out as technology with 0.82 confidence, and the
 `apply` list is short, and why sector, materiality and relevance are advisory.
 Measure before switching more on:
 
-1. `stoxicity label sample` draws articles to label; `stoxicity label keep|drop ID...`
-   records your verdicts.
+1. `stoxicity label queue` (or the Label screen of the interface, key `a`) offers
+   the articles worth judging first: the ones whose relevance is nearest the
+   threshold, one kind of event after the other so a rare kind is not starved,
+   one article per story, and a random fourth. The random ones are marked
+   *sampled* and their labels are the honest sample (`label keep|drop -sampled`;
+   in the interface it is set for you). Scores are hidden on the rows so the
+   verdict does not follow the lens. `stoxicity label sample` draws a purely
+   random set; `stoxicity label keep|drop ID...` records your verdicts.
 2. `stoxicity eval` compares the scores, with laya's reasons included, against
-   your labels.
+   your labels: precision and recall of the lens's relevant calls overall, on the
+   sampled labels alone, per lens version, **per kind of event** and per domain.
+   The status line of the Label screen shows the same, "labels 42 of 300 ·
+   precision 0.71 · recall 0.64". Read the numbers after about 300 labels.
 3. Add a field to `apply` only when its advisory answers agree with your labels
    better than the rules do, and raise `min_confidence` until they do.
 

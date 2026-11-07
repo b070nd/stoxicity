@@ -37,6 +37,26 @@ func Change(prev, close float64) float64 {
 	return close/prev - 1
 }
 
+// MaxMove is the ratio of two closes a day apart beyond which they are not
+// taken for the same series.
+const MaxMove = 5.0
+
+// DayChange is the move from the close before to this close, as a fraction;
+// false when there is no close before, or when the move is one a single day
+// does not make (below a fifth or above five times): that is two different
+// price series mixed, a split not applied or a ticker reused, and showing it
+// would put noise at the top of a sort by change.
+func DayChange(prev, close float64) (float64, bool) {
+	if prev <= 0 || close <= 0 {
+		return 0, false
+	}
+	r := close / prev
+	if r < 1/MaxMove || r > MaxMove {
+		return 0, false
+	}
+	return r - 1, true
+}
+
 // A Source is where candles come from. It is one of the two kinds below,
 // whichever the source can do cheaply: a source of one stock at a time, or of a
 // whole market day at a time. Only sources with a documented API and a key of
@@ -91,24 +111,29 @@ func (p Polygon) Day(ctx context.Context, day time.Time) ([]Candle, error) {
 	if err != nil {
 		return nil, err
 	}
+	// A result holds both "T" (the ticker) and "t" (a time in milliseconds), and
+	// encoding/json matches names without regard to case, so the keys are read
+	// by their exact spelling.
 	var ans struct {
-		Results []struct {
-			T string  `json:"T"`
-			O float64 `json:"o"`
-			H float64 `json:"h"`
-			L float64 `json:"l"`
-			C float64 `json:"c"`
-			V float64 `json:"v"`
-		} `json:"results"`
+		Results []map[string]json.RawMessage `json:"results"`
 	}
 	if err := json.Unmarshal(resp.Body, &ans); err != nil {
 		return nil, fmt.Errorf("marketdata: read Polygon's answer for %s: %w", day.Format(time.DateOnly), err)
 	}
 	out := make([]Candle, 0, len(ans.Results))
 	for _, r := range ans.Results {
-		c := Candle{Ticker: r.T, Day: day.Format(time.DateOnly), Open: r.O, High: r.H, Low: r.L, Close: r.C, Volume: int64(r.V)}
-		if c.Valid() {
-			out = append(out, c)
+		var ticker string
+		var o, h, l, c, v float64
+		for key, dst := range map[string]any{"T": &ticker, "o": &o, "h": &h, "l": &l, "c": &c, "v": &v} {
+			if raw, ok := r[key]; ok {
+				if err := json.Unmarshal(raw, dst); err != nil {
+					return nil, fmt.Errorf("marketdata: read Polygon's answer for %s: field %q: %w", day.Format(time.DateOnly), key, err)
+				}
+			}
+		}
+		candle := Candle{Ticker: ticker, Day: day.Format(time.DateOnly), Open: o, High: h, Low: l, Close: c, Volume: int64(v)}
+		if candle.Valid() {
+			out = append(out, candle)
 		}
 	}
 	return out, nil

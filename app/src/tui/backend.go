@@ -59,6 +59,15 @@ type Backend interface {
 	// ticker, with the close before it. The map is read-only; it is empty when
 	// no price source is set up.
 	Quotes() map[string]Quote
+	// Numbers are the figures of the companies' latest fiscal year and market
+	// value, by name (marketcap, revenue, income, assets, equity, growth, margin,
+	// roe, equity_ratio, shares) and then ticker. Only common stocks have them.
+	// The map is read-only; it is empty when the SEC's figures are not loaded.
+	Numbers() map[string]map[string]float64
+	// Insiders lists the insider trades of the company a ticker belongs to over
+	// the last year, newest first: who traded, what, how many shares, at what
+	// price. Empty when the Form 4 filings are not read.
+	Insiders(ticker string) []model.InsiderTrade
 
 	Watches(ctx context.Context) ([]WatchInfo, error)
 	// Articles are the visible articles published in [from, to). With a watch
@@ -70,6 +79,11 @@ type Backend interface {
 	Sources(ctx context.Context) ([]status.Source, error)
 	Verdicts(ctx context.Context) (map[string]labels.Verdict, error)
 	Label(ctx context.Context, articleID string, keep bool) error
+	// LabelQueue chooses the next n articles to judge: the ones the lens is least
+	// sure of, kind by kind, and a random fourth.
+	LabelQueue(ctx context.Context, n int) ([]labels.Pick, error)
+	// LabelProgress counts the labels and measures the lens against them.
+	LabelProgress(ctx context.Context) (labels.Progress, error)
 	// MarkSeen moves the watch's read marker to now.
 	MarkSeen(ctx context.Context, watchID string) error
 	// Tag puts a tag on a stock, or takes it off.

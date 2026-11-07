@@ -3,6 +3,7 @@ package lens
 import (
 	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -62,13 +63,13 @@ func TestScoreGolden(t *testing.T) {
 		rel  float64
 	}{
 		{"8-K 2.02 results", model.Article{SourceID: "edgar", Form: "8-K", Items: []string{"2.02"},
-			Title: "Acme Corp reports third quarter results"}, model.EventResults, 3, 0.49},
+			Title: "Acme Corp reports third quarter results"}, model.EventResults, 3, 0.55},
 		{"8-K 2.02 results with earnings word", model.Article{SourceID: "edgar", Form: "8-K", Items: []string{"2.02"},
-			Title: "Acme Corp 8-K", Summary: "Earnings release for the quarter ended June 30"}, model.EventResults, 3, 0.55},
+			Title: "Acme Corp 8-K", Summary: "Earnings release for the quarter ended June 30"}, model.EventResults, 3, 0.61},
 		{"8-K 4.02 restatement", model.Article{SourceID: "edgar", Form: "8-K", Items: []string{"4.02"},
-			Title: "Acme Corp: previously issued financial statements should no longer be relied upon"}, model.EventNonReliance, 4, 0.61},
+			Title: "Acme Corp: previously issued financial statements should no longer be relied upon"}, model.EventNonReliance, 4, 0.7},
 		{"8-K 4.02 restatement with material weakness", model.Article{SourceID: "edgar", Form: "8-K", Items: []string{"4.02"},
-			Title: "Acme Corp restatement", Summary: "The audit committee found a material weakness"}, model.EventNonReliance, 5, 0.73},
+			Title: "Acme Corp restatement", Summary: "The audit committee found a material weakness"}, model.EventNonReliance, 5, 0.85},
 		{"analyst price target", model.Article{SourceID: "blog",
 			Title: "Analyst raises price target on X"}, model.EventAnalystTgt, 1, 0.09},
 		{"analyst upgrade", model.Article{SourceID: "wire",
@@ -76,39 +77,39 @@ func TestScoreGolden(t *testing.T) {
 		{"analyst note with boosts is capped", model.Article{SourceID: "edgar",
 			Title: "Analyst upgrade cites earnings, guidance and moat"}, model.EventAnalystTgt, 1, 0.35},
 		{"buyback", model.Article{SourceID: "wire",
-			Title: "Company X announces $5 billion share repurchase program"}, model.EventBuyback, 3, 0.5},
+			Title: "Company X announces $5 billion share repurchase program"}, model.EventBuyback, 3, 0.56},
 		{"routine dividend", model.Article{SourceID: "wire",
-			Title: "Company X declares regular quarterly dividend of $0.25 per share"}, model.EventDividend, 2, 0.38},
+			Title: "Company X declares regular quarterly dividend of $0.25 per share"}, model.EventDividend, 2, 0.41},
 		{"commentary with demote words", model.Article{SourceID: "blog",
 			Title: "Technical analysis: intraday swings and options flow on X stock"}, model.EventOther, 1, 0},
 		{"empty text keeps the 8-K kind", model.Article{SourceID: "edgar", Form: "8-K", Items: []string{"2.02"},
 			Title: "", Summary: "  \n"}, model.EventResults, 3, 0},
 		{"form 4 purchase", model.Article{SourceID: "edgar", Form: "4",
-			Title: "Form 4: Smith, CEO, purchase of 10,000 shares"}, model.EventInsiderBuy, 2, 0.37},
+			Title: "Form 4: Smith, CEO, purchase of 10,000 shares"}, model.EventInsiderBuy, 2, 0.4},
 		{"form 4 sale", model.Article{SourceID: "edgar", Form: "4",
-			Title: "Form 4 - director sale of shares"}, model.EventInsiderSell, 2, 0.37},
+			Title: "Form 4 - director sale of shares"}, model.EventInsiderSell, 2, 0.4},
 		{"form 4 without a word", model.Article{SourceID: "edgar", Form: "4",
 			Title: "Statement of changes in beneficial ownership"}, model.EventOther, 1, 0.25},
 		{"form 10-K", model.Article{SourceID: "edgar", Form: "10-K",
-			Title: "Annual report for fiscal year 2025"}, model.EventResults, 3, 0.55},
+			Title: "Annual report for fiscal year 2025"}, model.EventResults, 3, 0.61},
 		{"form 10-Q", model.Article{SourceID: "edgar", Form: "10-Q",
-			Title: "Quarterly report"}, model.EventResults, 3, 0.49},
+			Title: "Quarterly report"}, model.EventResults, 2, 0.4},
 		{"cyber incident", model.Article{SourceID: "wire",
-			Title: "Acme discloses cybersecurity incident affecting systems"}, model.EventCyber, 4, 0.56},
+			Title: "Acme discloses cybersecurity incident affecting systems"}, model.EventCyber, 4, 0.65},
 		{"bankruptcy with going concern", model.Article{SourceID: "wire",
-			Title: "Acme files for Chapter 11; going concern doubt"}, model.EventBankruptcy, 5, 0.68},
+			Title: "Acme files for Chapter 11; going concern doubt"}, model.EventBankruptcy, 5, 0.8},
 		{"officer change", model.Article{SourceID: "wire",
-			Title: "CEO to step down as board appoints interim chief executive"}, model.EventOfficerChange, 2, 0.32},
+			Title: "CEO to step down as board appoints interim chief executive"}, model.EventOfficerChange, 2, 0.35},
 		{"guidance with magnitude", model.Article{SourceID: "wire",
-			Title: "Acme raises outlook after record quarter"}, model.EventGuidance, 4, 0.56},
+			Title: "Acme raises outlook after record quarter"}, model.EventGuidance, 4, 0.65},
 		{"price chatter", model.Article{SourceID: "wire",
-			Title: "Acme shares plunge 12% in early trading"}, model.EventPriceChatter, 2, 0.32},
+			Title: "Acme shares plunge 12% in early trading"}, model.EventPriceChatter, 2, 0.35},
 		{"acquisition", model.Article{SourceID: "wire",
-			Title: "Acme to acquire Beta in all-stock merger"}, model.EventAcquisition, 3, 0.44},
+			Title: "Acme to acquire Beta in all-stock merger"}, model.EventAcquisition, 3, 0.5},
 		{"13D", model.Article{SourceID: "wire",
-			Title: "Activist fund files 13D stake in Acme"}, model.Event13DG, 2, 0.32},
+			Title: "Activist fund files 13D stake in Acme"}, model.Event13DG, 2, 0.35},
 		{"rates", model.Article{SourceID: "wire",
-			Title: "FOMC holds federal funds rate steady"}, model.EventRates, 2, 0.32},
+			Title: "FOMC holds federal funds rate steady"}, model.EventRates, 2, 0.35},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -155,8 +156,8 @@ func TestReasonsRecordEveryAdjustment(t *testing.T) {
 	if !reflect.DeepEqual(got.Reasons, want) {
 		t.Errorf("reasons = %q\nwant      %q", got.Reasons, want)
 	}
-	if got.Materiality != 3 || got.Relevance != 0.61 {
-		t.Errorf("materiality %d, relevance %v; want 3, 0.61", got.Materiality, got.Relevance)
+	if got.Materiality != 3 || got.Relevance != 0.67 {
+		t.Errorf("materiality %d, relevance %v; want 3, 0.67", got.Materiality, got.Relevance)
 	}
 }
 
@@ -470,4 +471,64 @@ func contains(list []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func ratingOpts() Options {
+	o := testOpts()
+	o.ItemRating = func(items []string) (model.ItemRating, bool) {
+		switch {
+		case slices.Contains(items, "4.02"):
+			return model.ItemRating{Kind: model.EventNonReliance, Materiality: 5, Item: "4.02"}, true
+		case slices.Contains(items, "2.02"):
+			r := model.ItemRating{Kind: model.EventResults, Materiality: 3, Item: "2.02"}
+			if slices.Contains(items, "7.01") {
+				r.Also, r.Bonus = []string{"7.01"}, 0.02
+			}
+			return r, true
+		}
+		return model.ItemRating{}, false
+	}
+	return o
+}
+
+func TestItemRatingSetsKindMaterialityAndBonusAndTellsWhy(t *testing.T) {
+	l := New(defaultCfg, ratingOpts())
+	alone := l.Score(model.Article{SourceID: "wire", Form: "8-K", Items: []string{"2.02", "9.01"}, Title: "8-K - Acme Inc."})
+	if alone.Kind != model.EventResults || alone.Materiality != 3 || alone.Relevance != 0.5 {
+		t.Fatalf("results alone: %+v", alone)
+	}
+	if alone.Reasons[0] != "8-K item 2.02 (Results of Operations and Financial Condition)" || alone.Reasons[2] != "materiality 3 from the form" {
+		t.Errorf("reasons %q", alone.Reasons)
+	}
+	with := l.Score(model.Article{SourceID: "wire", Form: "8-K", Items: []string{"2.02", "7.01", "9.01"}, Title: "8-K - Acme Inc."})
+	if with.Relevance != 0.52 || with.Reasons[0] != "8-K item 2.02 (Results of Operations and Financial Condition), also 7.01" ||
+		!slices.Contains(with.Reasons, "other 8-K items: relevance +0.02") {
+		t.Errorf("results with a presentation: %+v", with)
+	}
+	if alone.Relevance >= with.Relevance {
+		t.Error("results are not all one value any more")
+	}
+	// A restatement item outranks, and an unrated filing is read from its text.
+	if s := l.Score(model.Article{SourceID: "wire", Form: "8-K", Items: []string{"2.02", "4.02"}, Title: "x"}); s.Materiality != 5 || s.Relevance != 0.8 {
+		t.Errorf("restatement: %+v", s)
+	}
+	if s := l.Score(model.Article{SourceID: "wire", Form: "8-K", Items: []string{"8.01"}, Title: "Acme declares a dividend"}); s.Kind != model.EventDividend {
+		t.Errorf("an unrated item falls back to the text: %+v", s)
+	}
+}
+
+func TestAQuarterlyReportIsRoutineAndAnAnnualReportIsNot(t *testing.T) {
+	l := New(defaultCfg, testOpts())
+	q := l.Score(model.Article{SourceID: "wire", Form: "10-Q", Title: "Acme Inc. periodic filing"})
+	k := l.Score(model.Article{SourceID: "wire", Form: "10-K", Title: "Acme Inc. periodic filing"})
+	if q.Materiality != 2 || q.Relevance != 0.35 || k.Materiality != 3 || k.Relevance != 0.5 {
+		t.Errorf("10-Q %+v, 10-K %+v", q, k)
+	}
+	if !strings.Contains(q.Reasons[0], "8-K item 2.02") {
+		t.Errorf("the reason says where the results were: %q", q.Reasons)
+	}
+	// Materiality 3 reaches the default threshold 0.5 whatever the source.
+	if !k.Relevant(0.5) || q.Relevant(0.5) {
+		t.Error("an annual report counts, a quarterly one does not")
+	}
 }

@@ -60,8 +60,8 @@ func buildCompanies(q string, d Data) Screen {
 		s.Notice = err.Error()
 		return s
 	}
-	priced := len(d.Quotes) > 0
-	t := companyTable(query, priced)
+	cols := d.companyColumns()
+	t := companyTable(query, cols)
 	s.Table, s.Sort = t.shape(), t.Effective(d.Sort)
 	if s.Sort.Key != "" {
 		query = query.WithSort(s.Sort.Key, s.Sort.Desc != (s.Sort.Key == "news"))
@@ -81,8 +81,8 @@ func buildCompanies(q string, d Data) Screen {
 	if q == "" {
 		b.styled(Dim, queryHint)
 	}
-	if !priced {
-		b.styled(Dim, "no prices yet: set STOXICITY_POLYGON_KEY (a free key from polygon.io) and run `stoxicity universe quotes`, or leave `stoxicity run` going")
+	if !cols.Priced {
+		b.styled(Dim, "no prices yet: set STOXICITY_POLYGON_KEY or MASSIVE_API_KEY (a free key from massive.com, formerly polygon.io) and run `stoxicity universe quotes`, or leave `stoxicity run` going")
 	} else {
 		b.styled(Dim, "DAY: the day's range, the thick part open to close (green up, red down) · prices of "+d.latestQuoteDay())
 	}
@@ -123,7 +123,7 @@ func buildCompanies(q string, d Data) Screen {
 	}
 	keys := make([]string, len(hits))
 	for i, h := range hits {
-		t.Items = append(t.Items, companyItem(h, watched[h.Profile.Ticker], d.Quotes, priced, d.Now))
+		t.Items = append(t.Items, companyItem(h, watched[h.Profile.Ticker], d, cols))
 		keys[i] = h.Group(group)
 	}
 	drill := func(value string) *nav.Route {
@@ -196,25 +196,37 @@ func groupName(group, value string) string {
 // ranked search), so the table only labels the header: its default is what the
 // query asks for. News is listed busiest first when ascending, which is how
 // the query language says it, so the header shows the opposite arrow.
-func companyTable(q universe.Query, priced bool) Table {
-	cols := []Column{
+func companyTable(q universe.Query, cols companyCols) Table {
+	columns := []Column{
 		{Width: 1},
 		{Title: "TICKER", Key: "ticker", Width: 7},
 		{Title: "TYPE", Key: "type", Width: 9},
 		{Title: "DOMAIN", Key: "domain", Width: 14},
 	}
-	if priced {
-		cols = append(cols,
+	if cols.Priced {
+		columns = append(columns,
 			Column{Title: "DAY", Width: candleWidth},
 			Column{Title: "CLOSE", Key: "close", Width: 8, Right: true, Desc: true},
 			Column{Title: "CHG", Key: "change", Width: 7, Right: true, Desc: true})
 	}
-	cols = append(cols,
+	if cols.Funded {
+		columns = append(columns,
+			Column{Title: "MCAP", Key: "marketcap", Width: 7, Right: true, Desc: true},
+			Column{Title: "REVENUE", Key: "revenue", Width: 7, Right: true, Desc: true},
+			Column{Title: "GROWTH", Key: "growth", Width: 7, Right: true, Desc: true},
+			Column{Title: "MARGIN", Key: "margin", Width: 7, Right: true, Desc: true})
+	}
+	if cols.Insiders {
+		columns = append(columns,
+			Column{Title: "BUYS", Key: "buys", Width: 6, Right: true, Desc: true},
+			Column{Title: "SELLS", Key: "sells", Width: 6, Right: true, Desc: true})
+	}
+	columns = append(columns,
 		Column{Title: "LISTED", Key: "exchange", Width: 6},
 		Column{Title: "NEWS", Key: "news", Width: 5, Right: true, Desc: true},
 		Column{Title: "TAGS", Width: 4},
 		Column{Title: "NAME", Key: "name"})
-	t := Table{Columns: cols, Presorted: true}
+	t := Table{Columns: columns, Presorted: true}
 	key, desc := q.SortKey()
 	switch {
 	case key != "":
@@ -253,6 +265,7 @@ func thousands(n int) string {
 // window, the watchlist and the newest prices.
 func (d Data) companyFacts() universe.Facts {
 	f := universe.FactsFrom(d.Articles, d.Params.Threshold, d.Watchlist)
+	f.Num = d.Numbers
 	f.Close, f.Change = make(map[string]float64, len(d.Quotes)), make(map[string]float64, len(d.Quotes))
 	for tk, q := range d.Quotes {
 		f.Close[tk] = q.Close
@@ -272,7 +285,16 @@ func (d Data) latestQuoteDay() string {
 	return newest
 }
 
-func companyItem(h universe.Hit, watched bool, quotes map[string]Quote, priced bool, now time.Time) Item {
+// companyCols says which optional column groups the table has: those whose
+// data exists.
+type companyCols struct{ Priced, Funded, Insiders bool }
+
+func (d Data) companyColumns() companyCols {
+	return companyCols{Priced: len(d.Quotes) > 0, Funded: len(d.Numbers["revenue"]) > 0, Insiders: len(d.Numbers["buys"]) > 0}
+}
+
+func companyItem(h universe.Hit, watched bool, d Data, cols companyCols) Item {
+	quotes, now := d.Quotes, d.Now
 	p := h.Profile
 	star := " "
 	if watched {
@@ -288,7 +310,7 @@ func companyItem(h universe.Hit, watched bool, quotes map[string]Quote, priced b
 	}
 	typ, dom := p.Type(), p.Domain()
 	cells := []Cell{Str(star).Styled(Warn), Str(p.Ticker).Styled(Strong), Str(typ).Styled(typeStyle(typ)), Str(dom).Styled(domainStyle(dom))}
-	if priced {
+	if cols.Priced {
 		var bar, close, move Cell
 		if q, ok := quotes[p.Ticker]; ok {
 			text, style := candleBar(q, candleWidth, now)
@@ -298,6 +320,26 @@ func companyItem(h universe.Hit, watched bool, quotes map[string]Quote, priced b
 			move = Num(mt, 0).Styled(ms)
 		}
 		cells = append(cells, bar, close, move)
+	}
+	if cols.Funded {
+		num := func(key string) (float64, bool) { v, ok := d.Numbers[key][p.Ticker]; return v, ok }
+		var mcap, rev, growth, margin Cell
+		if v, ok := num("marketcap"); ok {
+			mcap = Num(moneyText(v), v).Styled(Info)
+		}
+		if v, ok := num("revenue"); ok {
+			rev = Num(moneyText(v), v)
+		}
+		if v, ok := num("growth"); ok {
+			growth = Num(signedPercent(v), v).Styled(gainStyle(v))
+		}
+		if v, ok := num("margin"); ok {
+			margin = Num(percentText(v), v).Styled(gainStyle(v))
+		}
+		cells = append(cells, mcap, rev, growth, margin)
+	}
+	if cols.Insiders {
+		cells = append(cells, insiderCell(d, "buys", p.Ticker, Good), insiderCell(d, "sells", p.Ticker, Bad))
 	}
 	cells = append(cells, Str(p.Exchange).Styled(exchangeStyle(p.Exchange)), Num(news, float64(h.News)).Styled(newsStyle(h.News)),
 		Str(strings.Join(tags, " ")).Styled(Accent), Str(p.Name))
@@ -354,6 +396,23 @@ func profileRows(b *builder, ticker string, d Data) (known bool) {
 		if bar, bs := candleBar(q, candleWidth, d.Now); bar != "" {
 			b.add(Row{Text: fmt.Sprintf("  %-10s %s  low %s · open %s · close %s · high %s", "day", bar, priceText(q.Low), priceText(q.Open), priceText(q.Close), priceText(q.High)), Style: bs})
 		}
+	}
+	if _, ok := d.Numbers["revenue"][p.Ticker]; ok || d.Numbers["marketcap"][p.Ticker] != 0 {
+		figure := func(name, key string, text func(float64) string) {
+			if v, ok := d.Numbers[key][p.Ticker]; ok {
+				b.add(Row{Text: fmt.Sprintf("  %-10s %s", name, text(v)), Style: Plain})
+			}
+		}
+		figure("market cap", "marketcap", moneyText)
+		figure("revenue", "revenue", moneyText)
+		figure("growth", "growth", signedPercent)
+		figure("net income", "income", moneyText)
+		figure("margin", "margin", percentText)
+		figure("assets", "assets", moneyText)
+		figure("equity", "equity", moneyText)
+		figure("roe", "roe", percentText)
+		figure("shares", "shares", moneyText)
+		b.styled(Dim, "  last fiscal year, from the SEC's XBRL data; market cap = shares on the cover page × last close")
 	}
 	switch {
 	case p.SIC != "" && p.Industry != "":

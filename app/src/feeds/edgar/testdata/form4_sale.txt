@@ -1,0 +1,193 @@
+<SEC-DOCUMENT>0000008818-26-000172.txt : 20261106
+<SEC-HEADER>0000008818-26-000172.hdr.sgml : 20261106
+<ACCEPTANCE-DATETIME>20261106175252
+ACCESSION NUMBER:		0000008818-26-000172
+CONFORMED SUBMISSION TYPE:	4
+PUBLIC DOCUMENT COUNT:		1
+CONFORMED PERIOD OF REPORT:	20261105
+FILED AS OF DATE:		20261106
+DATE AS OF CHANGE:		20261106
+
+REPORTING-OWNER:	
+
+	OWNER DATA:	
+		COMPANY CONFORMED NAME:			Lopez Andres Alberto
+		CENTRAL INDEX KEY:			0001568244
+		ORGANIZATION NAME:           	
+
+	FILING VALUES:
+		FORM TYPE:		4
+		SEC ACT:		1934 Act
+		SEC FILE NUMBER:	001-07685
+		FILM NUMBER:		261533229
+
+	MAIL ADDRESS:	
+		STREET 1:		ONE MICHAEL OWENS WAY
+		CITY:			PERRYSBURG
+		STATE:			OH
+		ZIP:			43551
+
+ISSUER:		
+
+	COMPANY DATA:	
+		COMPANY CONFORMED NAME:			Avery Dennison Corp
+		CENTRAL INDEX KEY:			0000008818
+		STANDARD INDUSTRIAL CLASSIFICATION:	CONVERTED PAPER & PAPERBOARD PRODS (NO CONTAINERS/BOXES) [2670]
+		ORGANIZATION NAME:           	04 Manufacturing
+		EIN:				951492269
+		STATE OF INCORPORATION:			DE
+		FISCAL YEAR END:			1231
+
+	BUSINESS ADDRESS:	
+		STREET 1:		8080 NORTON PARKWAY
+		CITY:			MENTOR
+		STATE:			OH
+		ZIP:			44060
+		BUSINESS PHONE:		440-534-6000
+
+	MAIL ADDRESS:	
+		STREET 1:		8080 NORTON PARKWAY
+		CITY:			MENTOR
+		STATE:			OH
+		ZIP:			44060
+
+	FORMER COMPANY:	
+		FORMER CONFORMED NAME:	AVERY DENNISON CORPORATION
+		DATE OF NAME CHANGE:	19920703
+
+	FORMER COMPANY:	
+		FORMER CONFORMED NAME:	AVERY INTERNATIONAL CORP
+		DATE OF NAME CHANGE:	19901030
+
+	FORMER COMPANY:	
+		FORMER CONFORMED NAME:	AVERY PRODUCTS CORP
+		DATE OF NAME CHANGE:	19760518
+</SEC-HEADER>
+<DOCUMENT>
+<TYPE>4
+<SEQUENCE>1
+<FILENAME>form4.xml
+<DESCRIPTION>PRIMARY DOCUMENT
+<TEXT>
+<XML>
+<?xml version="1.0"?>
+<ownershipDocument>
+
+    <schemaVersion>X0609</schemaVersion>
+
+    <documentType>4</documentType>
+
+    <periodOfReport>2026-11-05</periodOfReport>
+
+    <issuer>
+        <issuerCik>0000008818</issuerCik>
+        <issuerName>Avery Dennison Corp</issuerName>
+        <issuerTradingSymbol>AVY</issuerTradingSymbol>
+        <issuerForeignTradingSymbol></issuerForeignTradingSymbol>
+    </issuer>
+
+    <reportingOwner>
+        <reportingOwnerId>
+            <rptOwnerCik>0001568244</rptOwnerCik>
+            <rptOwnerName>Lopez Andres Alberto</rptOwnerName>
+        </reportingOwnerId>
+        <reportingOwnerAddress>
+            <rptOwnerNonUSAddressFlag>false</rptOwnerNonUSAddressFlag>
+            <rptOwnerStreet1>8080 NORTON PARKWAY</rptOwnerStreet1>
+            <rptOwnerStreet2></rptOwnerStreet2>
+            <rptOwnerCity>MENTOR</rptOwnerCity>
+            <rptOwnerState>OH</rptOwnerState>
+            <rptOwnerZipCode>44060</rptOwnerZipCode>
+            <rptOwnerStateDescription></rptOwnerStateDescription>
+        </reportingOwnerAddress>
+        <reportingOwnerRelationship>
+            <isDirector>1</isDirector>
+        </reportingOwnerRelationship>
+    </reportingOwner>
+
+    <aff10b5One>0</aff10b5One>
+
+    <nonDerivativeTable>
+        <nonDerivativeTransaction>
+            <securityTitle>
+                <value>Common Stock</value>
+            </securityTitle>
+            <transactionDate>
+                <value>2026-11-05</value>
+            </transactionDate>
+            <transactionCoding>
+                <transactionFormType>4</transactionFormType>
+                <transactionCode>S</transactionCode>
+                <equitySwapInvolved>0</equitySwapInvolved>
+            </transactionCoding>
+            <transactionTimeliness></transactionTimeliness>
+            <transactionAmounts>
+                <transactionShares>
+                    <value>4000</value>
+                </transactionShares>
+                <transactionPricePerShare>
+                    <value>193.802</value>
+                </transactionPricePerShare>
+                <transactionAcquiredDisposedCode>
+                    <value>D</value>
+                </transactionAcquiredDisposedCode>
+            </transactionAmounts>
+            <postTransactionAmounts>
+                <sharesOwnedFollowingTransaction>
+                    <value>1147</value>
+                </sharesOwnedFollowingTransaction>
+            </postTransactionAmounts>
+            <ownershipNature>
+                <directOrIndirectOwnership>
+                    <value>D</value>
+                </directOrIndirectOwnership>
+            </ownershipNature>
+        </nonDerivativeTransaction>
+    </nonDerivativeTable>
+
+    <derivativeTable>
+        <derivativeHolding>
+            <securityTitle>
+                <value>Deferred Stock Units - DDECP</value>
+            </securityTitle>
+            <conversionOrExercisePrice>
+                <value>0</value>
+            </conversionOrExercisePrice>
+            <exerciseDate>
+                <value>1988-08-08</value>
+            </exerciseDate>
+            <expirationDate>
+                <value>1988-08-08</value>
+            </expirationDate>
+            <underlyingSecurity>
+                <underlyingSecurityTitle>
+                    <value>Common Stock</value>
+                </underlyingSecurityTitle>
+                <underlyingSecurityShares>
+                    <value>1914.1082</value>
+                </underlyingSecurityShares>
+            </underlyingSecurity>
+            <postTransactionAmounts>
+                <sharesOwnedFollowingTransaction>
+                    <value>1914.1082</value>
+                </sharesOwnedFollowingTransaction>
+            </postTransactionAmounts>
+            <ownershipNature>
+                <directOrIndirectOwnership>
+                    <value>D</value>
+                </directOrIndirectOwnership>
+            </ownershipNature>
+        </derivativeHolding>
+    </derivativeTable>
+
+    <footnotes></footnotes>
+
+    <ownerSignature>
+        <signatureName>/s/ Vikas Arora attorney-in-fact for Andres Alberto Lopez</signatureName>
+        <signatureDate>2026-11-06</signatureDate>
+    </ownerSignature>
+</ownershipDocument>
+</XML>
+</TEXT>
+</DOCUMENT>
+</SEC-DOCUMENT>

@@ -97,7 +97,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	// Polygon's grouped daily bars: the same two stocks on every day asked for, one
 	// of them with a candle the program must refuse.
 	mux.HandleFunc("/polygon/", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, `{"results":[{"T":"ACME","o":10,"h":12,"l":9.5,"c":11.5,"v":1000},{"T":"GLOB","o":20,"h":19,"l":21,"c":20,"v":5},{"T":"NOTLISTED","o":1,"h":2,"l":1,"c":2,"v":1}]}`)
+		fmt.Fprint(w, `{"results":[{"T":"ACME","t":1700000000000,"o":10,"h":12,"l":9.5,"c":11.5,"v":1000},{"T":"GLOB","o":20,"h":19,"l":21,"c":20,"v":5},{"T":"NOTLISTED","o":1,"h":2,"l":1,"c":2,"v":1}]}`)
 	})
 	// Wikidata's answer: Acme has a site; the other company of the ticker does not match.
 	var srv *httptest.Server

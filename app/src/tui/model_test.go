@@ -43,9 +43,13 @@ type fake struct {
 	sources  []status.Source
 	verdicts map[string]labels.Verdict
 
-	layer  universe.Layer
-	univ   *universe.Universe
-	quotes map[string]Quote
+	layer    universe.Layer
+	univ     *universe.Universe
+	quotes   map[string]Quote
+	numbers  map[string]map[string]float64
+	insiders map[string][]model.InsiderTrade
+	queue    []labels.Pick
+	progress labels.Progress
 
 	articleCalls []string // the watch of each Articles call
 	searchCalls  []string
@@ -91,6 +95,20 @@ func (f *fake) Universe() *universe.Universe {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.univ
+}
+
+func (f *fake) LabelQueue(_ context.Context, n int) ([]labels.Pick, error) {
+	return f.queue[:min(n, len(f.queue))], nil
+}
+
+func (f *fake) LabelProgress(context.Context) (labels.Progress, error) { return f.progress, nil }
+
+func (f *fake) Insiders(ticker string) []model.InsiderTrade { return f.insiders[ticker] }
+
+func (f *fake) Numbers() map[string]map[string]float64 {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.numbers
 }
 
 func (f *fake) Quotes() map[string]Quote {

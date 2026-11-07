@@ -117,7 +117,7 @@ func defaults() Config {
 			Device:          "cpu",
 			Offline:         true,
 		},
-		Company: Company{Enabled: true, MaxAge: "168h", Listing: true, RefreshEvery: "6h", EnrichPerCycle: 200, SitesPerCycle: 400, Quotes: "polygon", QuotesPerCycle: 10, FeedSearchPerCycle: 60},
+		Company: Company{Enabled: true, MaxAge: "168h", Listing: true, RefreshEvery: "6h", EnrichPerCycle: 200, SitesPerCycle: 400, Quotes: "polygon", QuotesPerCycle: 10, Fundamentals: "sec", Insiders: "sec", InsidersPerCycle: 300, FeedSearchPerCycle: 60},
 		Tenancy: Tenancy{Dir: "tenants", Default: "default"},
 	}
 }
@@ -131,6 +131,9 @@ func applyEnv(cfg *Config) {
 	override("STOXICITY_DATA_DIR", &cfg.DataDir)
 	override("STOXICITY_CONTACT", &cfg.Fetch.Contact)
 	override("STOXICITY_POLYGON_KEY", &cfg.Company.PolygonKey)
+	if cfg.Company.PolygonKey == "" { // Polygon.io is now called Massive, and its keys carry that name
+		override("MASSIVE_API_KEY", &cfg.Company.PolygonKey)
+	}
 	override("STOXICITY_LAYA_URL", &cfg.Laya.URL)
 	override("STOXICITY_LAYA_COMMAND", &cfg.Laya.Command)
 	override("STOXICITY_TENANT", &cfg.Tenancy.Default)
@@ -193,6 +196,15 @@ func validate(cfg Config) error {
 
 	if !slices.Contains([]string{"polygon", "off"}, cfg.Company.Quotes) {
 		errs = append(errs, fmt.Errorf("config: company.quotes must be polygon or off, got %q", cfg.Company.Quotes))
+	}
+	if !slices.Contains([]string{"sec", "off"}, cfg.Company.Fundamentals) {
+		errs = append(errs, fmt.Errorf("config: company.fundamentals must be sec or off, got %q", cfg.Company.Fundamentals))
+	}
+	if !slices.Contains([]string{"sec", "off"}, cfg.Company.Insiders) {
+		errs = append(errs, fmt.Errorf("config: company.insiders must be sec or off, got %q", cfg.Company.Insiders))
+	}
+	if cfg.Company.InsidersPerCycle < 0 || cfg.Company.InsidersPerCycle > 5000 {
+		errs = append(errs, fmt.Errorf("config: company.insiders_per_cycle must be between 0 and 5000, got %d", cfg.Company.InsidersPerCycle))
 	}
 	if cfg.Company.QuotesPerCycle < 0 || cfg.Company.QuotesPerCycle > 5000 {
 		errs = append(errs, fmt.Errorf("config: company.quotes_per_cycle must be between 0 and 5000, got %d", cfg.Company.QuotesPerCycle))

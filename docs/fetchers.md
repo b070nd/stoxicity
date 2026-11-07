@@ -138,13 +138,53 @@ New accession → one of:
 
 | Form | Next step | Result |
 |---|---|---|
-| 8-K | Read the item numbers (from the submissions JSON or the filing index) | `Article.Items`, `Score.Kind` prior from `items.go`, a starting materiality |
+| 8-K | Read the item numbers (from the submissions JSON or the filing index) | `Article.Items`, and from `items.go` the `Score.Kind` and the materiality (see below) |
 | 10-K, 10-Q | Queue a facts refresh for the company | Fundamentals on its stock page |
-| 4 | Fetch and parse the Form 4 XML | `insider_buy` or `insider_sell`, with amounts |
+| 4 | Fetch the filing's complete submission text and parse the `ownershipDocument` in it (`edgar.TradeReader`) | `model.InsiderTrade` rows: owner, role, code, shares, price, shares held after; buys (P) and sells (S) become the `buys:`/`sells:` figures |
 
-Company name and CIK come from the entry title; `ciks.go` maps CIK to ticker
-for `entity`. The SEC states that the accuracy and scope of its ticker files
-are not guaranteed, so a match is cross-checked, not trusted.
+**How a Form 4 is read (verified 2026-11-07).** The folder listing
+(`.../index.json`) names the XML file differently for each filing agent
+(`form4.xml`, `wf-form4_....xml`, ...), so reading it would cost a second
+request. The complete submission text `.../<accession>.txt` answers 200 with
+the same XML inline, about 6 KB, and is the same URL for every filer; the
+parser takes the `<ownershipDocument>` out of it (or reads a bare XML
+document). 874 live filings read without one failure. Only the
+non-derivative table's transactions are kept (derivative holdings and
+transactions, mostly options, are not). Known limits: a 4/A amendment is not
+read (it restates a trade already counted); joint filers who each file the
+same trade would be counted twice; a purchase by a fund that is a 10% owner is
+indistinguishable from one by an officer except through the role text.
+
+**How an 8-K is scored.** The filing's text is not read (the feed gives a title
+and the item numbers), so the items are all there is. Each mapped item has a
+kind and a materiality on the scale of `model.MaterialityLevels`: 1.03
+bankruptcy, 1.05 cyber incident, 4.02 non-reliance and 5.01 change of control 5;
+2.04 acceleration of debt, 2.06 impairment and 3.01 delisting notice 4; results
+(2.02), agreements (1.01, 1.02), acquisitions (2.01), new debt (2.03),
+restructuring (2.05), share issues (3.02) and a change of auditor (4.01) 3;
+officers and directors (5.02) 2; bylaws (5.03), votes (5.07), Regulation FD
+(7.01) and other events (8.01) 1; the exhibits item (9.01) says nothing. The
+filing takes the most material item's kind and materiality, and every other
+item of another kind adds 0.02 to the relevance (three at most), so an earnings
+release filed with a presentation ranks above one filed alone. A quarterly
+report (10-Q) is materiality 2, because its results came in an 8-K item 2.02
+days before; an annual report (10-K) is 3. The article's page lists each item
+with the title the form gives it, and a list line names the items in a few
+words ("results, Reg FD"). What this cannot tell is how good the results were
+or whether the officer who left was the chief executive; that needs the
+filing's exhibit, or the price reaction.
+
+Company name and CIK come from the entry title and are stored on the article
+(`Article.CIK`, ten digits). **A filing is linked to its company by CIK and by
+nothing else**: its tickers are the ones the SEC list gives that CIK (all of
+them: share classes, warrants, preferred), and none when the list does not know
+it. The title and summary are never searched for company names, which is what
+once attached the word "CIK" (a fund's ticker) to half the filings. Only
+articles with no CIK, real news, are matched by their text. `stoxicity relink`
+gives stored filings the tickers of their CIK (no network, no scores made
+again). The SEC states that the accuracy and scope of its ticker files are not
+guaranteed; a CIK that is not in the list is shown as a filing with no ticker,
+not guessed at.
 
 ### 7.5 Back-fill and reconciliation
 

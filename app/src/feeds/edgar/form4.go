@@ -8,14 +8,14 @@ import (
 	"github.com/b070nd/stoxicity/app/src/model"
 )
 
-// Form4 follows insider transactions. docs/fetchers.md (section 7.4) plans to
-// parse the Form 4 XML into insider purchases and sales but does not say how
-// the XML or a structured data set is reached, and marks it unverified, so for
-// now Form4 is the current-filings reader narrowed to Form 4 (and 4/A): it
-// reports that a Form 4 was filed, by whom and for which company, and nothing
-// about the transaction. Open market purchases by officers matter most;
-// option exercises and tax withholding are noise, and telling them apart needs
-// the XML.
+// Form4 follows insider transactions as they are filed: it is the
+// current-filings reader narrowed to Form 4 (and 4/A), so it reports that a
+// Form 4 was filed, by whom and for which company. What the form says (who
+// bought or sold how many shares at what price) is read later and apart from
+// the feed, by TradeReader (ownership.go), a few hundred filings a cycle, so
+// the poll stays one cheap request per page. Open market purchases by officers
+// matter most; option exercises and tax withholding are noise, and telling them
+// apart needs the transaction code.
 type Form4 struct {
 	current *Current
 }

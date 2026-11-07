@@ -25,7 +25,7 @@ const (
 // cmdLabel records and lists the tenant's keep and drop verdicts.
 func cmdLabel(ctx context.Context, a *app, args []string) error {
 	if len(args) == 0 {
-		return usageErrorf("want keep, drop, list or sample")
+		return usageErrorf("want keep, drop, list, sample or queue")
 	}
 	switch args[0] {
 	case "keep":
@@ -36,8 +36,10 @@ func cmdLabel(ctx context.Context, a *app, args []string) error {
 		return labelList(ctx, a, args[1:])
 	case "sample":
 		return labelSample(ctx, a, args[1:])
+	case "queue":
+		return labelQueue(ctx, a, args[1:])
 	}
-	return usageErrorf("unknown subcommand %q; want keep, drop, list or sample", args[0])
+	return usageErrorf("unknown subcommand %q; want keep, drop, list, sample or queue", args[0])
 }
 
 // labelAccess is what the label commands read and write: the selected
@@ -222,6 +224,66 @@ func labelSample(ctx context.Context, a *app, args []string) error {
 		len(pool), p.First.Format(time.DateOnly), p.Last.Format(time.DateOnly))
 	for _, art := range pool {
 		fmt.Fprintf(a.stdout, "%s\t%s\t%s\t%s\t%s\n", art.ID, art.Published.In(loc).Format("2006-01-02 15:04"), art.Domain, oneLine(art.Title), art.URL)
+	}
+	return nil
+}
+
+// labelQueue prints the articles whose verdicts teach the lens most: those it
+// is least sure of, one kind of event after the other, and a random fourth that
+// keeps the precision estimate honest. The scores are not shown, so the verdict
+// does not follow the lens.
+func labelQueue(ctx context.Context, a *app, args []string) error {
+	fs := newFlags("label queue")
+	n := fs.Int("n", defaultSampleSize, "articles to show")
+	days := fs.Int("days", 30, "days to draw from, ending today")
+	rest, err := parseFlags(fs, args)
+	if err != nil {
+		return err
+	}
+	if len(rest) > 0 {
+		return usageErrorf("unexpected argument %q", rest[0])
+	}
+	if *n < 1 {
+		return usageErrorf("-n must be at least 1")
+	}
+	if err := checkWindow(*days, 1); err != nil {
+		return err
+	}
+	acc, err := openLabels(a)
+	if err != nil {
+		return err
+	}
+	loc := a.location()
+	p := pages.NewParams(a.now(), *days, 0, a.cfg.Lens.Threshold, loc)
+	arts, err := acc.rd.Range(ctx, p.First, p.End())
+	if err != nil {
+		return err
+	}
+	have, err := acc.labels.All(ctx)
+	if err != nil {
+		return err
+	}
+	done := make(map[string]bool, len(have))
+	for _, l := range have {
+		done[l.ArticleID] = true
+	}
+	picks := labels.Queue(arts, done, a.cfg.Lens.Threshold, *n, a.now().In(loc).Format(time.DateOnly))
+	if len(picks) == 0 {
+		fmt.Fprintf(a.stdout, "no unlabelled articles between %s and %s\n", p.First.Format(time.DateOnly), p.Last.Format(time.DateOnly))
+		return nil
+	}
+	fmt.Fprintf(a.stdout, "%d labels so far, %d to go to %d. Judge each, then run: stoxicity label keep|drop ID... (add -sampled for those marked sampled)\n",
+		len(have), max(labels.Target-len(have), 0), labels.Target)
+	for _, pk := range picks {
+		art, mark := pk.Article, ""
+		if pk.Sampled {
+			mark = "sampled"
+		}
+		title := oneLine(art.Title)
+		if items := model.ItemLabel(art.Items, 3); items != "" {
+			title += " · " + items // an 8-K says what it reports in its items, not in its title
+		}
+		fmt.Fprintf(a.stdout, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", art.ID, mark, art.Score.Kind, art.Published.In(loc).Format("2006-01-02 15:04"), art.Domain, title, art.URL)
 	}
 	return nil
 }

@@ -145,6 +145,15 @@ marks. Marks stay while you move between screens.
 | `o` | Sources | state of every source: health, what it is doing, last good poll, next due, failures, last error; failing ones first |
 | `w` | Watches | the tenant's watches with unread counts; `enter` shows one |
 
+`a` opens **Label**: how many of the 300 labels it takes are made, how the lens
+does against them (precision and recall of its relevant calls, against all
+labels and against the random sample only, the honest number), and below them
+20 articles to judge. The queue is the articles the lens is least sure of, one
+kind of event after the other, and a random fourth (marked `°`). Their scores
+are not on the rows, so the verdict is yours; `enter` opens the article with its
+score. `+` keeps and `-` drops, and the article leaves the queue at once. The
+status line shows "labels 42 of 300 · precision 0.71 · recall 0.64".
+
 `→` (or `enter`) on a row opens it: a heading opens its list, a table row opens its page,
 an article opens its detail (score, the rules that fired, summary, your label).
 `+` keeps and `-` drops the article under the cursor, in a list or in the detail;
@@ -173,8 +182,11 @@ to that exchange (`exchange:"NYSE"`), flat. The catalogue starts on its first
 stock, and the status line counts stocks only.
 
 The table is colour-coded. **TYPE** is read from the exchanges' name for the
-security and the shape of its ticker: stock, preferred, warrant, unit, right,
-adr, etf or test (a reading, not a fact; `type:warrant` filters on it).
+security (the Nasdaq directory's own words after the dash: "Warrant", "Units",
+"Series B Right", "Common Stock", "Senior Notes due 2030") and, failing that, the
+company's name and the shape of its ticker: stock, preferred, warrant, unit,
+right, adr, note, etf or test (a reading, not a fact; `type:warrant` filters on
+it).
 **DOMAIN** is the SEC's industry division (Manufacturing, Finance & Real
 Estate, Services, Infrastructure, Retail, Mining and so on), one colour each;
 the finer industry is on the stock's page and in `industry:` and `sort:industry`. **DAY** is the day's candle drawn as a bar: the
@@ -188,8 +200,26 @@ and bold yellow with five, tags are magenta, and the star is yellow. The full
 name comes last, so a long one runs to the edge of the screen and is never cut.
 No table cuts a text or shortens it with an ellipsis: a column is as wide as its
 longest entry.
+**MCAP**, **REVENUE**, **GROWTH** and **MARGIN** appear once the SEC's figures are
+stored (see `company.fundamentals` in [configuration.md](configuration.md)):
+market value, revenue of the latest fiscal year, its growth over the year
+before (green up, red down) and net income over revenue. A stock's page lists
+all the figures with the note of where they come from. Try
+`type:stock marketcap:>10b margin:>15% growth:>5% sort:-marketcap`.
+**BUYS** and **SELLS** (green and red) appear once Form 4 filings are read (see
+`company.insiders`): the money the company's insiders spent on open market
+purchases, and took in on sales, in the last 90 days. A stock's page then has an
+**Insiders** block: the last ten trades, each on two lines (day, what was done,
+shares at price and value; who, their role, how many shares they hold after, and
+whether it was under a Rule 10b5-1 plan or held indirectly), purchases green,
+sales red, awards and tax withholding dim; `b` opens the filing. Try
+`type:stock buys:>=250k sort:-buys`. A purchase says more than a sale, which is
+often scheduled in advance; a fund that sits on the board (Baker Bros. in
+Madrigal) counts as an insider because the form says so.
 `sort:close`, `sort:change`, `sort:type` and `sort:domain` order by them (a
-stock with no candle is last whichever way round); the columns appear once
+stock with no candle is last whichever way round). A move of more than five
+times, or less than a fifth, between two closes a day apart is not a day's
+move (mixed price series, a split not applied) and shows no change; the columns appear once
 prices exist (see `company.quotes` in [configuration.md](configuration.md)).
 `enter` on a company opens its profile, which also exists for stocks with no news
 in the window.

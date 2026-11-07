@@ -35,48 +35,14 @@ type labelled struct {
 	Article model.Article
 }
 
-// confusion counts the lens's "relevant" calls (score at or above the
-// threshold) against the user's verdicts.
-type confusion struct{ TP, FP, FN, TN int }
-
 // newConfusion counts items at threshold.
-func newConfusion(items []labelled, threshold float64) confusion {
-	var c confusion
+func newConfusion(items []labelled, threshold float64) eval.Confusion {
+	var c eval.Confusion
 	for _, it := range items {
-		call, kept := it.Article.Score.Relevant(threshold), it.Label.Verdict == labels.Keep
-		switch {
-		case call && kept:
-			c.TP++
-		case call:
-			c.FP++
-		case kept:
-			c.FN++
-		default:
-			c.TN++
-		}
+		c.Add(it.Article.Score.Relevant(threshold), it.Label.Verdict == labels.Keep)
 	}
 	return c
 }
-
-// Kept is the number of items the user kept.
-func (c confusion) Kept() int { return c.TP + c.FN }
-
-// Calls is the number of items the lens called relevant.
-func (c confusion) Calls() int { return c.TP + c.FP }
-
-// ratio writes num over den as "0.667 (2/3)", or "n/a" if den is zero.
-func ratio(num, den int) string {
-	if den == 0 {
-		return "n/a"
-	}
-	return fmt.Sprintf("%.3f (%d/%d)", float64(num)/float64(den), num, den)
-}
-
-// Precision is the share of the lens's relevant calls the user kept.
-func (c confusion) Precision() string { return ratio(c.TP, c.Calls()) }
-
-// Recall is the share of the kept items the lens called relevant.
-func (c confusion) Recall() string { return ratio(c.TP, c.Kept()) }
 
 // versionRow is the evaluation of the items one lens version scored.
 type versionRow struct {
@@ -84,14 +50,22 @@ type versionRow struct {
 	Labels  int
 	Kept    int
 	Brier   float64
-	Conf    confusion
+	Conf    eval.Confusion
 }
 
 // domainRow is the precision of the lens's relevant calls in one domain.
 type domainRow struct {
 	Domain string
 	Labels int
-	Conf   confusion
+	Conf   eval.Confusion
+}
+
+// kindRow is the lens's performance on one kind of event: the precision of its
+// relevant calls and the share of the kept items it called.
+type kindRow struct {
+	Kind   string
+	Labels int
+	Conf   eval.Confusion
 }
 
 // evalReport is the outcome of eval.
@@ -108,11 +82,12 @@ type evalReport struct {
 	Cases     []eval.Case // ranked by score, highest first
 	Brier     float64
 	ECE       float64
-	All       confusion
+	All       eval.Confusion
 	Samples   []labelled // the sampled labels only
-	SampleCon confusion
+	SampleCon eval.Confusion
 	Versions  []versionRow
 	Domains   []domainRow
+	Kinds     []kindRow
 }
 
 // buildEval measures the lens against items. skipped is the number of labels
@@ -138,7 +113,13 @@ func buildEval(items []labelled, skipped int, threshold float64) evalReport {
 
 	byVersion := map[string][]labelled{}
 	byDomain := map[string][]labelled{}
+	byKind := map[string][]labelled{}
 	for _, it := range items {
+		k := string(it.Article.Score.Kind)
+		if k == "" {
+			k = "(none)"
+		}
+		byKind[k] = append(byKind[k], it)
 		v := it.Article.Score.LensVersion
 		if v == "" {
 			v = unscored
@@ -162,6 +143,15 @@ func buildEval(items []labelled, skipped int, threshold float64) evalReport {
 			r.Domains = append(r.Domains, domainRow{Domain: d, Labels: len(group), Conf: newConfusion(group, threshold)})
 		}
 	}
+	for k, group := range byKind {
+		r.Kinds = append(r.Kinds, kindRow{Kind: k, Labels: len(group), Conf: newConfusion(group, threshold)})
+	}
+	sort.Slice(r.Kinds, func(i, j int) bool {
+		if r.Kinds[i].Labels != r.Kinds[j].Labels {
+			return r.Kinds[i].Labels > r.Kinds[j].Labels
+		}
+		return r.Kinds[i].Kind < r.Kinds[j].Kind
+	})
 	sort.Slice(r.Domains, func(i, j int) bool {
 		if r.Domains[i].Labels != r.Domains[j].Labels {
 			return r.Domains[i].Labels > r.Domains[j].Labels
@@ -274,6 +264,12 @@ func renderEval(w io.Writer, r evalReport, tenantID string) {
 	fmt.Fprintf(w, "  %-34s %6s %5s %10s %10s %7s\n", "version", "labels", "kept", "precision", "recall", "Brier")
 	for _, v := range r.Versions {
 		fmt.Fprintf(w, "  %-34s %6d %5d %10s %10s %7.3f\n", v.Version, v.Labels, v.Kept, short(v.Conf.Precision()), short(v.Conf.Recall()), v.Brier)
+	}
+
+	fmt.Fprintf(w, "\nBy kind of event (precision of the lens's relevant calls, and recall of what you kept; few labels make a row unreliable)\n")
+	fmt.Fprintf(w, "  %-22s %6s %6s %5s %10s %10s\n", "kind", "labels", "calls", "kept", "precision", "recall")
+	for _, k := range r.Kinds {
+		fmt.Fprintf(w, "  %-22s %6d %6d %5d %10s %10s\n", k.Kind, k.Labels, k.Conf.Calls(), k.Conf.Kept(), short(k.Conf.Precision()), short(k.Conf.Recall()))
 	}
 
 	fmt.Fprintf(w, "\nBy domain (at least %d labels; precision of the lens's relevant calls)\n", minDomainLabels)

@@ -39,6 +39,64 @@ var itemKinds = map[string]model.EventKind{
 	"8.01": model.EventOther,
 }
 
+// itemMateriality is how much each mapped item matters on the scale of
+// model.MaterialityLevels, judged from the item alone: a filing under it may be
+// worth more or less, but the number says what the form requires its filer to
+// report. 1.05 and 1.03 and 4.02 and 5.01 are reported only when they are
+// serious, so they start high; 5.02 covers a CEO leaving as well as a director
+// being elected, and 7.01 and 8.01 are what a company files when no other item
+// fits, so they start low.
+var itemMateriality = map[string]int{
+	"1.01": 3, "1.02": 3, "1.03": 5, "1.05": 5,
+	"2.01": 3, "2.02": 3, "2.03": 3, "2.04": 4, "2.05": 3, "2.06": 4,
+	"3.01": 4, "3.02": 3,
+	"4.01": 3, "4.02": 5,
+	"5.01": 5, "5.02": 2, "5.03": 1, "5.07": 1,
+	"7.01": 1, "8.01": 1,
+}
+
+// extraBonus is the relevance each further item of another kind adds, up to
+// three: an earnings release that comes with a presentation (7.01) or an officer
+// change (5.02) says more than one that comes alone.
+const extraBonus = 0.02
+
+// Rate reads the items of a filing: the most material mapped item decides the
+// kind and the materiality (the first of equals, and the more material kind
+// first), and every other mapped item of another kind adds a little relevance.
+// It returns false if no item maps, and the text is read instead.
+func Rate(items []string) (model.ItemRating, bool) {
+	var r model.ItemRating
+	best := ""
+	for _, it := range items {
+		m, ok := itemMateriality[it]
+		if !ok {
+			continue
+		}
+		if best == "" || m > r.Materiality {
+			best, r.Materiality = it, m
+		}
+	}
+	if best == "" {
+		return r, false
+	}
+	r.Item, r.Kind = best, itemKinds[best]
+	seen := map[string]bool{best: true}
+	kinds := map[model.EventKind]bool{r.Kind: true}
+	for _, it := range items {
+		k, ok := itemKinds[it]
+		if !ok || seen[it] {
+			continue
+		}
+		seen[it] = true
+		if !kinds[k] {
+			kinds[k] = true
+			r.Also = append(r.Also, it)
+		}
+	}
+	r.Bonus = extraBonus * float64(min(len(r.Also), 3))
+	return r, true
+}
+
 // ignoredItems lists the Form 8-K items that have no useful event kind, with
 // the reason for each. They are deliberately not mapped.
 var ignoredItems = map[string]string{

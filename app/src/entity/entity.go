@@ -13,3 +13,13 @@ type Resolver interface {
 	// Lookup returns one entity by ticker.
 	Lookup(ticker string) (model.Entity, bool)
 }
+
+// CIKResolver is a Resolver that also knows the tickers of a SEC number. A
+// filing names its filer by CIK, so its company is looked up here and never
+// searched for in its text.
+type CIKResolver interface {
+	Resolver
+	// ByCIK returns every ticker the company with the CIK (ten digits) trades
+	// under, sorted by ticker; none when the SEC list does not know the CIK.
+	ByCIK(cik string) []model.Entity
+}

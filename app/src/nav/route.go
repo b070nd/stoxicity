@@ -19,8 +19,9 @@
 //	/search?q=...          Google-style query results
 //	/w/buffett-core/stock/KO   one stock, in the buffett-core watch
 //
-// Two screens belong to no watch, because they describe the shared base or the
-// tenant: /sources (source health) and /watches (list, create, edit watches).
+// Three screens belong to no watch, because they describe the shared base or the
+// tenant: /sources (source health), /watches (list, create, edit watches) and
+// /label (the articles to judge, from all the tenant's news).
 package nav
 
 import (
@@ -54,6 +55,8 @@ const (
 	Search    Kind = "search"
 	Sources   Kind = "sources"
 	Watches   Kind = "watches"
+	// Label is the queue of articles to judge; it belongs to no watch.
+	Label Kind = "label"
 )
 
 // Route is a parsed location. Arg is the ticker, topic ID, domain or day for
@@ -67,12 +70,12 @@ type Route struct {
 
 // Scoped reports whether the screen shows one watch's data. Sources and
 // Watches do not.
-func (r Route) Scoped() bool { return r.Kind != Sources && r.Kind != Watches }
+func (r Route) Scoped() bool { return r.Kind != Sources && r.Kind != Watches && r.Kind != Label }
 
 // Section reports whether the route is a top-level list that starts a new trail.
 func (r Route) Section() bool {
 	switch r.Kind {
-	case Home, Stocks, Companies, Exchanges, Topics, Domains, Sources, Watches, Search:
+	case Home, Stocks, Companies, Exchanges, Topics, Domains, Sources, Watches, Label, Search:
 		return true
 	}
 	return false
@@ -110,6 +113,8 @@ func (r Route) Label() string {
 		return "Sources"
 	case Watches:
 		return "Watches"
+	case Label:
+		return "Label"
 	case Search:
 		return "Search: " + r.Arg
 	case Companies:
@@ -134,7 +139,7 @@ func (r Route) String() string {
 			return "/"
 		}
 		return prefix
-	case Stocks, Topics, Domains, Exchanges, Sources, Watches:
+	case Stocks, Topics, Domains, Exchanges, Sources, Watches, Label:
 		return prefix + "/" + string(r.Kind)
 	case Search:
 		return prefix + "/search?q=" + url.QueryEscape(r.Arg)
@@ -179,7 +184,7 @@ func parsePath(s, path, query string) (Route, error) {
 	}
 	head, arg, hasArg := strings.Cut(path, "/")
 	switch Kind(head) {
-	case Stocks, Topics, Domains, Exchanges, Sources, Watches:
+	case Stocks, Topics, Domains, Exchanges, Sources, Watches, Label:
 		if hasArg {
 			return Route{}, fmt.Errorf("nav: %q takes no argument", s)
 		}

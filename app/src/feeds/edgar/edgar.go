@@ -14,6 +14,7 @@
 //	current.go      the current-filings Atom feed, read page by page
 //	submissions.go  per-company filing history (data.sec.gov)
 //	form4.go        insider transactions: the current feed narrowed to Form 4
+//	ownership.go    what a Form 4 reports: who traded how many shares at what price
 //	facts.go        XBRL company facts for fundamentals
 //	bulk.go         nightly bulk files, for the first load and for back-fill
 //	index.go        daily index files, to back-fill since the configured start date

@@ -138,7 +138,7 @@ func TestRefreshStocksStopsWhenThePushBackComes(t *testing.T) {
 func mustDay(d string) time.Time { t, _ := time.Parse(time.DateOnly, d); return t }
 
 func polygonDay(s string) string {
-	return fmt.Sprintf(`{"results":[{"T":"KO","o":70,"h":72,"l":69,"c":71,"v":100},{"T":"BRK.B","o":400,"h":410,"l":399,"c":405,"v":5},{"T":"OTHER","o":1,"h":2,"l":1,"c":2,"v":1},{"T":"BAD","o":1,"h":0,"l":1,"c":2,"v":1}],"day":%q}`, s)
+	return fmt.Sprintf(`{"results":[{"T":"KO","t":1700000000000,"o":70,"h":72,"l":69,"c":71,"v":100},{"T":"BRK.B","o":400,"h":410,"l":399,"c":405,"v":5},{"T":"OTHER","o":1,"h":2,"l":1,"c":2,"v":1},{"T":"BAD","o":1,"h":0,"l":1,"c":2,"v":1}],"day":%q}`, s)
 }
 
 func TestRefreshDaysFetchesTheMissingMarketDaysOnceAndKeepsOnlyOurStocks(t *testing.T) {

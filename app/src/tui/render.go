@@ -11,6 +11,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/b070nd/stoxicity/app/src/labels"
+	"github.com/b070nd/stoxicity/app/src/model"
 	"github.com/b070nd/stoxicity/app/src/nav"
 	"github.com/b070nd/stoxicity/app/src/sanitize"
 	"github.com/b070nd/stoxicity/app/src/status"
@@ -135,6 +136,7 @@ var screenTabs = []struct {
 	{"Exchanges", "e", []nav.Kind{nav.Exchanges}},
 	{"Sources", "o", []nav.Kind{nav.Sources}},
 	{"Watches", "w", []nav.Kind{nav.Watches}},
+	{"Label", "a", []nav.Kind{nav.Label}},
 }
 
 // stocksQuery is what the s key and the Stocks tab open: every stock, those in
@@ -385,6 +387,9 @@ func (m *Model) statusLine() string {
 			parts = append(parts, "enter opens the group")
 		}
 	}
+	if m.stack.Current().Kind == nav.Label && m.progress.Total > 0 {
+		parts = append(parts, progressText(m.progress))
+	}
 	if n := len(m.marks); n > 0 {
 		parts = append(parts, fmt.Sprintf("%d marked", n))
 	}
@@ -486,7 +491,19 @@ func (m *Model) detailLines() []string {
 		add("topics: " + clean(strings.Join(a.Topics, " ")))
 	}
 	if a.Form != "" {
-		add("form: " + clean(a.Form+" "+strings.Join(a.Items, " ")))
+		add("form: " + clean(a.Form))
+	}
+	for i, it := range model.DescribeItems(a.Items) {
+		label := ""
+		if i == 0 {
+			label = "items: "
+		}
+		for j, l := range wrap(clean(it), w-9) {
+			if j > 0 {
+				label = ""
+			}
+			add(fmt.Sprintf("%-8s%s", label, l))
+		}
 	}
 	add("your label: " + labelWord(m.verdicts[a.ID]))
 	if len(s.Reasons) > 0 {

@@ -61,6 +61,10 @@ type Profile struct {
 	Kind string
 	// Market is the Nasdaq tier; Status the financial status, "" when normal.
 	Market, Status string
+	// Security is the name the Nasdaq directory gives the listing, as it
+	// writes it ("X - Warrant", "X - Common Stock"): the surest word for what
+	// kind of security the ticker is. Empty when the directory does not list it.
+	Security string
 
 	SIC, Industry, State, FiscalYear, Category, Website, EntityType string
 	Sector                                                          string // from the sector rules of the configuration
@@ -144,6 +148,7 @@ func New(in Inputs) *Universe {
 		}
 		if sec, ok := in.Listing.Get(p.Ticker); ok {
 			p.Venue, p.Market, p.Status = sec.Venue, sec.Market, sec.Status
+			p.Security = sec.Name
 			if p.Exchange == "" {
 				p.Exchange = sec.Venue // the older SEC list has no exchanges
 			}
@@ -181,7 +186,7 @@ func New(in Inputs) *Universe {
 	for _, sec := range in.Listing.All() {
 		p := Profile{
 			Ticker: Ticker(sec.Symbol), Name: company.TidyName(sec.Name), Exchange: sec.Venue,
-			Venue: sec.Venue, Market: sec.Market, Status: sec.Status, Source: SourceListing,
+			Venue: sec.Venue, Market: sec.Market, Status: sec.Status, Security: sec.Name, Source: SourceListing,
 		}
 		switch {
 		case sec.Test:
@@ -224,7 +229,6 @@ func New(in Inputs) *Universe {
 		if len(p.Aliases) == 0 {
 			p.Aliases = nil
 		}
-		p.typ, p.typed = p.work(), true
 	}
 
 	// Membership, siblings and sectors are filled once the order is final.
@@ -263,6 +267,12 @@ func New(in Inputs) *Universe {
 			}
 			slices.Sort(p.Siblings)
 		}
+	}
+	// The type is read last: the way the exchanges spell a SPAC's units, warrants
+	// and rights (the share's ticker and one letter) needs the siblings.
+	for i := range u.profiles {
+		p := &u.profiles[i]
+		p.typ, p.typed = p.work(), true
 	}
 	return u
 }

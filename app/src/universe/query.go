@@ -2,6 +2,7 @@ package universe
 
 import (
 	"fmt"
+	"math"
 	"slices"
 	"sort"
 	"strconv"
@@ -79,7 +80,113 @@ func (h Hit) Group(key string) string {
 }
 
 // sortKeys are the orders sort: knows.
-var sortKeys = []string{"ticker", "name", "news", "industry", "exchange", "kind", "type", "domain", "close", "change"}
+var sortKeys = []string{"ticker", "name", "news", "industry", "exchange", "kind", "type", "domain",
+	"close", "change", "marketcap", "revenue", "income", "growth", "margin", "roe", "buys", "sells"}
+
+// numOps are the operators that compare a number: money (close, marketcap,
+// revenue, income, assets, equity; buys and sells are what the insiders bought
+// and sold on the open market in the last 90 days), counts (buyers, sellers:
+// how many different insiders) and ratios (change, growth, margin, roe,
+// equity_ratio), which are written as percentages: margin:>10 and
+// margin:>10% both mean a tenth. A stock the number is unknown for matches
+// none of them, whatever the comparison. A value is a comparison and a number
+// (marketcap:>=10b, change:<-5%), or a range (revenue:1b..5b); the number takes
+// k, m, b or t after it.
+var numOps = []string{"close", "change", "marketcap", "revenue", "income", "assets", "equity",
+	"growth", "margin", "roe", "equity_ratio", "buys", "sells", "buyers", "sellers"}
+
+func isNumOp(op string) bool { return slices.Contains(numOps, op) }
+
+func isRatioOp(op string) bool {
+	switch op {
+	case "change", "growth", "margin", "roe", "equity_ratio":
+		return true
+	}
+	return false
+}
+
+// numRange is a number the query asks for, as bounds; open bounds exclude
+// the number itself.
+type numRange struct {
+	lo, hi         float64
+	hasLo, hasHi   bool
+	loOpen, hiOpen bool
+}
+
+func (r numRange) holds(v float64) bool {
+	if r.hasLo && (v < r.lo || r.loOpen && v == r.lo) {
+		return false
+	}
+	if r.hasHi && (v > r.hi || r.hiOpen && v == r.hi) {
+		return false
+	}
+	return true
+}
+
+// parseNumber reads 5b, 12.5m, 300k, -5% or 7; ratio makes the number a
+// percentage (so 10 and 10% are both 0.10).
+func parseNumber(s string, ratio bool) (float64, bool) {
+	s = strings.TrimSpace(s)
+	pct := false
+	if t, ok := strings.CutSuffix(s, "%"); ok {
+		s, pct = t, true
+	}
+	mult := 1.0
+	if n := len(s); n > 0 {
+		switch s[n-1] {
+		case 'k':
+			mult, s = 1e3, s[:n-1]
+		case 'm':
+			mult, s = 1e6, s[:n-1]
+		case 'b':
+			mult, s = 1e9, s[:n-1]
+		case 't':
+			mult, s = 1e12, s[:n-1]
+		}
+	}
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil || math.IsNaN(v) || math.IsInf(v, 0) {
+		return 0, false
+	}
+	v *= mult
+	if pct || ratio {
+		v /= 100
+	}
+	return v, true
+}
+
+// parseNumRange reads the value of a numeric operator.
+func parseNumRange(val string, ratio bool) (numRange, bool) {
+	var r numRange
+	if a, b, ok := strings.Cut(val, ".."); ok {
+		lo, ok1 := parseNumber(a, ratio)
+		hi, ok2 := parseNumber(b, ratio)
+		if !ok1 || !ok2 || lo > hi {
+			return r, false
+		}
+		return numRange{lo: lo, hi: hi, hasLo: true, hasHi: true}, true
+	}
+	for _, c := range []struct {
+		text string
+		set  func(*numRange, float64)
+	}{
+		{">=", func(r *numRange, v float64) { r.lo, r.hasLo = v, true }},
+		{"<=", func(r *numRange, v float64) { r.hi, r.hasHi = v, true }},
+		{">", func(r *numRange, v float64) { r.lo, r.hasLo, r.loOpen = v, true, true }},
+		{"<", func(r *numRange, v float64) { r.hi, r.hasHi, r.hiOpen = v, true, true }},
+		{"=", func(r *numRange, v float64) { r.lo, r.hasLo, r.hi, r.hasHi = v, true, v, true }},
+	} {
+		if t, ok := strings.CutPrefix(val, c.text); ok {
+			v, ok := parseNumber(t, ratio)
+			if !ok {
+				return r, false
+			}
+			c.set(&r, v)
+			return r, true
+		}
+	}
+	return r, false
+}
 
 // SortKey is the order the query asks for with sort:, without the minus, and
 // whether it is reversed; empty when it asks for none.
@@ -115,8 +222,9 @@ const (
 
 // queryOps is the list of operators, for the error message.
 var queryOps = []string{
-	"change", "cik", "close", "company", "domain", "exchange", "group", "industry", "kind", "list", "market",
-	"name", "news", "sector", "sic", "sort", "state", "status", "tag", "ticker", "type", "watched",
+	"assets", "buyers", "buys", "change", "cik", "close", "company", "domain", "equity", "equity_ratio", "exchange", "group", "growth",
+	"income", "industry", "kind", "list", "marketcap", "margin", "market", "name", "news", "revenue", "roe", "sector",
+	"sellers", "sells", "sic", "sort", "state", "status", "tag", "ticker", "type", "watched",
 }
 
 type cmpKind int
@@ -137,6 +245,7 @@ type lit struct {
 	cmp   cmpKind  // news
 	num   int      // news
 	yes   bool     // watched, and news:yes / news:no
+	rng   numRange // the numeric operators
 }
 
 // Facts are what a company's profile cannot say: how much news it has in the
@@ -147,6 +256,24 @@ type Facts struct {
 	// Close and Change are the last close and its move from the day before (a
 	// fraction: 0.012 is +1.2%), by ticker; only for the stocks that have candles.
 	Close, Change map[string]float64
+	// Num holds the other numbers a query can compare or sort by, by name and
+	// then ticker: marketcap, revenue, income, assets, equity, growth, margin,
+	// roe and equity_ratio (package fundamentals gives them).
+	Num map[string]map[string]float64
+}
+
+// value is the number the fact named op has for the ticker; false when unknown.
+func (f Facts) value(op, ticker string) (float64, bool) {
+	switch op {
+	case "close":
+		v, ok := f.Close[ticker]
+		return v, ok
+	case "change":
+		v, ok := f.Change[ticker]
+		return v, ok
+	}
+	v, ok := f.Num[op][ticker]
+	return v, ok
 }
 
 // ParseQuery reads a query. The error, if any, is a *QueryError.
@@ -310,6 +437,12 @@ func opLit(name, value string, pos, valPos int) (lit, error) {
 		if len(l.words) == 0 {
 			return lit{}, &QueryError{Pos: valPos, Msg: fmt.Sprintf("operator %s needs letters or digits", name)}
 		}
+	case "close", "change", "marketcap", "revenue", "income", "assets", "equity", "growth", "margin", "roe", "equity_ratio", "buys", "sells", "buyers", "sellers":
+		r, ok := parseNumRange(val, isRatioOp(name))
+		if !ok {
+			return lit{}, &QueryError{Pos: valPos, Msg: fmt.Sprintf("%s takes a comparison such as >=5b or <10%%, or a range such as 1b..5b", name)}
+		}
+		l.rng = r
 	case "watched":
 		y, ok := yesNo(val)
 		if !ok {
@@ -442,6 +575,9 @@ func (l lit) eval(p *Profile, f Facts) (bool, int) {
 		return slices.Contains(p.Lists, l.raw), 0
 	case "tag":
 		return slices.Contains(p.Tags, l.raw), 0
+	case "close", "change", "marketcap", "revenue", "income", "assets", "equity", "growth", "margin", "roe", "equity_ratio", "buys", "sells", "buyers", "sellers":
+		v, ok := f.value(l.op, p.Ticker)
+		return ok && l.rng.holds(v), 0
 	case "watched":
 		return f.Watched[p.Ticker] == l.yes, 0
 	case "news":
@@ -556,6 +692,10 @@ type Hit struct {
 	// fraction); Priced says there is a candle at all.
 	Close, Change float64
 	Priced        bool
+	// Key is the number the list is sorted by, when sort: names one; Has says it
+	// is known.
+	Key float64
+	Has bool
 }
 
 // Find returns the profiles that match. Free text ranks them best first, then
@@ -574,14 +714,23 @@ func (u *Universe) Find(q Query, f Facts, limit int) []Hit {
 			h := Hit{Profile: p, Score: s, News: f.News[p.Ticker]}
 			h.Close, h.Priced = f.Close[p.Ticker]
 			h.Change = f.Change[p.Ticker]
+			if isNumOp(q.sortBy) {
+				h.Key, h.Has = f.value(q.sortBy, p.Ticker)
+			}
 			hits = append(hits, h)
 		}
 	}
 	sort.SliceStable(hits, func(i, j int) bool {
 		a, b := hits[i], hits[j]
 		if q.sortBy != "" {
-			if (q.sortBy == "close" || q.sortBy == "change") && a.Priced != b.Priced {
-				return a.Priced // a stock with no candle is last, either way round
+			if isNumOp(q.sortBy) {
+				if a.Has != b.Has {
+					return a.Has // a stock the number is unknown for is last, either way round
+				}
+				if a.Key != b.Key {
+					return (a.Key < b.Key) != q.desc
+				}
+				return a.Profile.Ticker < b.Profile.Ticker
 			}
 			if c := compareBy(q.sortBy, a, b); c != 0 {
 				return (c < 0) != q.desc
@@ -622,22 +771,8 @@ func compareBy(key string, a, b Hit) int {
 		return emptyLast(a.Profile.Type(), b.Profile.Type())
 	case "domain":
 		return emptyLast(a.Profile.Domain(), b.Profile.Domain())
-	case "close":
-		return cmpFloat(a.Close, b.Close)
-	case "change":
-		return cmpFloat(a.Change, b.Change)
 	}
 	return strings.Compare(a.Profile.Ticker, b.Profile.Ticker)
-}
-
-func cmpFloat(x, y float64) int {
-	switch {
-	case x < y:
-		return -1
-	case x > y:
-		return 1
-	}
-	return 0
 }
 
 // emptyLast compares two strings, an empty one after every other.

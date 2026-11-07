@@ -29,7 +29,9 @@ import (
 	"time"
 
 	"github.com/b070nd/stoxicity/app/src/company"
+	"github.com/b070nd/stoxicity/app/src/fundamentals"
 	"github.com/b070nd/stoxicity/app/src/httpx"
+	"github.com/b070nd/stoxicity/app/src/insider"
 	"github.com/b070nd/stoxicity/app/src/marketdata"
 	"github.com/b070nd/stoxicity/app/src/model"
 	"github.com/b070nd/stoxicity/app/src/stockfeeds"
@@ -64,6 +66,9 @@ type Settings struct {
 	// company's own news feed. Zero reads none; the SEC filing record of every
 	// stock is written down either way when Refresher.Feeds is set.
 	FeedSearch int
+	// InsidersPerCycle is how many unread Form 4 filings one cycle reads. Zero
+	// reads none.
+	InsidersPerCycle int
 }
 
 // Refresher brings the database up to date.
@@ -83,6 +88,12 @@ type Refresher struct {
 	Feeds *stockfeeds.Keeper
 	// Quotes, when set, keeps the daily candles of stocks.
 	Quotes *marketdata.Keeper
+	// Fundamentals, when set, keeps the revenue, profit, balance sheet and
+	// shares of every filer.
+	Fundamentals *fundamentals.Keeper
+	// Insiders, when set, reads the Form 4 filings the feed found and keeps the
+	// trades in them.
+	Insiders *insider.Keeper
 	// Logf receives one line per notable thing; may be nil.
 	Logf func(format string, args ...any)
 }
@@ -95,6 +106,11 @@ type Report struct {
 	Sites company.SiteResult
 	// Quotes is what the refresh of daily candles did.
 	Quotes marketdata.Report
+	// Fundamentals is what the reading of the SEC's frames did; Read says it ran.
+	Fundamentals     fundamentals.Report
+	FundamentalsRead bool
+	// Insiders is what the reading of Form 4 filings did.
+	Insiders insider.Report
 	// FeedsSeeded is how many SEC filing records of stocks are new; Feeds is
 	// what the search of company websites did.
 	FeedsSeeded int
@@ -178,6 +194,27 @@ func (r *Refresher) Cycle(ctx context.Context, force bool) Report {
 		rep.Quotes = qrep
 		if err != nil && ctx.Err() == nil {
 			problem("quotes", err)
+		}
+	}
+
+	if r.Fundamentals != nil && ctx.Err() == nil {
+		frep, ran, err := r.Fundamentals.Refresh(ctx, force)
+		rep.Fundamentals, rep.FundamentalsRead = frep, ran
+		if err != nil && ctx.Err() == nil {
+			problem("fundamentals", err)
+		} else if ran {
+			r.logf("fundamentals: %d facts of %d companies", frep.Facts, frep.Companies)
+		}
+	}
+
+	if r.Insiders != nil && r.Set.InsidersPerCycle > 0 && ctx.Err() == nil {
+		irep, err := r.Insiders.Refresh(ctx, r.Set.InsidersPerCycle)
+		rep.Insiders = irep
+		if err != nil && ctx.Err() == nil {
+			problem("insiders", err)
+		}
+		if irep.Asked > 0 {
+			r.logf("insiders: %d filings, %d trades, %d left", irep.Asked, irep.Trades, irep.Left)
 		}
 	}
 

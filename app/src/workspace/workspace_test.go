@@ -8,7 +8,9 @@ import (
 	"time"
 
 	"github.com/b070nd/stoxicity/app/src/feeds"
+	"github.com/b070nd/stoxicity/app/src/fundamentals"
 	"github.com/b070nd/stoxicity/app/src/labels"
+	"github.com/b070nd/stoxicity/app/src/marketdata"
 	"github.com/b070nd/stoxicity/app/src/model"
 	"github.com/b070nd/stoxicity/app/src/scheduler"
 	"github.com/b070nd/stoxicity/app/src/status"
@@ -421,5 +423,41 @@ func TestStockFeedsAreTheOnesRecordedForTheTicker(t *testing.T) {
 	}
 	if got := w.StockFeeds("ZZZ"); len(got) != 0 {
 		t.Errorf("StockFeeds(ZZZ) = %+v", got)
+	}
+}
+
+func TestNumbersJoinTheSECFiguresWithTheLastClose(t *testing.T) {
+	dir := setup(t)
+	db, err := store.Open(filepath.Join(dir, "data"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	src := store.RefSource{Name: store.SourceTickers}
+	if _, err := db.ReplaceTickers(ctx, src, []store.RefTicker{{Ticker: "NVDA", Name: "Nvidia Corp", CIK: "0001045810", Exchange: "Nasdaq"}}, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ReplaceListing(ctx, store.RefSource{Name: store.SourceNasdaq}, []store.RefListing{{Symbol: "NVDA", Name: "Nvidia Corp - Common Stock", Venue: "Nasdaq"}}, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.PutFundamentals(ctx, []fundamentals.Fact{
+		{CIK: "0001045810", Metric: "revenue", Start: "2025-02-01", End: "2026-01-31", Value: 200},
+		{CIK: "0001045810", Metric: "income", Start: "2025-02-01", End: "2026-01-31", Value: 100},
+		{CIK: "0001045810", Metric: "shares", End: "2026-08-21", Value: 24},
+	}, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.PutCandles(ctx, []marketdata.Candle{{Ticker: "NVDA", Day: "2026-11-04", Open: 10, High: 12, Low: 9, Close: 11, Volume: 5}}); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	w := open(t, dir)
+	n := w.Numbers()
+	if n["revenue"]["NVDA"] != 200 || n["margin"]["NVDA"] != 0.5 || n["marketcap"]["NVDA"] != 264 {
+		t.Errorf("numbers = %v", n)
+	}
+	if _, ok := n["revenue"]["KO"]; ok {
+		t.Error("KO has no CIK in the lists, so no figures")
 	}
 }

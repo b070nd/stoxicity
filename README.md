@@ -122,9 +122,11 @@ app/
     filter/                 Google-style query language
     lens/                   keyword relevance scoring
     lens/laya/              laya-serve client, second scoring stage
-    labels/                 keep/drop verdicts, the gold set
-    eval/                   precision@k, Brier, calibration error
-    marketdata/             quotes and fundamentals for stock pages
+    labels/                 keep/drop verdicts, the gold set; the queue of what to judge next
+    eval/                   precision@k, Brier, calibration error, precision and recall
+    marketdata/             daily candles (Polygon/Massive)
+    fundamentals/           revenue, profit and shares of every filer (SEC XBRL frames)
+    insider/                insider trades from Form 4 filings: keeper, 90-day figures
     summarize/              extractive summaries with sources
     discover/ trends/       new stock candidates, rising topics
     domains/ digest/        per-domain counts, the daily summary
@@ -164,6 +166,7 @@ stoxicity label list [-n 20]        # your latest labels
 stoxicity label sample [-n 10] [-days 7]   # random unlabelled articles to judge, then label with -sampled
 stoxicity eval [-days 90] [-threshold X]   # precision, recall, Brier, ECE of the lens against your labels
 stoxicity rescore [-days N | -from D -to D]   # score stored articles again after changing the lens
+stoxicity relink [-days N]          # give stored SEC filings the tickers of their CIK (all of them by default)
 stoxicity watch list                # the tenant's watches and unread hits
 stoxicity watch check [id...]       # validate watch files and their queries
 stoxicity watch test <id> -since 24h   # show matches, write nothing

@@ -238,6 +238,10 @@ func TestValidation(t *testing.T) {
 		{"quotes polygon", "company:\n  quotes: polygon\n  quotes_per_cycle: 5\n", ""},
 		{"quotes off", "company:\n  quotes: \"off\"\n", ""},
 		{"quotes stooq is gone", "company:\n  quotes: stooq\n", "company.quotes"},
+		{"fundamentals from nowhere", "company:\n  fundamentals: yahoo\n", "company.fundamentals"},
+		{"insiders from nowhere", "company:\n  insiders: edgar-online\n", "company.insiders"},
+		{"insiders off", "company:\n  insiders: \"off\"\n", ""},
+		{"insiders per cycle too many", "company:\n  insiders_per_cycle: 9000\n", "company.insiders_per_cycle"},
 		{"quotes per cycle negative", "company:\n  quotes_per_cycle: -1\n", "company.quotes_per_cycle"},
 		{"tenant id invalid", "tenancy:\n  default: \"bad id!\"\n", "tenancy.default"},
 		{"per host zero", "refresh:\n  per_host: 0\n", "refresh.per_host"},
@@ -565,5 +569,23 @@ func TestIntervalForFilingsWindow(t *testing.T) {
 	bad.Refresh.Fast.Zone = "Mars/Olympus"
 	if got := bad.IntervalFor(filings, utc(2026, 3, 9, 15, 0)); got != 0 {
 		t.Errorf("unknown zone: %v, want 0", got)
+	}
+}
+
+func TestThePriceKeyAlsoComesUnderMassivesName(t *testing.T) {
+	clearEnv(t)
+	root := writeConfig(t, "")
+	t.Setenv("STOXICITY_POLYGON_KEY", "")
+	t.Setenv("MASSIVE_API_KEY", "from-massive")
+	cfg, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Company.PolygonKey != "from-massive" {
+		t.Errorf("key %q", cfg.Company.PolygonKey)
+	}
+	t.Setenv("STOXICITY_POLYGON_KEY", "from-polygon")
+	if cfg, _ = Load(root); cfg.Company.PolygonKey != "from-polygon" {
+		t.Errorf("the STOXICITY name should win, got %q", cfg.Company.PolygonKey)
 	}
 }

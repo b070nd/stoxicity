@@ -62,7 +62,7 @@ func TestApply(t *testing.T) {
 			op:    Opinion{Kind: model.EventResults, KindConfidence: 0.82},
 			use:   Use{Kind: true}, min: 0.7,
 			want: added(with(base(), func(s *model.Score) {
-				s.Kind, s.Materiality, s.Relevance = model.EventResults, 3, 0.44
+				s.Kind, s.Materiality, s.Relevance = model.EventResults, 3, 0.5
 			}), "laya: kind results (0.82)"),
 		},
 		{
@@ -71,16 +71,16 @@ func TestApply(t *testing.T) {
 			op:    Opinion{Kind: model.EventNonReliance, KindConfidence: 0.9},
 			use:   Use{Kind: true}, min: 0.7,
 			want: added(with(base(), func(s *model.Score) {
-				s.Kind, s.Materiality, s.Relevance = model.EventNonReliance, 4, 0.56
+				s.Kind, s.Materiality, s.Relevance = model.EventNonReliance, 4, 0.65
 			}), "laya: kind non_reliance (0.90)"),
 		},
 		{
 			name:  "kind keeps a higher lens materiality and moves relevance by the gain only",
-			score: with(base(), func(s *model.Score) { s.Materiality, s.Relevance = 4, 0.56 }),
+			score: with(base(), func(s *model.Score) { s.Materiality, s.Relevance = 4, 0.65 }),
 			op:    Opinion{Kind: model.EventResults, KindConfidence: 0.8}, // base 3 < 4
 			use:   Use{Kind: true}, min: 0.7,
 			want: added(with(base(), func(s *model.Score) {
-				s.Kind, s.Materiality, s.Relevance = model.EventResults, 4, 0.56
+				s.Kind, s.Materiality, s.Relevance = model.EventResults, 4, 0.65
 			}), "laya: kind results (0.80)"),
 		},
 		{
@@ -89,7 +89,7 @@ func TestApply(t *testing.T) {
 			op:    Opinion{Kind: model.EventDividend, KindConfidence: 0.7},
 			use:   Use{Kind: true}, min: 0.7,
 			want: added(with(base(), func(s *model.Score) {
-				s.Kind, s.Materiality, s.Relevance = model.EventDividend, 3, 0.44
+				s.Kind, s.Materiality, s.Relevance = model.EventDividend, 3, 0.5
 			}), "laya: kind dividend (0.70)"),
 		},
 		{
@@ -103,11 +103,11 @@ func TestApply(t *testing.T) {
 		},
 		{
 			name:  "noise kind leaves a lower relevance alone",
-			score: with(base(), func(s *model.Score) { s.Materiality, s.Relevance = 2, 0.32 }),
+			score: with(base(), func(s *model.Score) { s.Materiality, s.Relevance = 2, 0.35 }),
 			op:    Opinion{Kind: model.EventPriceChatter, KindConfidence: 0.9},
 			use:   Use{Kind: true}, min: 0.7,
 			want: added(with(base(), func(s *model.Score) {
-				s.Kind, s.Materiality, s.Relevance = model.EventPriceChatter, 2, 0.32
+				s.Kind, s.Materiality, s.Relevance = model.EventPriceChatter, 2, 0.35
 			}), "laya: kind price_chatter (0.90)"),
 		},
 		{
@@ -140,10 +140,10 @@ func TestApply(t *testing.T) {
 		},
 		{
 			name:  "kind disagreement with a real lens kind is not applied",
-			score: with(base(), func(s *model.Score) { s.Kind, s.Materiality, s.Relevance = model.EventResults, 3, 0.44 }),
+			score: with(base(), func(s *model.Score) { s.Kind, s.Materiality, s.Relevance = model.EventResults, 3, 0.5 }),
 			op:    Opinion{Kind: model.EventGuidance, KindConfidence: 0.9},
 			use:   Use{Kind: true}, min: 0.7,
-			want: added(with(base(), func(s *model.Score) { s.Kind, s.Materiality, s.Relevance = model.EventResults, 3, 0.44 }),
+			want: added(with(base(), func(s *model.Score) { s.Kind, s.Materiality, s.Relevance = model.EventResults, 3, 0.5 }),
 				"laya (disagrees): kind guidance (0.90) against results"),
 		},
 		{
@@ -280,26 +280,26 @@ func TestApply(t *testing.T) {
 		// Materiality.
 		{
 			name:  "materiality rounds the mean up and raises relevance",
-			score: with(base(), func(s *model.Score) { s.Materiality, s.Relevance = 3, 0.44 }),
+			score: with(base(), func(s *model.Score) { s.Materiality, s.Relevance = 3, 0.5 }),
 			op:    Opinion{Materiality: 4.4, MaterialityConfidence: 0.8},
 			use:   Use{Materiality: true}, min: 0.7,
-			want: added(with(base(), func(s *model.Score) { s.Materiality, s.Relevance = 4, 0.56 }),
+			want: added(with(base(), func(s *model.Score) { s.Materiality, s.Relevance = 4, 0.65 }),
 				"laya: materiality 4 (4.4) (0.80)"),
 		},
 		{
 			name:  "materiality lowers relevance by the steps lost",
-			score: with(base(), func(s *model.Score) { s.Materiality, s.Relevance = 3, 0.44 }),
+			score: with(base(), func(s *model.Score) { s.Materiality, s.Relevance = 3, 0.5 }),
 			op:    Opinion{Materiality: 1, MaterialityConfidence: 0.8},
 			use:   Use{Materiality: true}, min: 0.7,
-			want: added(with(base(), func(s *model.Score) { s.Materiality, s.Relevance = 2, 0.32 }),
+			want: added(with(base(), func(s *model.Score) { s.Materiality, s.Relevance = 2, 0.35 }),
 				"laya: materiality 2 (1.0) (0.80)"),
 		},
 		{
 			name:  "materiality is not raised above 5",
-			score: with(base(), func(s *model.Score) { s.Materiality, s.Relevance = 5, 0.68 }),
+			score: with(base(), func(s *model.Score) { s.Materiality, s.Relevance = 5, 0.8 }),
 			op:    Opinion{Materiality: 9, MaterialityConfidence: 0.8},
 			use:   Use{Materiality: true}, min: 0.7,
-			want: added(with(base(), func(s *model.Score) { s.Materiality, s.Relevance = 5, 0.68 }),
+			want: added(with(base(), func(s *model.Score) { s.Materiality, s.Relevance = 5, 0.8 }),
 				"laya: materiality 5 (9.0) (0.80)"),
 		},
 		{
@@ -413,11 +413,11 @@ func TestApply(t *testing.T) {
 				Relevance: 1, RelevanceConfidence: 0.9,
 			},
 			use: allOn, min: 0.7,
-			// kind: materiality 1 to 3, relevance 0.2 to 0.44; materiality: (3+5)/2 = 4,
-			// relevance 0.56; relevance: 0.7*0.56 + 0.3*1 = 0.692.
+			// kind: materiality 1 to 3, relevance 0.2 to 0.5; materiality: (3+5)/2 = 4,
+			// relevance 0.65; relevance: 0.7*0.65 + 0.3*1 = 0.755.
 			want: added(with(base(), func(s *model.Score) {
-				s.Kind, s.Materiality, s.Relevance = model.EventResults, 4, 0.692
-			}), "laya: kind results (0.90)", "laya: materiality 4 (5.0) (0.90)", "laya: relevance 0.692 (1.00, weight 0.30) (0.90)"),
+				s.Kind, s.Materiality, s.Relevance = model.EventResults, 4, 0.755
+			}), "laya: kind results (0.90)", "laya: materiality 4 (5.0) (0.90)", "laya: relevance 0.755 (1.00, weight 0.30) (0.90)"),
 		},
 		{
 			name:  "a source name replaces laya in the reasons",

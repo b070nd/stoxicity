@@ -1,0 +1,63 @@
+<?xml version="1.0"?>
+<!-- synthetic fixture shaped like the live document, not a real filing -->
+<ownershipDocument>
+  <schemaVersion>X0609</schemaVersion>
+  <documentType>4</documentType>
+  <periodOfReport>2026-11-03</periodOfReport>
+  <issuer>
+    <issuerCik>0000111111</issuerCik>
+    <issuerName>Example Corp</issuerName>
+    <issuerTradingSymbol>EXMP</issuerTradingSymbol>
+  </issuer>
+  <reportingOwner>
+    <reportingOwnerId><rptOwnerCik>0002222222</rptOwnerCik><rptOwnerName>Doe Jane</rptOwnerName></reportingOwnerId>
+    <reportingOwnerRelationship>
+      <isDirector>1</isDirector><isOfficer>1</isOfficer><officerTitle>Chief Executive Officer</officerTitle>
+    </reportingOwnerRelationship>
+  </reportingOwner>
+  <reportingOwner>
+    <reportingOwnerId><rptOwnerCik>0003333333</rptOwnerCik><rptOwnerName>Doe Family Trust</rptOwnerName></reportingOwnerId>
+    <reportingOwnerRelationship><isTenPercentOwner>1</isTenPercentOwner></reportingOwnerRelationship>
+  </reportingOwner>
+  <aff10b5One>0</aff10b5One>
+  <nonDerivativeTable>
+    <nonDerivativeTransaction>
+      <securityTitle><value>Common Stock</value></securityTitle>
+      <transactionDate><value>2026-11-03</value></transactionDate>
+      <transactionCoding><transactionFormType>4</transactionFormType><transactionCode>P</transactionCode></transactionCoding>
+      <transactionAmounts>
+        <transactionShares><value>10,000</value></transactionShares>
+        <transactionPricePerShare><value>12.5</value></transactionPricePerShare>
+        <transactionAcquiredDisposedCode><value>A</value></transactionAcquiredDisposedCode>
+      </transactionAmounts>
+      <postTransactionAmounts><sharesOwnedFollowingTransaction><value>60000</value></sharesOwnedFollowingTransaction></postTransactionAmounts>
+      <ownershipNature><directOrIndirectOwnership><value>D</value></directOrIndirectOwnership></ownershipNature>
+    </nonDerivativeTransaction>
+    <nonDerivativeTransaction>
+      <securityTitle><value>Common Stock</value></securityTitle>
+      <transactionDate><value>2026-11-03</value></transactionDate>
+      <transactionCoding><transactionFormType>4</transactionFormType><transactionCode>P</transactionCode></transactionCoding>
+      <transactionAmounts>
+        <transactionShares><value>2500</value></transactionShares>
+        <transactionPricePerShare><value>12.6</value></transactionPricePerShare>
+        <transactionAcquiredDisposedCode><value>A</value></transactionAcquiredDisposedCode>
+      </transactionAmounts>
+      <postTransactionAmounts><sharesOwnedFollowingTransaction><value>8000</value></sharesOwnedFollowingTransaction></postTransactionAmounts>
+      <ownershipNature><directOrIndirectOwnership><value>I</value></directOrIndirectOwnership></ownershipNature>
+    </nonDerivativeTransaction>
+    <nonDerivativeTransaction>
+      <securityTitle><value>Common Stock</value></securityTitle>
+      <transactionDate><value>2026-11-03</value></transactionDate>
+      <transactionCoding><transactionFormType>4</transactionFormType><transactionCode>A</transactionCode></transactionCoding>
+      <transactionAmounts>
+        <transactionShares><value>5000</value></transactionShares>
+        <transactionPricePerShare/>
+        <transactionAcquiredDisposedCode><value>A</value></transactionAcquiredDisposedCode>
+      </transactionAmounts>
+    </nonDerivativeTransaction>
+    <nonDerivativeHolding>
+      <securityTitle><value>Common Stock</value></securityTitle>
+      <postTransactionAmounts><sharesOwnedFollowingTransaction><value>1</value></sharesOwnedFollowingTransaction></postTransactionAmounts>
+    </nonDerivativeHolding>
+  </nonDerivativeTable>
+</ownershipDocument>

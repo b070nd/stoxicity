@@ -20,6 +20,8 @@ import (
 	"github.com/b070nd/stoxicity/app/src/config"
 	"github.com/b070nd/stoxicity/app/src/envfile"
 	"github.com/b070nd/stoxicity/app/src/filter"
+	"github.com/b070nd/stoxicity/app/src/fundamentals"
+	"github.com/b070nd/stoxicity/app/src/insider"
 	"github.com/b070nd/stoxicity/app/src/labels"
 	"github.com/b070nd/stoxicity/app/src/model"
 	"github.com/b070nd/stoxicity/app/src/reader"
@@ -69,6 +71,15 @@ type Workspace struct {
 	// The newest candles, read again once they are older than quotesEvery.
 	quotes   map[string]tui.Quote
 	quotesAt time.Time
+
+	sampled map[string]bool // articles of the label queue that were drawn at random
+
+	numbers   map[string]map[string]float64
+	numbersAt time.Time
+	sums      map[string]fundamentals.Summary
+	sumsAt    time.Time
+	// The insiders' open market trades of the last quarter, summed by company.
+	insiders map[string]insider.Summary
 }
 
 var _ tui.Backend = (*Workspace)(nil)
@@ -256,6 +267,68 @@ func (w *Workspace) Quotes() map[string]tui.Quote {
 	}
 	w.quotes = out
 	return out
+}
+
+// numbersEvery is how often Numbers is made again; the figures of a year change
+// weekly, the market value with the price.
+const (
+	numbersEvery = time.Minute
+	sumsEvery    = 10 * time.Minute
+)
+
+// Numbers are the figures of each common stock's latest fiscal year and its
+// market value (shares times the last close), by name and ticker. Empty until
+// the SEC's figures are stored.
+func (w *Workspace) Numbers() map[string]map[string]float64 {
+	quotes, univ := w.Quotes(), w.Universe() // each takes the lock itself
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	now := w.now()
+	if w.numbers != nil && now.Sub(w.numbersAt) < numbersEvery {
+		return w.numbers
+	}
+	w.numbersAt = now
+	if w.sums == nil || now.Sub(w.sumsAt) >= sumsEvery {
+		w.sumsAt = now
+		facts, err := w.db.Fundamentals(context.Background())
+		if err != nil {
+			facts = nil
+		}
+		w.sums = fundamentals.Summarize(facts)
+		w.insiders = nil
+		since := now.AddDate(0, 0, -insider.FigureDays).Format(time.DateOnly)
+		if trades, err := w.db.InsiderTrades(context.Background(), since, "", 0); err == nil {
+			w.insiders = insider.Summarize(trades, now)
+		}
+	}
+	if univ == nil {
+		w.numbers = map[string]map[string]float64{}
+		return w.numbers
+	}
+	closes := make(map[string]float64, len(quotes))
+	for t, q := range quotes {
+		closes[t] = q.Close
+	}
+	w.numbers = fundamentals.Figures(w.sums, univ.All(), closes)
+	for name, byTicker := range insider.Figures(w.insiders, univ.All()) {
+		w.numbers[name] = byTicker
+	}
+	return w.numbers
+}
+
+// Insiders lists the stored insider trades of a ticker's company over the last
+// year, newest first. Empty when there are none or the ticker has no SEC number.
+func (w *Workspace) Insiders(ticker string) []model.InsiderTrade {
+	p, ok := w.Universe().Get(ticker)
+	if !ok || p.CIK == "" {
+		return nil
+	}
+	since := w.now().AddDate(-1, 0, 0).Format(time.DateOnly)
+	list, err := w.db.InsiderTrades(context.Background(), since, p.CIK, 0)
+	if err != nil {
+		return nil
+	}
+	return list
 }
 
 // StockFeeds lists the feeds recorded for a ticker, the SEC record first.
@@ -492,7 +565,8 @@ func (w *Workspace) Verdicts(ctx context.Context) (map[string]labels.Verdict, er
 	return out, nil
 }
 
-// Label records a keep or drop verdict on an article the tenant can see.
+// Label records a keep or drop verdict on an article the tenant can see. An
+// article the label queue drew at random is recorded as sampled.
 func (w *Workspace) Label(ctx context.Context, articleID string, keep bool) error {
 	a, err := w.read.Get(ctx, articleID)
 	if err != nil {
@@ -502,10 +576,65 @@ func (w *Workspace) Label(ctx context.Context, articleID string, keep bool) erro
 	if keep {
 		v = labels.Keep
 	}
+	w.mu.Lock()
+	sampled := w.sampled[a.ID]
+	w.mu.Unlock()
 	return w.ts.Labels().Put(ctx, labels.Label{
 		TenantID: w.tenant.ID, ArticleID: a.ID, Verdict: v,
-		At: w.now(), LensVersion: a.Score.LensVersion,
+		At: w.now(), LensVersion: a.Score.LensVersion, Sampled: sampled,
 	})
+}
+
+// queueDays is how far back the label queue looks for articles to judge.
+const queueDays = 30
+
+// LabelQueue chooses the next n articles to judge (see labels.Queue). The day
+// seeds the random part, so the queue keeps its order while it is worked on.
+func (w *Workspace) LabelQueue(ctx context.Context, n int) ([]labels.Pick, error) {
+	now := w.now()
+	arts, err := w.read.Range(ctx, now.AddDate(0, 0, -queueDays), now.Add(time.Minute))
+	if err != nil {
+		return nil, err
+	}
+	have, err := w.ts.Labels().All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	done := make(map[string]bool, len(have))
+	for _, l := range have {
+		done[l.ArticleID] = true
+	}
+	picks := labels.Queue(arts, done, w.cfg.Lens.Threshold, n, now.In(w.zone).Format(time.DateOnly))
+	w.mu.Lock()
+	w.sampled = map[string]bool{}
+	for _, p := range picks {
+		if p.Sampled {
+			w.sampled[p.Article.ID] = true
+		}
+	}
+	w.mu.Unlock()
+	return picks, nil
+}
+
+// LabelProgress counts the labels and measures the lens against them. Labels of
+// articles the tenant can no longer read are left out.
+func (w *Workspace) LabelProgress(ctx context.Context) (labels.Progress, error) {
+	all, err := w.ts.Labels().All(ctx)
+	if err != nil {
+		return labels.Progress{}, err
+	}
+	items := make([]labels.Judged, 0, len(all))
+	for _, l := range all {
+		a, err := w.read.Get(ctx, l.ArticleID)
+		if errors.Is(err, store.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return labels.Progress{}, err
+		}
+		items = append(items, labels.Judged{Label: l, Score: a.Score})
+	}
+	return labels.Measure(items, w.cfg.Lens.Threshold), nil
 }
 
 // MarkSeen moves the watch's read marker to now.

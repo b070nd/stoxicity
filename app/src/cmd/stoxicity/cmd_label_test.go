@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -327,4 +328,44 @@ func TestEvalAndLabelListHideOtherTenantsSources(t *testing.T) {
 	r = e.run(t, "-tenant", "other", "eval")
 	r.wantCode(t, exitOK)
 	r.wantOut(t, "evaluated: 1 (kept 1")
+}
+
+func TestLabelQueueOffersTheDoubtfulOnesAcrossKindsWithoutScoresAndSkipsLabelled(t *testing.T) {
+	e := newTestEnv(t)
+	addOtherTenant(t, e)
+	var arts []model.Article
+	kinds := []model.EventKind{model.EventResults, model.EventResults, model.EventResults, model.EventBankruptcy, model.EventOfficerChange, model.EventBylaws}
+	for i, k := range kinds {
+		arts = append(arts, scoredArticle(fmt.Sprintf("q%d", i+1), "news-feed", "news.example.com", utc(3, 5+i, 0), 0.45+float64(i)/50, 3, k, nil, nil))
+	}
+	arts = append(arts, scoredArticle("x1", "private-feed", "private.example.com", utc(3, 5, 0), 0.5, 3, model.EventResults, nil, nil))
+	savePageArticles(t, e, arts...)
+	e.run(t, "label", "keep", "q1").wantCode(t, exitOK)
+
+	r := e.run(t, "label", "queue", "-n", "4")
+	r.wantCode(t, exitOK)
+	r.wantOut(t, "1 labels so far, 299 to go to 300", "label keep|drop ID...")
+	r.wantNotOut(t, "private", "0.45", "0.47")
+	ids := sampleIDs(r.out)
+	if len(ids) != 4 || slices.Contains(ids, "q1") || slices.Contains(ids, "x1") {
+		t.Fatalf("queue = %v: four, none labelled, none of another tenant", ids)
+	}
+	// Four picks: three uncertain ones from three kinds in turn, one at random.
+	if n := strings.Count(r.out, "\tsampled\t"); n != 1 {
+		t.Errorf("one in four is marked sampled, got %d:\n%s", n, r.out)
+	}
+	if again := e.run(t, "label", "queue", "-n", "4"); again.out != r.out {
+		t.Errorf("the queue changed within the day:\n%s\n%s", r.out, again.out)
+	}
+	e.run(t, "label", "queue", "-n", "0").wantCode(t, exitUsage)
+}
+
+func TestEvalTellsPrecisionAndRecallPerKindOfEvent(t *testing.T) {
+	e := newTestEnv(t)
+	seedEvalData(t, e)
+	labelEvalData(t, e)
+	r := e.run(t, "eval")
+	r.wantCode(t, exitOK)
+	r.wantOut(t, "By kind of event")
+	wantFields(t, r.out, "results", "results", "6", "4", "4", "0.750", "0.750")
 }

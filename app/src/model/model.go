@@ -40,7 +40,10 @@ type Article struct {
 	Summary   string
 	Published time.Time
 	Fetched   time.Time
-	Form      string   // SEC form type such as "8-K", empty for non-filings
+	Form      string // SEC form type such as "8-K", empty for non-filings
+	// CIK is the ten-digit SEC number of the company a filing belongs to; empty
+	// for anything that is not a filing. A filing's tickers follow from it.
+	CIK       string
 	Items     []string // 8-K item numbers such as "2.02", the strongest signal of what happened
 	Tickers   []string // symbols the text mentions
 	Topics    []string // trends or themes it was filed under

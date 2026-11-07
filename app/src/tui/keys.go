@@ -36,6 +36,7 @@ const (
 	UseExchange  Action = "use-exchange" // narrow every screen to the exchange on this screen
 	GoDomains    Action = "domains"
 	GoSources    Action = "sources"
+	GoLabel      Action = "label"    // the queue of articles to judge
 	OpenURL      Action = "open-url" // the selected article in the browser
 	Up           Action = "up"
 	Down         Action = "down"
@@ -183,6 +184,7 @@ var DefaultKeys = []Binding{
 	{Keys: []string{"e"}, Action: GoExchanges, Help: "Exchanges: hours, statistics, news"},
 	{Keys: []string{"o"}, Action: GoSources, Help: "Sources: their health"},
 	{Keys: []string{"w"}, Action: GoWatches, Help: "Watches: manage them"},
+	{Keys: []string{"a"}, Action: GoLabel, Help: "Label: judge what the lens doubts"},
 	{Keys: []string{"/"}, Action: FocusFilter, Help: "filter", Bar: "filter"},
 	{Keys: []string{"j"}, Action: Jump, Help: "catalogue: jump to a ticker or name", Bar: "jump", Screens: []nav.Kind{nav.Companies}},
 	{Keys: []string{">"}, Action: SortNext, Help: "sort by the next column", Bar: "sort", Needs: OnColumns},

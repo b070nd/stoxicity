@@ -24,7 +24,9 @@ import (
 	"github.com/b070nd/stoxicity/app/src/envfile"
 	"github.com/b070nd/stoxicity/app/src/feeds/edgar"
 	"github.com/b070nd/stoxicity/app/src/filter"
+	"github.com/b070nd/stoxicity/app/src/fundamentals"
 	"github.com/b070nd/stoxicity/app/src/httpx"
+	"github.com/b070nd/stoxicity/app/src/insider"
 	"github.com/b070nd/stoxicity/app/src/ledger"
 	"github.com/b070nd/stoxicity/app/src/lens"
 	"github.com/b070nd/stoxicity/app/src/lens/laya"
@@ -242,7 +244,7 @@ func (a *app) bootstrap() {
 	// The sources name the variables that hold their keys, and the environment
 	// files may set those, so the sources are read first. Their errors are kept
 	// for later; here only the names matter.
-	var allow []string
+	allow := []string{"MASSIVE_API_KEY"} // the price source's key, under the name its maker uses now
 	if reg, err := sources.Load(a.cfgDir); err == nil {
 		for _, s := range reg {
 			if s.AuthEnv != "" {
@@ -393,6 +395,7 @@ func (a *app) lens() *lens.Lens {
 	return lens.New(a.cfg.Lens, lens.Options{
 		SourceTier: func(id string) model.Tier { return a.reg[id].Tier },
 		ItemKind:   edgar.Kinds,
+		ItemRating: edgar.Rate,
 	})
 }
 
@@ -749,10 +752,13 @@ func (a *app) referenceKeeper(db *store.DB, client httpx.Client) *refdata.Refres
 			Dir: a.companyDir(), MasterURL: c.URL, NasdaqURL: c.NasdaqURL, OtherURL: c.OtherURL,
 			SubmissionsURL: c.SubmissionsURL, SitesURL: c.SitesURL, MaxAge: a.cfg.CompanyMaxAge(), Listing: c.Listing,
 			PerCycle: c.EnrichPerCycle, SitesPerCycle: c.SitesPerCycle, QuotesPerCycle: c.QuotesPerCycle, FeedSearch: c.FeedSearchPerCycle,
+			InsidersPerCycle: c.InsidersPerCycle,
 		},
-		Feeds:  &stockfeeds.Keeper{Store: db, Client: client, Now: a.now},
-		Quotes: a.quoteKeeper(db, client),
-		Logf:   func(format string, args ...any) { fmt.Fprintf(a.stdout, format+"\n", args...) },
+		Feeds:        &stockfeeds.Keeper{Store: db, Client: client, Now: a.now},
+		Quotes:       a.quoteKeeper(db, client),
+		Fundamentals: a.fundamentalsKeeper(db, client),
+		Insiders:     a.insiderKeeper(db, client),
+		Logf:         func(format string, args ...any) { fmt.Fprintf(a.stdout, format+"\n", args...) },
 	}
 	// What the background cycle needs from the app is taken here, on the
 	// command's own goroutine: the settings and the tickers the watches name.
@@ -884,4 +890,24 @@ func (a *app) quoteKeeper(db *store.DB, client httpx.Client) *marketdata.Keeper 
 		return nil
 	}
 	return &marketdata.Keeper{Store: db, Source: marketdata.Polygon{Client: client, Key: c.PolygonKey, URL: c.QuotesURL}, Now: a.now}
+}
+
+// fundamentalsKeeper is the keeper of revenue, profit and shares; nil when
+// fundamentals are off or there is no client to ask with.
+func (a *app) fundamentalsKeeper(db *store.DB, client httpx.Client) *fundamentals.Keeper {
+	c := a.cfg.Company
+	if client == nil || c.Fundamentals != "sec" {
+		return nil
+	}
+	return &fundamentals.Keeper{Store: db, Fetcher: fundamentals.Fetcher{Client: client, URL: c.FundamentalsURL}, Now: a.now}
+}
+
+// insiderKeeper is the keeper of insider trades; nil when they are off or there
+// is no client to ask with.
+func (a *app) insiderKeeper(db *store.DB, client httpx.Client) *insider.Keeper {
+	c := a.cfg.Company
+	if client == nil || c.Insiders != "sec" {
+		return nil
+	}
+	return &insider.Keeper{Store: db, Reader: edgar.NewTradeReader(client, edgar.Config{WebBase: c.InsidersURL}), Now: a.now}
 }

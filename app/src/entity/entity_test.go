@@ -55,6 +55,7 @@ func TestFind(t *testing.T) {
 		{"no companies", "The weather was mild and nothing happened.", []string{}},
 		{"cashtag", "Traders piled into $AAPL today", []string{"AAPL"}},
 		{"cashtag of dotted ticker", "Long $BRK.B and $BRK-B", []string{"BRK-B"}},
+		{"the SEC's word CIK is no ticker", "Form 8-K filed by ACME Inc (CIK 0001428439), shares and earnings", []string{}},
 		{"cashtag stoplisted", "Bought $IT, $ON and $ALL", []string{"IT", "ON", "ALL"}},
 		{"cashtag unknown", "Nothing on $ZZZZ here", []string{}},
 		{"cashtag glued to a word", "US$AAPL is not a cashtag", []string{}},

@@ -218,9 +218,21 @@ func normaliseTickers(in []string) []string {
 	return slices.Compact(out)
 }
 
-// resolveTickers adds the tickers the title and summary mention to a.Tickers.
+// resolveTickers sets the tickers of a. A SEC filing belongs to the company
+// whose CIK it carries, and that is all it is about: its tickers are the ones
+// the SEC list gives that CIK (none if it gives none), whatever the title or
+// the summary happen to contain. Anything else adds the tickers its title and
+// summary mention to a.Tickers.
 func (p *Pipeline) resolveTickers(a *model.Article) {
 	if p.cfg.Entities == nil {
+		return
+	}
+	if cr, ok := p.cfg.Entities.(entity.CIKResolver); ok && a.CIK != "" {
+		a.Tickers = nil
+		for _, e := range cr.ByCIK(a.CIK) {
+			a.Tickers = append(a.Tickers, e.Ticker)
+		}
+		a.Tickers = normaliseTickers(a.Tickers)
 		return
 	}
 	found := p.cfg.Entities.Find(a.Title + "\n" + a.Summary)
@@ -444,4 +456,52 @@ func (p *Pipeline) Rescore(ctx context.Context, from, to time.Time) (int, error)
 	}
 	p.cfg.Logger.Debug("pipeline: rescored", "articles", done)
 	return done, nil
+}
+
+// Relinked is what Relink did.
+type Relinked struct {
+	Filings int // SEC filings looked at
+	Changed int // filings whose tickers were different and are saved again
+	Cleared int // of those, filings left with no ticker: their CIK is not in the SEC list
+}
+
+// Relink gives the stored SEC filings published in [from, to) the tickers of
+// their CIK, as ingestion now does, and saves those that change. Nothing else
+// about an article changes, and no score is made again. Articles that are not
+// filings are left as they are.
+func (p *Pipeline) Relink(ctx context.Context, from, to time.Time) (Relinked, error) {
+	var res Relinked
+	if p.cfg.Entities == nil {
+		return res, errors.New("pipeline: no company list to link filings with")
+	}
+	stored, err := p.cfg.Store.Range(ctx, from, to)
+	if err != nil {
+		return res, fmt.Errorf("pipeline: load filings to relink: %w", err)
+	}
+	var changed []model.Article
+	for _, a := range stored {
+		if a.CIK == "" {
+			continue
+		}
+		res.Filings++
+		before := slices.Clone(a.Tickers)
+		p.resolveTickers(&a)
+		if slices.Equal(before, a.Tickers) {
+			continue
+		}
+		res.Changed++
+		if len(a.Tickers) == 0 {
+			res.Cleared++
+		}
+		changed = append(changed, a)
+	}
+	for start := 0; start < len(changed); start += rescoreBatch {
+		if err := ctx.Err(); err != nil {
+			return res, err
+		}
+		if err := p.cfg.Store.Save(ctx, changed[start:min(start+rescoreBatch, len(changed))]); err != nil {
+			return res, fmt.Errorf("pipeline: save relinked filings: %w", err)
+		}
+	}
+	return res, nil
 }

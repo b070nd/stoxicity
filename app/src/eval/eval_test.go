@@ -51,3 +51,23 @@ func TestECE(t *testing.T) {
 		t.Errorf("score 1 ECE = %v, want 0", got)
 	}
 }
+
+func TestConfusionCountsCallsAgainstVerdicts(t *testing.T) {
+	var c Confusion
+	for _, x := range [][2]bool{{true, true}, {true, true}, {true, false}, {false, true}, {false, false}, {false, false}} {
+		c.Add(x[0], x[1])
+	}
+	if c != (Confusion{TP: 2, FP: 1, FN: 1, TN: 2}) || c.Total() != 6 {
+		t.Fatalf("%+v", c)
+	}
+	if p, ok := c.PrecisionValue(); !ok || p < 0.666 || p > 0.667 {
+		t.Errorf("precision %v", p)
+	}
+	if c.Precision() != "0.667 (2/3)" || c.Recall() != "0.667 (2/3)" {
+		t.Errorf("%s %s", c.Precision(), c.Recall())
+	}
+	var none Confusion
+	if _, ok := none.PrecisionValue(); ok || none.Recall() != "n/a" {
+		t.Error("no calls, no precision")
+	}
+}

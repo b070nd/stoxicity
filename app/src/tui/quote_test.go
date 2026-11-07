@@ -6,9 +6,11 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/b070nd/stoxicity/app/src/nav"
+	"github.com/b070nd/stoxicity/app/src/pages"
 )
 
 var quoteNow = time.Date(2026, 11, 5, 18, 0, 0, 0, time.UTC)
@@ -157,6 +159,55 @@ func TestCompaniesSortByChangeAndWithoutPricesNoPriceColumns(t *testing.T) {
 	}
 }
 
+func (h *harness) numbersFor(n map[string]map[string]float64) {
+	h.be.mu.Lock()
+	h.be.numbers = n
+	h.be.mu.Unlock()
+}
+
+func TestCompaniesShowMarketCapRevenueGrowthAndMarginAndSortByThem(t *testing.T) {
+	h := newHarness(t)
+	h.quotesFor(map[string]Quote{"NVDA": {Day: "2026-11-04", Open: 100, High: 112, Low: 99, Close: 110, Prev: 100}})
+	h.numbersFor(map[string]map[string]float64{
+		"marketcap": {"NVDA": 2.7e12, "KO": 2.6e11},
+		"revenue":   {"NVDA": 6.0e10, "KO": 4.6e10},
+		"income":    {"NVDA": 2.9e10, "KO": 1.06e10},
+		"growth":    {"NVDA": 1.26, "KO": -0.03},
+		"margin":    {"NVDA": 0.49, "KO": 0.23},
+	})
+	h.m.goTo(nav.Route{Kind: nav.Companies, Arg: "group:none sort:-marketcap"})
+	h.run(h.m.loadCmd(false))
+	h.mustContain("MCAP", "REVENUE", "GROWTH", "MARGIN", "2.70T", "260B", "60.0B", "+126.0%", "-3.0%", "49.0%")
+	var order []string
+	for _, r := range h.m.scr.Rows {
+		if r.Go != nil && (r.Go.Arg == "NVDA" || r.Go.Arg == "KO") {
+			order = append(order, r.Go.Arg)
+		}
+	}
+	if len(order) != 2 || order[0] != "NVDA" {
+		t.Errorf("sort:-marketcap puts the biggest first: %v", order)
+	}
+	h.m.goTo(nav.Route{Kind: nav.Companies, Arg: "group:none margin:>30%"})
+	h.run(h.m.loadCmd(false))
+	if v := h.view(); !strings.Contains(v, "NVDA") || strings.Contains(v, "Coca") {
+		t.Errorf("margin:>30%% keeps NVDA and not Coca-Cola:\n%s", v)
+	}
+	h.m.goTo(nav.Route{Kind: nav.Stock, Arg: "NVDA"})
+	h.run(h.m.loadCmd(false))
+	h.mustContain("market cap", "2.70T", "growth", "+126.0%", "net income")
+}
+
+func TestMoneyAndPercentText(t *testing.T) {
+	for v, want := range map[float64]string{1.5e12: "1.50T", 2.7e11: "270B", 4.56e10: "45.6B", 7.89e8: "789M", 1.23e7: "12.3M", 4.5e5: "450K", 12: "12", -3.2e9: "-3.20B", 0: "0"} {
+		if got := moneyText(v); got != want {
+			t.Errorf("moneyText(%v) = %q, want %q", v, got, want)
+		}
+	}
+	if percentText(0.1234) != "12.3%" || signedPercent(0.05) != "+5.0%" || signedPercent(-0.05) != "-5.0%" {
+		t.Error("percent text")
+	}
+}
+
 func TestStockPageShowsTheLastCloseAndTheDay(t *testing.T) {
 	h := newHarness(t)
 	h.quotesFor(map[string]Quote{"NVDA": {Day: "2026-11-04", Open: 100, High: 112, Low: 99, Close: 110, Prev: 100}})
@@ -219,5 +270,40 @@ func TestToneAndNewsStylesCoverTheirRange(t *testing.T) {
 	}
 	if newsStyle(0) != Plain || newsStyle(1) != Warn || newsStyle(4) != Warn || newsStyle(5) != Hot {
 		t.Error("newsStyle tiers")
+	}
+}
+
+func TestChangeIsNotShownForAMoveNoSingleDayMakes(t *testing.T) {
+	if ch, ok := (Quote{Prev: 100, Close: 102}).Change(); !ok || ch < 0.0199 || ch > 0.0201 {
+		t.Errorf("an ordinary day: %v %v", ch, ok)
+	}
+	for _, q := range []Quote{{Prev: 1, Close: 8.1}, {Prev: 10, Close: 1}, {Prev: 0, Close: 5}, {Prev: 5, Close: 0}} {
+		if ch, ok := q.Change(); ok {
+			t.Errorf("%+v shows a change of %v", q, ch)
+		}
+	}
+}
+
+func TestAnEightKSaysWhatItReportsInTheListAndInTheArticle(t *testing.T) {
+	h := newHarness(t)
+	h.m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	a := art("k1", "8-K - Acme Inc.", "sec.gov", time.Hour, 0.52, 3, []string{"ACME"}, nil)
+	a.Form, a.Items = "8-K", []string{"2.02", "7.01", "9.01"}
+	line := articleLine(a, Data{Params: pages.Params{Zone: time.UTC}})
+	if !strings.Contains(line, "8-K - Acme Inc. · results, Reg FD") || strings.Contains(line, "exhibits") {
+		t.Errorf("list line %q", line)
+	}
+	a.Items = nil
+	if line := articleLine(a, Data{Params: pages.Params{Zone: time.UTC}}); strings.Contains(line, " · ") {
+		t.Errorf("an article without items gets no label: %q", line)
+	}
+	a.Items = []string{"2.02", "5.02", "9.01"}
+	h.m.detail = &a
+	text := strings.Join(h.m.detailLines(), "\n")
+	for _, want := range []string{"form: 8-K", "items:", "2.02 Results of Operations and Financial Condition",
+		"5.02 Departure of Directors or Certain Officers", "9.01 Financial Statements and Exhibits"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("detail lacks %q:\n%s", want, text)
+		}
 	}
 }

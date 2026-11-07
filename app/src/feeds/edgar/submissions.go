@@ -232,6 +232,7 @@ func (s *Submissions) articles(src model.Source, cik string, body []byte, known 
 			Published: pub,
 			Fetched:   now,
 			Form:      form,
+			CIK:       padCIK(cik),
 			Items:     items,
 			Tickers:   tickers,
 		}

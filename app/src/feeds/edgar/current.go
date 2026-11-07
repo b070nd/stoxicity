@@ -305,6 +305,7 @@ func (c *Current) article(src model.Source, fl filing, now time.Time) model.Arti
 		Published: pub,
 		Fetched:   now,
 		Form:      fl.form,
+		CIK:       fl.cik,
 		Items:     summaryItems(fl.form, fl.summary),
 		Tickers:   slices.Clone(c.cfg.Tickers[fl.cik]),
 	}

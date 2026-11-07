@@ -128,3 +128,55 @@ func TestParseItems(t *testing.T) {
 		})
 	}
 }
+
+func TestEveryMappedItemHasAMaterialityAndEveryItemATitle(t *testing.T) {
+	for item := range itemKinds {
+		if m := itemMateriality[item]; m < 1 || m > 5 {
+			t.Errorf("mapped item %s has materiality %d", item, m)
+		}
+	}
+	for item := range itemMateriality {
+		if _, ok := itemKinds[item]; !ok {
+			t.Errorf("item %s has a materiality but no kind", item)
+		}
+	}
+	for _, item := range formItems {
+		if title, short, ok := model.ItemTitle(item); !ok || title == "" || short == "" {
+			t.Errorf("item %s has no title", item)
+		}
+	}
+}
+
+func TestRateTakesTheMostMaterialItemAndCountsTheOthers(t *testing.T) {
+	tests := []struct {
+		name  string
+		items []string
+		item  string
+		kind  model.EventKind
+		mat   int
+		also  []string
+		bonus float64
+		ok    bool
+	}{
+		{"results alone", []string{"2.02"}, "2.02", model.EventResults, 3, nil, 0, true},
+		{"exhibits are not information", []string{"2.02", "9.01"}, "2.02", model.EventResults, 3, nil, 0, true},
+		{"results with a presentation", []string{"2.02", "7.01", "9.01"}, "2.02", model.EventResults, 3, []string{"7.01"}, 0.02, true},
+		{"results, presentation and an officer change", []string{"2.02", "7.01", "5.02"}, "2.02", model.EventResults, 3, []string{"7.01", "5.02"}, 0.04, true},
+		{"a restatement outweighs the results it comes with", []string{"2.02", "4.02"}, "4.02", model.EventNonReliance, 5, []string{"2.02"}, 0.02, true},
+		{"two items of one kind add nothing", []string{"7.01", "8.01"}, "7.01", model.EventOther, 1, nil, 0, true},
+		{"an agreement with its debt", []string{"1.01", "2.03"}, "1.01", model.EventAgreement, 3, []string{"2.03"}, 0.02, true},
+		{"only exhibits", []string{"9.01"}, "", "", 0, nil, 0, false},
+		{"ignored and unknown items", []string{"1.04", "9.99"}, "", "", 0, nil, 0, false},
+		{"none", nil, "", "", 0, nil, 0, false},
+	}
+	for _, c := range tests {
+		got, ok := Rate(c.items)
+		if ok != c.ok || got.Item != c.item || got.Kind != c.kind || got.Materiality != c.mat ||
+			!slices.Equal(got.Also, c.also) || got.Bonus != c.bonus {
+			t.Errorf("%s: Rate(%v) = %+v, %v", c.name, c.items, got, ok)
+		}
+	}
+	if r, _ := Rate([]string{"2.02", "7.01", "8.01", "5.02", "1.01", "3.02"}); r.Bonus != 0.06 {
+		t.Errorf("the bonus stops at three items: %v", r.Bonus)
+	}
+}

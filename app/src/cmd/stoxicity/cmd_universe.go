@@ -7,12 +7,16 @@ import (
 	"io"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
 
 	"github.com/b070nd/stoxicity/app/src/company"
+	"github.com/b070nd/stoxicity/app/src/fundamentals"
 	"github.com/b070nd/stoxicity/app/src/httpx"
+	"github.com/b070nd/stoxicity/app/src/insider"
+	"github.com/b070nd/stoxicity/app/src/marketdata"
 	"github.com/b070nd/stoxicity/app/src/stockfeeds"
 	"github.com/b070nd/stoxicity/app/src/store"
 	"github.com/b070nd/stoxicity/app/src/universe"
@@ -27,7 +31,7 @@ const (
 	defaultEnrichMax = 300
 )
 
-const universeUsage = "expected: status | update [-force] | changes [-days N] [-limit N] | enrich [-all] [-max N] [-force] [-sites=false] [-feeds N] [TICKER...] | feeds [-search N] | quotes [-max N] [TICKER...] | find [-limit N] [-days N] [-format table|tsv|json] QUERY... | show TICKER | tag TICKER [-]TAG... | list [ID] | list add|remove ID TICKER..."
+const universeUsage = "expected: status | update [-force] | changes [-days N] [-limit N] | enrich [-all] [-max N] [-force] [-sites=false] [-feeds N] [TICKER...] | feeds [-search N] | quotes [-max N] [TICKER...] | fundamentals [-force] | insiders [-max N] [TICKER] | find [-limit N] [-days N] [-format table|tsv|json] QUERY... | show TICKER | tag TICKER [-]TAG... | list [ID] | list add|remove ID TICKER..."
 
 // cmdUniverse is the reference list of stocks: every company the program
 // knows, searched, tagged and grouped.
@@ -51,6 +55,10 @@ func cmdUniverse(ctx context.Context, a *app, args []string) error {
 		return a.universeFeeds(ctx, args[1:])
 	case "quotes":
 		return a.universeQuotes(ctx, args[1:])
+	case "fundamentals":
+		return a.universeFundamentals(ctx, args[1:])
+	case "insiders":
+		return a.universeInsiders(ctx, args[1:])
 	case "find":
 		return a.universeFind(ctx, args[1:])
 	case "show":
@@ -303,7 +311,7 @@ func (a *app) universeFind(ctx context.Context, args []string) error {
 	case "json":
 		return writeHitsJSON(a.stdout, shown)
 	case "tsv":
-		return writeHitsTSV(a.stdout, shown)
+		return writeHitsTSV(a.stdout, shown, facts)
 	}
 	if len(hits) == 0 {
 		fmt.Fprintln(a.stdout, "no company matches")
@@ -327,16 +335,39 @@ func (a *app) universeFind(ctx context.Context, args []string) error {
 
 // writeHitsTSV prints the matches as tab-separated values with a header line,
 // every field complete (no truncation), for a spreadsheet or a script.
-func writeHitsTSV(w io.Writer, hits []universe.Hit) error {
+func writeHitsTSV(w io.Writer, hits []universe.Hit, f universe.Facts) error {
 	cell := func(s string) string { return strings.NewReplacer("\t", " ", "\n", " ", "\r", " ").Replace(s) }
-	fmt.Fprintln(w, "ticker\tname\tcik\texchange\tvenue\tkind\tmarket\tstatus\tsic\tindustry\tsector\tstate\tfiscal_year\twebsite\tnews\tlists\ttags")
+	fmt.Fprintln(w, "ticker\tname\tcik\texchange\tvenue\tkind\tmarket\tstatus\tsic\tindustry\tsector\tstate\tfiscal_year\twebsite\tnews\tlists\ttags\tclose\tchange\tmarketcap\trevenue\tincome\tgrowth\tmargin\troe\tbuys\tsells")
 	for _, h := range hits {
 		p := h.Profile
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\n",
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s",
 			p.Ticker, cell(p.Name), p.CIK, p.Exchange, p.Venue, p.Kind, p.Market, p.Status, p.SIC, cell(p.Industry), cell(p.Sector),
 			p.State, p.FiscalYear, cell(p.Website), h.News, strings.Join(p.Lists, ","), strings.Join(p.Tags, ","))
+		for _, op := range []string{"close", "change", "marketcap", "revenue", "income", "growth", "margin", "roe", "buys", "sells"} {
+			if v, ok := figure(f, op, p.Ticker); ok {
+				fmt.Fprintf(w, "\t%s", strconv.FormatFloat(v, 'g', 8, 64))
+			} else {
+				fmt.Fprint(w, "\t")
+			}
+		}
+		fmt.Fprintln(w)
 	}
 	return nil
+}
+
+// figure is a number of the facts: the last close or move, or one of the
+// SEC's figures.
+func figure(f universe.Facts, op, ticker string) (float64, bool) {
+	switch op {
+	case "close":
+		v, ok := f.Close[ticker]
+		return v, ok
+	case "change":
+		v, ok := f.Change[ticker]
+		return v, ok
+	}
+	v, ok := f.Num[op][ticker]
+	return v, ok
 }
 
 // writeHitsJSON prints the matches as a JSON array, one object per company.
@@ -373,7 +404,43 @@ func (a *app) facts(ctx context.Context, days int) universe.Facts {
 	if err != nil {
 		return universe.Facts{}
 	}
-	return universe.FactsFrom(arts, a.cfg.Lens.Threshold, a.knownTickers())
+	f := universe.FactsFrom(arts, a.cfg.Lens.Threshold, a.knownTickers())
+	a.addFigures(ctx, &f)
+	return f
+}
+
+// addFigures gives the facts the prices and the SEC's figures, for close:,
+// marketcap:, revenue: and the rest. What is not stored is left out.
+func (a *app) addFigures(ctx context.Context, f *universe.Facts) {
+	db, err := a.store()
+	if err != nil {
+		return
+	}
+	f.Close, f.Change = map[string]float64{}, map[string]float64{}
+	if latest, err := db.LatestCandles(ctx); err == nil {
+		for t, c := range latest {
+			if len(c) == 0 {
+				continue
+			}
+			f.Close[t] = c[0].Close
+			if len(c) > 1 {
+				if ch, ok := marketdata.DayChange(c[1].Close, c[0].Close); ok {
+					f.Change[t] = ch
+				}
+			}
+		}
+	}
+	if facts, err := db.Fundamentals(ctx); err == nil {
+		f.Num = fundamentals.Figures(fundamentals.Summarize(facts), a.universe().All(), f.Close)
+	}
+	if trades, err := db.InsiderTrades(ctx, a.now().AddDate(0, 0, -insider.FigureDays).Format(time.DateOnly), "", 0); err == nil {
+		if f.Num == nil {
+			f.Num = map[string]map[string]float64{}
+		}
+		for name, byTicker := range insider.Figures(insider.Summarize(trades, a.now()), a.universe().All()) {
+			f.Num[name] = byTicker
+		}
+	}
 }
 
 func (a *app) universeShow(ctx context.Context, args []string) error {

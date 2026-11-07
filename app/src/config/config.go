@@ -135,7 +135,22 @@ type Company struct {
 	Quotes         string `yaml:"quotes"`
 	QuotesPerCycle int    `yaml:"quotes_per_cycle"`
 	QuotesURL      string `yaml:"quotes_url"`
-	// PolygonKey is read from STOXICITY_POLYGON_KEY, never from a file that is
+	// Fundamentals is where revenue, profit, assets, equity and shares come
+	// from: "sec" (the XBRL frames of the SEC, no key, a few dozen small
+	// requests a week for the whole market) or "off". FundamentalsURL replaces
+	// the frames address, for a test.
+	Fundamentals    string `yaml:"fundamentals"`
+	FundamentalsURL string `yaml:"fundamentals_url"`
+	// Insiders is where insider trades come from: "sec" (the Form 4 filings the
+	// feed found, one small request each) or "off". InsidersPerCycle is how many
+	// unread filings one background cycle reads (the whole backlog of a few
+	// hundred a day is a minute of requests); InsidersURL replaces the SEC's web
+	// address, for a test.
+	Insiders         string `yaml:"insiders"`
+	InsidersPerCycle int    `yaml:"insiders_per_cycle"`
+	InsidersURL      string `yaml:"insiders_url"`
+	// PolygonKey is read from STOXICITY_POLYGON_KEY or MASSIVE_API_KEY (Polygon.io
+	// is now called Massive), never from a file that is
 	// checked in.
 	PolygonKey string `yaml:"-"`
 	// SitesPerCycle is how many tickers one background cycle looks up the

@@ -107,7 +107,7 @@ func TestSaveIdempotent(t *testing.T) {
 	db, _ := openTemp(t)
 	a := art("a1", t0)
 	a.Items, a.Tickers, a.Topics = []string{"2.02"}, []string{"AAPL"}, []string{"ai"}
-	a.Form, a.ClusterID = "8-K", "c1"
+	a.Form, a.ClusterID, a.CIK = "8-K", "c1", "0000320193"
 	a.Score = model.Score{Relevance: 0.8, Materiality: 4, Tone: -0.5, Kind: model.EventResults, Sector: "tech", Reasons: []string{"r1", "r2"}, LensVersion: "v1"}
 	mustSave(t, db, a, art("a2", t0.Add(time.Hour)))
 	mustSave(t, db, a, art("a2", t0.Add(time.Hour)))
@@ -705,7 +705,7 @@ func TestPersistenceAcrossReopen(t *testing.T) {
 	}
 	var versions int
 	db.base.r.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&versions)
-	if versions != 6 {
+	if versions != 9 {
 		t.Errorf("schema version %d", versions)
 	}
 }
@@ -1013,5 +1013,21 @@ func checkFTS(t *testing.T, db *DB) {
 	t.Helper()
 	if _, err := db.base.w.Exec(`INSERT INTO articles_fts (articles_fts, rank) VALUES ('integrity-check', 1)`); err != nil {
 		t.Errorf("fts integrity check: %v", err)
+	}
+}
+
+func TestTheCIKOfAFilingIsStoredAndCanBeCorrected(t *testing.T) {
+	db, _ := openTemp(t)
+	a := art("f1", t0)
+	a.Form, a.CIK, a.Tickers = "10-Q", "0000320193", []string{"CIK"}
+	mustSave(t, db, a)
+	a.Tickers = []string{"AAPL"}
+	mustSave(t, db, a)
+	got, err := db.Get(context.Background(), "f1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.CIK != "0000320193" || !reflect.DeepEqual(got.Tickers, []string{"AAPL"}) {
+		t.Errorf("got CIK %q tickers %v", got.CIK, got.Tickers)
 	}
 }

@@ -62,6 +62,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.verdicts[msg.id] = v
 		m.ok("%s", word)
 		m.rebuild()
+		if m.stack.Current().Kind == nav.Label {
+			return m, m.loadCmd(true) // the labels count, and the article leaves the queue
+		}
 	case openedMsg:
 		if msg.err != nil {
 			m.fail("open: %v", msg.err)
@@ -118,13 +121,16 @@ func (m *Model) loaded(msg loadedMsg) tea.Cmd {
 		return nil
 	}
 	m.verdicts = msg.verdicts
+	if m.stack.Current().Kind == nav.Label {
+		m.queue, m.progress = msg.queue, msg.progress
+	}
 	if msg.sources != nil || msg.haveSources || m.stack.Current().Kind == nav.Sources {
 		m.sources, m.haveSources = msg.sources, true
 	}
 	switch {
 	case msg.shared:
 		m.shared, m.sharedWatch, m.sharedOK = msg.arts, m.stack.Watch(), true
-	case m.stack.Current().Kind == nav.Sources:
+	case m.stack.Current().Kind == nav.Sources, m.stack.Current().Kind == nav.Label:
 	case m.stack.Current().Kind != nav.Watches:
 		m.routeArts, m.truncated = msg.arts, msg.truncated
 	}
@@ -261,6 +267,8 @@ func (m *Model) key(k tea.KeyPressMsg) tea.Cmd {
 		return m.switchWatch(id)
 	case GoWatches:
 		return m.goTo(nav.Route{Kind: nav.Watches})
+	case GoLabel:
+		return m.goTo(nav.Route{Kind: nav.Label})
 	case GoHome:
 		return m.goTo(nav.Route{Kind: nav.Home})
 	case GoStocks:

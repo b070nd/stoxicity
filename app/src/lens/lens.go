@@ -10,8 +10,9 @@
 //
 // # Formula
 //
-// 1. Kind. When the article carries 8-K items and Options.ItemKind knows them,
-// that kind is used (reason "8-K item <n>"). Otherwise a Form 4 filing is an
+// 1. Kind. When the article carries 8-K items and Options.ItemRating knows
+// them, the most material item gives the kind and the materiality (reason
+// "8-K item <n>"); Options.ItemKind alone gives only the kind. Otherwise a Form 4 filing is an
 // insider_buy if its title has a buy or purchase word, else an insider_sell if
 // it has a sale or sell word, else other; a 10-K or 10-Q is results; a 13D or
 // 13G filing is 13d_13g. Anything else is read from the text: an ordered table
@@ -19,21 +20,27 @@
 // first rule that matches wins; no match means other. The patterns are in
 // kindRules.
 //
-// 2. Materiality starts at Kind.BaseMateriality(). It goes up by 1 when the
+// 2. Materiality starts at Kind.BaseMateriality(), or at the rating of the 8-K
+// items, or at 2 for a quarterly report (its results came in an earlier 8-K
+// item 2.02). It goes up by 1 when the
 // text holds a magnitude phrase (record, plunge, surge, going concern,
 // material weakness, significantly) and down by 1 when the kind is not noise
 // and the text is tagged routine (in line with, as expected, regular quarterly
 // dividend). It is then clamped to 1..5. Noise kinds are analyst_target and
 // price_chatter.
 //
-// 3. Relevance = clamp01(0.20 + 0.12*(materiality-1)) + keywordAdjust +
-// tierAdjust, clamped to [0,1] and rounded to 3 decimals. keywordAdjust is
+// 3. Relevance = clamp01(0.20 + 0.15*(materiality-1)) + itemBonus +
+// keywordAdjust + tierAdjust, clamped to [0,1] and rounded to 3 decimals. keywordAdjust is
 // +0.06 per distinct Boost phrase found and -0.06 per distinct Demote phrase
 // found, with the total capped to [-0.20, +0.20]. Phrases come from the
 // configuration; matching ignores case, respects word boundaries and treats a
 // multi-word phrase as one phrase. A few phrases also match listed aliases
 // (the Boost word "buyback" also matches "share repurchase"), see
-// phraseAliases. tierAdjust is +0.05 when Options.SourceTier reports
+// phraseAliases. itemBonus is +0.02 for each other 8-K item of another kind, up
+// to three (an earnings release filed with a presentation says more than one
+// filed alone). A materiality of 3 gives 0.50, the default threshold, so an
+// event of "new information on an expected path" counts unless the words demote
+// it. tierAdjust is +0.05 when Options.SourceTier reports
 // TierPrimary, -0.05 for TierCommentary and 0 for anything else or when the
 // hook is nil. When Title and Summary are both empty the relevance is 0 and the
 // reasons say "no text". Noise kinds cap the relevance at 0.35.
@@ -67,7 +74,7 @@ import (
 // Weights of the formula in the package comment.
 const (
 	baseRelevance = 0.20
-	perLevel      = 0.12
+	perLevel      = 0.15
 	perKeyword    = 0.06
 	keywordCap    = 0.20
 	tierStep      = 0.05
@@ -82,6 +89,10 @@ type Options struct {
 	// ItemKind maps the 8-K item numbers of one filing to an event kind and
 	// reports whether it knows them. The caller wires EDGAR's item table.
 	ItemKind func(items []string) (model.EventKind, bool)
+	// ItemRating reads the 8-K items of one filing into a kind, a materiality
+	// and a bonus for the other items; it is tried before ItemKind. The caller
+	// wires EDGAR's item table.
+	ItemRating func(items []string) (model.ItemRating, bool)
 }
 
 // Lens scores articles against the configured rules. It is safe for
@@ -110,11 +121,16 @@ func (l *Lens) Score(a model.Article) model.Score {
 	title := normalize(a.Title)
 	text := normalize(a.Title + "\n" + a.Summary)
 
-	kind, why := l.classify(a, title, text)
+	kind, why, fixed, bonus := l.classify(a, title, text)
 	reasons := []string{why, "kind " + string(kind)}
 
 	mat := kind.BaseMateriality()
-	reasons = append(reasons, fmt.Sprintf("base materiality %d", mat))
+	if fixed > 0 {
+		mat = fixed
+		reasons = append(reasons, fmt.Sprintf("materiality %d from the form", mat))
+	} else {
+		reasons = append(reasons, fmt.Sprintf("base materiality %d", mat))
+	}
 	noise := noiseKinds[kind]
 	if m := firstMagnitude(text); m != "" {
 		mat++
@@ -138,6 +154,10 @@ func (l *Lens) Score(a model.Article) model.Score {
 	}
 
 	rel := clamp01(baseRelevance + perLevel*float64(mat-1))
+	if bonus > 0 {
+		rel += bonus
+		reasons = append(reasons, fmt.Sprintf("other 8-K items: relevance +%.2f", bonus))
+	}
 	kw, kwReasons := l.keywordAdjust(text)
 	rel += kw
 	reasons = append(reasons, kwReasons...)
@@ -161,8 +181,30 @@ func (l *Lens) Score(a model.Article) model.Score {
 	return score
 }
 
-// classify picks the event kind and says why.
-func (l *Lens) classify(a model.Article, title, text string) (model.EventKind, string) {
+// classify picks the event kind and says why. fixed is a materiality the
+// filing itself decides (0 when the kind's base is used) and bonus the relevance
+// that other 8-K items add.
+func (l *Lens) classify(a model.Article, title, text string) (kind model.EventKind, why string, fixed int, bonus float64) {
+	if len(a.Items) > 0 && l.opts.ItemRating != nil {
+		if r, ok := l.opts.ItemRating(a.Items); ok && r.Kind.Valid() && r.Materiality >= 1 && r.Materiality <= 5 {
+			why = "8-K item " + r.Item
+			if name, _, known := model.ItemTitle(r.Item); known {
+				why += " (" + name + ")"
+			}
+			if len(r.Also) > 0 {
+				why += ", also " + strings.Join(r.Also, ", ")
+			}
+			return r.Kind, why, r.Materiality, r.Bonus
+		}
+	}
+	k, w := l.classifyKind(a, title, text)
+	if f := strings.ToUpper(strings.TrimSpace(a.Form)); strings.HasPrefix(f, "10-Q") && k == model.EventResults {
+		return k, w + " (the results were reported in an 8-K item 2.02 before)", 2, 0
+	}
+	return k, w, 0, 0
+}
+
+func (l *Lens) classifyKind(a model.Article, title, text string) (model.EventKind, string) {
 	if len(a.Items) > 0 && l.opts.ItemKind != nil {
 		if k, ok := l.opts.ItemKind(a.Items); ok && k.Valid() {
 			return k, "8-K item " + strings.Join(a.Items, ", ")

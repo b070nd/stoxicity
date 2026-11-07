@@ -23,10 +23,12 @@ regal sapphire spirit standard stellar sterling strategic synergy tower
 trinity universal unity venture victory vital wave johnson morgan wells air
 sky cloud gold silver iron steel coal oil gas water land park city county
 state union republic empire dominion north south east west
+group holdings enterprises company brands bancorp bancshares acquisition
 `))
 
 // tickerStoplist holds upper-case words and abbreviations that are tickers on
-// some exchange but are far more often ordinary text. A bare occurrence of one
+// some exchange but are far more often ordinary text (CIK is the SEC's own
+// word for a company number, and DE the abbreviation of Delaware). A bare occurrence of one
 // of these is never taken as a company; only a cashtag or an exchange-qualified
 // form can select it.
 var tickerStoplist = wordSet(strings.Fields(`
@@ -38,6 +40,7 @@ CTO COO CIO UK EU UN USD EUR GBP JPY CNY CPI PPI PMI FED FOMC ECB IMF BOE BOJ
 NYSE NASDAQ AMEX OTC LLC INC LTD PLC AI ML PR HR TV YTD QOQ MOM ROI ROE ESG
 SPAC REIT ADR FY EBIT IRS DOJ FDA FTC FCC EPA NYC LA DC OPEC NATO ASAP FAQ
 AGM EGM PE GAAP IFRS ARM BIG FUN CAR EAT RUN WELL
+CIK DE
 LOVE TRUE FAST GOOD PEAK OPEN LIVE HOPE CASH GOLD BEST REAL SAFE PLAY FREE
 `))
 

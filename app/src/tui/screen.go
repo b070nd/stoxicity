@@ -134,6 +134,10 @@ type Data struct {
 	Verdicts  map[string]labels.Verdict
 	Sources   []status.Source
 	Watches   []WatchInfo
+	// Queue is the articles the Label screen asks to judge, Progress how the
+	// labelling stands.
+	Queue     []labels.Pick
+	Progress  labels.Progress
 	WatchID   string
 	Now       time.Time
 	Truncated bool
@@ -143,6 +147,8 @@ type Data struct {
 	Following func(ticker string) []string
 	// Feeds lists the feeds recorded for a ticker; it may be missing.
 	Feeds func(ticker string) []FeedInfo
+	// Insiders lists the insider trades of a ticker's company; it may be missing.
+	Insiders func(ticker string) []model.InsiderTrade
 	// Chosen is the exchange the user narrowed everything to with X, even where
 	// the screen shows more (the list of exchanges marks it).
 	Chosen string
@@ -162,6 +168,8 @@ type Data struct {
 	// Quotes are the newest daily candles by ticker; empty when none have been
 	// fetched (no key for the source, or not yet).
 	Quotes map[string]Quote
+	// Numbers are the companies' figures, by name and ticker (see Backend).
+	Numbers map[string]map[string]float64
 }
 
 func (d Data) name(t string) string {
@@ -216,6 +224,8 @@ func build(r nav.Route, d Data) Screen {
 		return buildSources(d)
 	case nav.Watches:
 		return buildWatches(d)
+	case nav.Label:
+		return buildLabel(d)
 	}
 	return Screen{Title: r.Label(), Notice: "no such screen"}
 }
@@ -263,8 +273,12 @@ func articleLine(a model.Article, d Data) string {
 	if len(a.Tickers) > 0 {
 		tick = " [" + strings.Join(pages.Head(a.Tickers, 3), " ") + "]"
 	}
+	title := a.Title
+	if label := model.ItemLabel(a.Items, 3); label != "" {
+		title += " · " + label // an 8-K says what it reports in its item numbers, not in its title
+	}
 	return fmt.Sprintf("%s %s  M%d %s  %s  %s%s", mark, a.Published.In(zone).Format("01-02 15:04"),
-		a.Score.Materiality, toneMark(a.Score.Tone), a.Title, a.Domain, tick)
+		a.Score.Materiality, toneMark(a.Score.Tone), title, a.Domain, tick)
 }
 
 func toneMark(t float64) string {
@@ -475,6 +489,7 @@ func buildStock(ticker string, d Data) Screen {
 	s := Screen{Title: title}
 	var b builder
 	known := profileRows(&b, ticker, d)
+	insiderRows(&b, ticker, d)
 	if page.Total == 0 && len(d.Latest) == 0 {
 		if !known {
 			s.Notice = "No article names " + ticker + " in this window, and no company list knows it. Run `stoxicity universe update`, or tag it with # to keep it."

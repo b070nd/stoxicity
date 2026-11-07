@@ -16,13 +16,14 @@ const (
 	TypeUnit      = "unit"
 	TypeRight     = "right"
 	TypeADR       = "adr"
+	TypeNote      = "note" // debt the exchange lists: notes, debentures, bonds
 	TypeETF       = "etf"
 	TypeTest      = "test"
 )
 
 // Types are the values type: knows, in the order a filter lists them.
 func Types() []string {
-	return []string{TypeStock, TypePreferred, TypeWarrant, TypeUnit, TypeRight, TypeADR, TypeETF, TypeTest}
+	return []string{TypeStock, TypePreferred, TypeWarrant, TypeUnit, TypeRight, TypeADR, TypeNote, TypeETF, TypeTest}
 }
 
 var (
@@ -72,6 +73,9 @@ func (p Profile) work() string {
 	case KindTest:
 		return TypeTest
 	}
+	if t := securityType(p.Security); t != "" {
+		return t
+	}
 	own := strings.ToLower(strings.TrimSpace(p.Name))
 	name := own + " " + strings.ToLower(strings.Join(p.Aliases, " "))
 	switch {
@@ -83,6 +87,8 @@ func (p Profile) work() string {
 		return TypeRight
 	case mentions(name, "unit") && unitName.MatchString(name) || suffixIn(p.Ticker, "U", "UN") && p.Kind != "":
 		return TypeUnit
+	case p.attached() != "":
+		return p.attached()
 	case (mentions(name, "adr") || mentions(name, "depositary")) && adrName.MatchString(name):
 		return TypeADR
 	case p.Kind == KindStock || p.EntityType == "operating":
@@ -148,3 +154,61 @@ func (p Profile) Domain() string { return Domain(p.SIC) }
 // mentions is a cheap test that runs before a regular expression: does the
 // lower-case text hold the word's letters at all.
 func mentions(text, letters string) bool { return strings.Contains(text, letters) }
+
+// attached is the type of a security the exchanges spell as another ticker of
+// the same company plus one letter: AACIW is the warrant, AACIU the unit and
+// AACIR the right of AACI. "" when the ticker is not spelled so.
+func (p Profile) attached() string {
+	if len(p.Ticker) < 3 {
+		return ""
+	}
+	last := p.Ticker[len(p.Ticker)-1]
+	var kind string
+	switch last {
+	case 'W':
+		kind = TypeWarrant
+	case 'U':
+		kind = TypeUnit
+	case 'R':
+		kind = TypeRight
+	default:
+		return ""
+	}
+	base := p.Ticker[:len(p.Ticker)-1]
+	if slices.Contains(p.Siblings, base) {
+		return kind
+	}
+	return ""
+}
+
+// securityType reads the name the Nasdaq directory gives a listing. The part
+// after the last " - " says what is listed ("Warrant", "Units", "Series B
+// Right", "Common Stock", "5.5% Senior Notes due 2030"); "" when it says
+// nothing certain, and the other sources are asked.
+func securityType(security string) string {
+	s := strings.ToLower(strings.TrimSpace(security))
+	if s == "" {
+		return ""
+	}
+	if i := strings.LastIndex(s, " - "); i >= 0 {
+		s = s[i+3:]
+	}
+	switch {
+	case strings.Contains(s, "preferred") || strings.Contains(s, "depositary shares") && !strings.Contains(s, "american"):
+		return TypePreferred
+	case strings.Contains(s, "warrant"):
+		return TypeWarrant
+	case strings.HasSuffix(s, " right") || strings.HasSuffix(s, " rights") || s == "right" || s == "rights":
+		return TypeRight
+	case strings.HasSuffix(s, " units") || strings.HasSuffix(s, " unit") || s == "units" || s == "unit":
+		return TypeUnit
+	case strings.Contains(s, "american depositary") || strings.Contains(s, "depositary receipt") || strings.HasSuffix(s, " ads"):
+		return TypeADR
+	case strings.Contains(s, "notes") || strings.Contains(s, "debenture") || strings.Contains(s, "bonds") || strings.Contains(s, " due 20"):
+		return TypeNote
+	case strings.Contains(s, "common stock") || strings.Contains(s, "ordinary shares") || strings.Contains(s, "common shares") ||
+		strings.Contains(s, "class a") || strings.Contains(s, "class b") || strings.Contains(s, "class c"):
+		return TypeStock
+	}
+	return ""
+}

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/b070nd/stoxicity/app/src/marketdata"
 	"github.com/b070nd/stoxicity/app/src/universe"
 )
 
@@ -18,13 +19,9 @@ type Quote struct {
 }
 
 // Change is the move of the close from the day before, as a fraction (0.012 is
-// +1.2%); false when there is no day before.
-func (q Quote) Change() (float64, bool) {
-	if q.Prev <= 0 {
-		return 0, false
-	}
-	return q.Close/q.Prev - 1, true
-}
+// +1.2%); false when there is none or it is not a day's move (see
+// marketdata.DayChange).
+func (q Quote) Change() (float64, bool) { return marketdata.DayChange(q.Prev, q.Close) }
 
 // staleAfter is how old the newest candle may be before the list draws it
 // dim: a long weekend with a holiday is four days.
@@ -114,7 +111,7 @@ func typeStyle(t string) Style {
 		return Info
 	case universe.TypePreferred:
 		return Warn
-	case universe.TypeWarrant, universe.TypeRight, universe.TypeUnit:
+	case universe.TypeWarrant, universe.TypeRight, universe.TypeUnit, universe.TypeNote:
 		return Accent
 	case universe.TypeADR:
 		return Blue
@@ -170,6 +167,48 @@ func toneStyle(t float64) Style {
 	case t >= 0.05:
 		return Good
 	case t <= -0.05:
+		return Bad
+	}
+	return Dim
+}
+
+// moneyText writes an amount of money in the width of a table column: 1.23T,
+// 45.6B, 789M, 12.3M, 450K.
+func moneyText(v float64) string {
+	sign := ""
+	if v < 0 {
+		sign, v = "-", -v
+	}
+	for _, u := range []struct {
+		at   float64
+		name string
+	}{{1e12, "T"}, {1e9, "B"}, {1e6, "M"}, {1e3, "K"}} {
+		if v >= u.at {
+			x := v / u.at
+			switch {
+			case x >= 100:
+				return fmt.Sprintf("%s%.0f%s", sign, x, u.name)
+			case x >= 10:
+				return fmt.Sprintf("%s%.1f%s", sign, x, u.name)
+			}
+			return fmt.Sprintf("%s%.2f%s", sign, x, u.name)
+		}
+	}
+	return fmt.Sprintf("%s%.0f", sign, v)
+}
+
+// percentText writes a fraction as a percentage: 0.123 is 12.3%.
+func percentText(v float64) string { return fmt.Sprintf("%.1f%%", v*100) }
+
+// signedPercent is percentText with a sign.
+func signedPercent(v float64) string { return fmt.Sprintf("%+.1f%%", v*100) }
+
+// gainStyle is green for a positive figure, red for a negative one.
+func gainStyle(v float64) Style {
+	switch {
+	case v > 0.00005:
+		return Good
+	case v < -0.00005:
 		return Bad
 	}
 	return Dim

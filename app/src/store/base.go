@@ -19,7 +19,7 @@ const (
 	// is the latest one: newest created_ms, ties broken by the larger lens
 	// version (compared as text).
 	articleSelect = `SELECT a.id, a.source_id, a.domain, a.url, a.title, a.summary,
-		a.published_ms, a.fetched_ms, a.form, a.items, a.tickers, a.topics, a.cluster_id,
+		a.published_ms, a.fetched_ms, a.form, a.items, a.tickers, a.topics, a.cluster_id, a.cik,
 		s.lens_version, s.relevance, s.materiality, s.tone, s.kind, s.sector, s.reasons`
 
 	latestScoreJoin = ` LEFT JOIN scores s ON s.article_id = a.id AND s.lens_version = (
@@ -33,7 +33,7 @@ const (
 )
 
 // Save stores articles in one transaction. A new article is inserted. For an
-// existing one only title, summary, form, items, tickers, topics and cluster
+// existing one only title, summary, form, CIK, items, tickers, topics and cluster
 // are updated; id, source, domain, URL, published and first-fetched times
 // never change. A zero Fetched is stored as the time of the Save.
 //
@@ -69,15 +69,16 @@ func (db *DB) Save(ctx context.Context, articles []model.Article) error {
 		return fmt.Errorf("store: save: %w", err)
 	}
 	upsert, err := tx.PrepareContext(ctx, `INSERT INTO articles
-		(id, source_id, domain, url, title, summary, published_ms, fetched_ms, form, items, tickers, topics, cluster_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		(id, source_id, domain, url, title, summary, published_ms, fetched_ms, form, items, tickers, topics, cluster_id, cik)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (id) DO UPDATE SET
 			title = excluded.title, summary = excluded.summary, form = excluded.form,
 			items = excluded.items, tickers = excluded.tickers, topics = excluded.topics,
-			cluster_id = excluded.cluster_id
+			cluster_id = excluded.cluster_id, cik = excluded.cik
 		WHERE title IS NOT excluded.title OR summary IS NOT excluded.summary OR form IS NOT excluded.form
 			OR items IS NOT excluded.items OR tickers IS NOT excluded.tickers
-			OR topics IS NOT excluded.topics OR cluster_id IS NOT excluded.cluster_id`)
+			OR topics IS NOT excluded.topics OR cluster_id IS NOT excluded.cluster_id
+			OR cik IS NOT excluded.cik`)
 	if err != nil {
 		return fmt.Errorf("store: save: %w", err)
 	}
@@ -97,7 +98,7 @@ func (db *DB) Save(ctx context.Context, articles []model.Article) error {
 		}
 		if _, err := upsert.ExecContext(ctx, a.ID, a.SourceID, a.Domain, a.URL, a.Title, a.Summary,
 			ms(a.Published), ms(fetched), a.Form,
-			encodeList(a.Items), encodeList(a.Tickers), encodeList(a.Topics), a.ClusterID); err != nil {
+			encodeList(a.Items), encodeList(a.Tickers), encodeList(a.Topics), a.ClusterID, a.CIK); err != nil {
 			return fmt.Errorf("store: save %q: %w", a.ID, err)
 		}
 		for _, s := range a.scores {
@@ -371,7 +372,7 @@ func scanArticle(rows *sql.Rows) (model.Article, error) {
 		materiality                 sql.NullInt64
 	)
 	err := rows.Scan(&a.ID, &a.SourceID, &a.Domain, &a.URL, &a.Title, &a.Summary,
-		&pubMS, &fetMS, &a.Form, &items, &tickers, &topics, &a.ClusterID,
+		&pubMS, &fetMS, &a.Form, &items, &tickers, &topics, &a.ClusterID, &a.CIK,
 		&lens, &relevance, &materiality, &tone, &kind, &sector, &reasons)
 	if err != nil {
 		return a, err
