@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/b070nd/stoxicity/app/src/exchange"
 	"io"
 	"log/slog"
 	"maps"
@@ -59,6 +60,12 @@ type Workspace struct {
 	zone    *time.Location
 	watchID string
 
+	// calendar is the exchange calendar of the configuration folder: the recurring
+	// rules and any dated, sourced overrides. calendarErr is why an invalid file
+	// was not applied.
+	calendar    exchange.Calendar
+	calendarErr error
+
 	// The universe is replaced as a whole when a tag or a list changes, or when
 	// the reference database does (a "stoxicity run" refreshes it in the
 	// background).
@@ -82,6 +89,7 @@ type Workspace struct {
 	sumsAt    time.Time
 	vals      valuation.Set
 	why       map[string]map[string]string
+	standings map[string]tui.CapStanding
 	// The insiders' purchases and sales of common stock of the last quarter, summed by company.
 	insiders map[string]insider.Summary
 }
@@ -157,6 +165,10 @@ func Open(opts Options) (*Workspace, error) {
 		cfg: cfg, reg: reg, db: db, ts: db.Tenant(t.ID), tenant: t,
 		watches: watch.FSStore{Dir: filepath.Join(tenantsDir, t.ID, "watches")},
 		now:     now, zone: zone, byID: map[string]watch.Watch{}, baseDir: base,
+	}
+	w.calendar, w.calendarErr = exchange.Load(cfgDir)
+	if w.calendarErr != nil {
+		w.calendar = exchange.Calendar{Version: "recurring-rules"}
 	}
 	w.read = reader.New(db, t.ID, reg.VisibleTo(t.ID), zone,
 		reader.WithNow(now), reader.WithSince(cfg.SinceTime()))
@@ -310,7 +322,7 @@ func (w *Workspace) Numbers() map[string]map[string]float64 {
 		w.sums = fundamentals.Summarize(facts)
 		w.vals = valuation.Set{}
 		if univ != nil {
-			if set, err := valuation.Build(context.Background(), w.db, univ.All(), time.Time{}, now); err == nil {
+			if set, err := valuation.Build(context.Background(), w.db, univ.All(), valuation.View{}, now); err == nil {
 				w.vals = set
 			}
 		}
@@ -330,11 +342,46 @@ func (w *Workspace) Numbers() map[string]map[string]float64 {
 		w.numbers[name] = byTicker
 	}
 	w.why = why
+	w.standings = w.standingsLocked(univ, now)
 	for name, byTicker := range insider.Figures(w.insiders, univ.All()) {
 		w.numbers[name] = byTicker
 	}
 	return w.numbers
 }
+
+// standingsLocked says where each capitalisation stands, from what is stored.
+func (w *Workspace) standingsLocked(univ *universe.Universe, now time.Time) map[string]tui.CapStanding {
+	raw, err := w.db.CoverChecks(context.Background())
+	if err != nil {
+		return nil
+	}
+	checks := make(map[string]valuation.Check, len(raw))
+	for cik, c := range raw {
+		checks[cik] = valuation.Check{At: c.At, Problem: c.Problem, Kind: c.Kind, Failures: c.Failures, Next: c.Next}
+	}
+	out := map[string]tui.CapStanding{}
+	for t, s := range valuation.Standings(univ.All(), w.vals, checks, now) {
+		out[t] = tui.CapStanding{State: string(s.State), Reason: s.Reason, CountDay: s.CountDay, PriceDay: s.PriceDay, Scope: s.Scope, Currency: s.Currency}
+	}
+	return out
+}
+
+// Standings says, by ticker, where each capitalisation stands: the state in a
+// word, the dates it rests on, and why when it has no figure.
+func (w *Workspace) Standings() map[string]tui.CapStanding {
+	w.Numbers()
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.standings
+}
+
+// Calendar is the exchange calendar in force: the recurring rules and the
+// overrides of the configuration folder.
+func (w *Workspace) Calendar() exchange.Calendar { return w.calendar }
+
+// CalendarProblem says why the calendar file was not applied, nil when it was or
+// there is none.
+func (w *Workspace) CalendarProblem() error { return w.calendarErr }
 
 // Why says, by figure name and ticker, why a market value is missing.
 func (w *Workspace) Why() map[string]map[string]string {

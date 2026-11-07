@@ -50,7 +50,7 @@ func TestFetchSearchDigest(t *testing.T) {
 
 	r = e.run(t, "search", "earnings")
 	r.wantCode(t, exitOK)
-	r.wantOut(t, "Acme Corp announces record earnings", "news.example.com", "https://news.example.com/acme-earnings", "2026-11-03 09:00", "\tbuyback\t")
+	r.wantOut(t, "Acme Corp announces record earnings", "news.example.com", "https://news.example.com/acme-earnings", "2026-11-03 09:00", "\tresults\t")
 	r.wantNotOut(t, "Federal Reserve")
 
 	r = e.run(t, "search", "site:news.example.com", "-buyback")

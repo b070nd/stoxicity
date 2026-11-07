@@ -10,7 +10,9 @@
 // the story rests on, from strongest to weakest:
 //
 //	primary       a tier 1 source reports it (a filing, a regulator, a central bank)
-//	corroborated  no primary source, but two or more independent outlets report it
+//	multi-outlet  no primary source, but two or more outlets (domains) report it;
+//	              this does not check where they got it, so it is not corroboration
+//	              (that is judged from reporting origins, see package dossier)
 //	unconfirmed   one outlet of tier 2 reports it, and no one else
 //	opinion       only commentary (tier 3) reports it
 //
@@ -35,10 +37,10 @@ type Backing string
 
 // The backings, from strongest to weakest.
 const (
-	BackingPrimary      Backing = "primary"
-	BackingCorroborated Backing = "corroborated"
-	BackingUnconfirmed  Backing = "unconfirmed"
-	BackingOpinion      Backing = "opinion"
+	BackingPrimary     Backing = "primary"
+	BackingMultiOutlet Backing = "multi-outlet"
+	BackingUnconfirmed Backing = "unconfirmed"
+	BackingOpinion     Backing = "opinion"
 )
 
 // Rank orders backings: larger is stronger.
@@ -46,7 +48,7 @@ func (b Backing) Rank() int {
 	switch b {
 	case BackingPrimary:
 		return 4
-	case BackingCorroborated:
+	case BackingMultiOutlet:
 		return 3
 	case BackingUnconfirmed:
 		return 2
@@ -174,7 +176,7 @@ func build(id string, arts []model.Article, opt Options) Story {
 	case best == model.TierPrimary:
 		s.Backing = BackingPrimary
 	case best == model.TierReporting && s.Breadth() >= 2:
-		s.Backing = BackingCorroborated
+		s.Backing = BackingMultiOutlet
 	case best == model.TierReporting:
 		s.Backing = BackingUnconfirmed
 	default:

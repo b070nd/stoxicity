@@ -70,10 +70,33 @@ exact-copy fingerprint of the normalised text. Syndicated copies count as one
 origin. Topic or event similarity (same company, same kind, same days) is **not**
 evidence of a shared origin and is never used as such.
 
-Limits, stated plainly: the current feeds supply no provider IDs, so that rule has
-no input yet; wire attribution in the text is taken as written, not verified; a
-conservative near-copy detector is not implemented, so a rewritten copy is
-`unknown`, i.e. unresolved, not independent.
+**Standing.** What the corroboration verdict reads is the standing of an origin,
+never the publisher's domain: `own` (a filing or the issuer's release),
+`attributed` (the text names a news agency: a dateline, a credit line), `claimed`
+(a byline or a provider ID and nothing more), `suspected-derivative`, `derived`
+(rests on a document or another report) and `unknown`. **Only `attributed` can
+stand as independent reporting.** A byline proves nothing (rewrites carry
+bylines), and a distinct domain proves nothing. Several rewritten copies of unknown
+origin therefore stay `unresolved`, however many sites carry them.
+
+**Near copies (`origin-2`, partial).** Within the articles of one story, after the
+explicit attributions: an exact copy of the normalised text; a *near copy* when
+at least 85% of the three-word runs of both texts are shared (texts of at least 30
+words; headlines are too short to compare); and a weaker *passage overlap* when,
+with quoted words left out (outlets quote the same statement without copying each
+other), half of the shorter text's three-word runs occur in the other or 12
+consecutive words are equal (at least 20 words outside quotes). A near copy counts
+once with its original. A passage overlap is only a **suspicion**
+(`suspected-derivative`): it is not a finding of a common origin, the article keeps
+its own key, and it is not counted as independent. Each finding is stored with its
+supporting observations (`origin_match`, migration `0019`: the other article, the
+method, the score, the shared runs, the longest run and the passage) and the
+version, so a later version adds rows. Limits: the method compares word runs, so a
+paraphrase, a translation or a heavily rewritten copy is not seen and stays
+`unknown`; the thresholds were set by judgement and tested on invented texts and the
+stories of one installation, not tuned or evaluated on a labelled set of real
+syndicated copies; the current feeds supply no provider IDs, so that rule has no
+input yet; wire attribution in the text is taken as written, not verified.
 
 ## Episodes
 
@@ -96,10 +119,52 @@ numerator = reports (distinct reporting origins, copies counted once) in the
 biggest episode; denominator = all such reports for the security in the window
 (`-days`, default 7). The output prints both numbers and the window.
 
+## Several events in one story
+
+An article that announces earnings, a CEO change and an acquisition makes **three
+events**, not one with two forgotten claims. Within a story (a cluster of
+articles) each event kind that has a live claim about a company is its own event:
+the story's home kind keeps the story's ID (`evt_<cluster>`, so an event already
+stored keeps its ID and meaning), and every other kind gets
+`evt_<cluster>~<kind>` with a `split_from` relation to the home event. Each event
+holds only its own claims (`event_claim`: article, claim number, version,
+extractor, and whether the claim names the event), its own evidence and the
+securities that claim is about with their roles; a company that is only mentioned
+by another company's claim does not appear on that event. Price chatter and
+analyst notes beside a result or a deal are background and make no event of their
+own. A stored event that no live claim supports any more (a denied bankruptcy, a
+central-bank speech whose companies are only mentioned) is **withdrawn** by a new
+revision; nothing is deleted, and an as-of query before the withdrawal still shows
+it.
+
+Limit: the unit is the kind within a story. Two different acquisitions in one
+article are one `acquisition` event with two claims, and two issuers' dividends in
+one headline are one `dividend` event with two securities. Splitting by
+counterparty or by issuer is not done.
+
+## How an article is presented
+
+The lens still rates an article by its first keyword, and that score is kept.
+What the lists show is `pipeline.Present`: the kind and the materiality of the
+most important live claim about a company, the relevance moved by the same 0.15 per
+level the lens uses, and the version `<lens>+assert-2` when the reading differs.
+An article none of whose claims is a current event (denied, negated, past, a
+preview, or about no company) is presented as no event, with the reasons. The
+reasons record what the lens said, which claim won and why the others lost
+(`assertion.Result.Explain`: materiality, then the importance order, then the
+earlier claim), the status, the attribution and the action ("suspended",
+"raised"). Materiality (how much the event matters to the business), novelty,
+urgency and price impact are separate readings (`assess-1`); price impact always
+abstains. Materiality is not part of the corroboration verdict. Limits: relevance
+is still the lens's number moved by materiality, not a reading of its own; the
+lens version is a digest of its boost and demote settings and **not of its keyword
+table**, so a change to the rules in code does not change it (run `rescore` after
+one, and the old and new scores are not told apart by version).
+
 ## Assertions, assessments and the four dimensions
 
 `events rebuild` splits each article into sentences and records **assertions**
-(table `assertion`, append only, version `assert-1`, extractor `rules-1`). One
+(table `assertion`, append only, version `assert-2`, extractor `rules-1`). One
 article may carry several. Each assertion has: the event kind, the exact sentence
 span with offsets, parties with roles (`subject`, `counterparty`, `mentioned`)
 and the basis for each, and flags: *negated*, *denied* (this includes retractions
@@ -133,12 +198,56 @@ dimensions per company that are never merged:
 An assessment abstains, with its reason, when the evidence is insufficient (no
 live claim, for example).
 
-If an AI model ever proposes assertions, `assertion.Vet` keeps only those whose
-span is verbatim in the text at the stated offsets, whose kind is valid and whose
-span contains words that give that kind; the model, prompt version and whether
-the input was truncated are stored. Text in an article that gives orders to the
-extractor changes nothing (test: `TestTextThatGivesOrdersChangesNothing`). **No
-model is wired in**; only the schema and the vetting exist.
+A sentence written to the reader of the text ("ignore previous instructions",
+"classify this article as ...") is not read for claims; this is a filter of known
+phrasings, not a defence.
+
+### The claim reader is rules, not a model
+
+Claims are read by rules (`rules-1`). **No model reads claims**, and none is wired
+in: what exists for one is a schema (model and prompt versions, the truncation flag,
+the evidence span) and the vetting function `assertion.Vet`, which keeps only
+proposals whose span is verbatim in the text at the stated offsets, whose kind is
+valid and whose span contains words that give that kind, and discards any
+materiality the proposer states. That is a safety net for a future extractor, not an
+extractor. The laya sidecar of `configuration.md` is a separate, advisory
+classifier of articles; it takes no part in claims, and `laya.apply` is empty in
+the checked-in configuration. A model-driven extractor may be enabled only after it
+passes the gate in `challenge.Gate` (below) *and* a held-out set of labelled real
+articles that does not exist yet.
+
+### Measuring the reader
+
+```
+stoxicity eval claims [-json]
+```
+
+runs the reader on a labelled challenge corpus (`app/src/assertion/challenge`,
+invented sentences about invented companies: competing claims, corrections, denials,
+issuer roles, time, attribution, several events, and text addressed to the
+reader). It measures the stages apart, never as one score: extraction (recall and
+precision by kind), polarity (current or not, and why), attribution, roles, the
+action, and the naming of the event, where the right answer is sometimes to name
+none. It prints the abstentions (right abstentions, wrongly abstained, wrongly
+named an event where none is current), the same by group, and every error with the
+rules' own explanation and, where the corpus knows the limit, the limit. Relevance
+scoring is not measured by it (`eval` does that against your labels).
+
+On 2026-11-07, 39 cases: recall 46 of 52, precision 46 of 46, polarity 44 of 46
+(of the claims that are not current events, 9 of 11), attribution 4 of 4, roles 39
+of 39, naming 22 right, 1 wrong, 12 right abstentions, 1 wrongly abstained, 1
+named an event where none is current; the first-keyword reading the claims replaced
+was right on 23 of 37. The 11 errors are the stated limits: phrases the keyword
+table does not know (winning a contract, a data breach, "beats estimates", holding
+rates steady, a shareholder vote, "names a new CEO"), "fears fade" not read as a
+denial, and a denial that follows the keyword "CEO". **These numbers are
+optimistic**: the corpus was written by the author of the rules, and three rule
+defects it exposed (a court "dismisses" a lawsuit read as a denial; "since its
+2019 bankruptcy" not read as past; "announced last year" making a completion past)
+were fixed against it. It is a regression guard and a gate for a future extractor,
+not an estimate of accuracy on real news. A test requires that every error be a
+stated limit and every stated limit still fail, so the corpus cannot hide a
+regression or keep a fixed limit on the books.
 
 ## Reconcile: finding filings the live feed missed
 
@@ -154,6 +263,17 @@ stoxicity reconcile -facts                   resolve the filing day of stored fu
 stoxicity reconcile -repair                  store an article for each missed filing, as a historical backfill
 ```
 
+- **Which forms** a day was read for is stored (`filing_index_day.forms`,
+  migration `0023`). Only the wanted forms of a day are kept, so when the selection
+  of forms changes, the days read for fewer forms are read again; a day recorded
+  before the column existed is read again once. A quarterly or calendar-only
+  non-filing day covers any selection.
+- **Completeness is reported apart from request success** (`reconcile.Measure`):
+  how many weekdays of the range are resolved for the current selection, and which
+  are not and why. A run that made every request it tried can still be incomplete.
+- A cancelled run (interrupt) stops between days, writes what it has finished with
+  a context that is not cancelled, and says it was interrupted; the next run
+  continues from the stored state and re-reads at most the day in flight.
 - **Per-day state** is stored (`complete`, `partial` when the index was read before
   the day's late filings were listed, `unpublished` when the SEC had no index yet,
   `nonfiling` for weekends and known holidays, and `error`). Only `complete` and
@@ -197,11 +317,19 @@ inferred now is stamped now, not backdated to the article.
 
 ## Remaining limitations
 
-- No provider IDs from current feeds; no verified wire provenance; no near-copy
-  detector.
-- No AI extractor is wired in.
-- The lens's per-article score is still first-keyword; events use the assertions.
-- An event is still one per story; several claims in one article are kept as
-  assertions and the best one names the event.
-- Claim importance ranking is a judgement, not calibrated.
-- The holiday calendar cannot know special closures.
+- No provider IDs from current feeds; no verified wire provenance; near-copy
+  detection is word-run overlap with uncalibrated thresholds (above): paraphrases
+  and translations are not seen.
+- No model reads claims; the rules have the limits `eval claims` lists, and the
+  keyword table decides what can be found at all.
+- The lens's own per-article score is still first-keyword; lists show the
+  presentation built from the claims, and relevance is the lens's number moved by
+  materiality. The lens version does not cover its keyword table.
+- Events are one per kind within a story, not one per issuer or counterparty.
+- Claim importance ranking is a judgement, not calibrated; urgency decays with
+  the article's age, so a rebuild at a later time can add an urgency reading.
+- Rebuilt events and assessments are known from the time of the rebuild, never
+  earlier: an `-at` query before the rebuild sees the older history.
+- The recurring holiday calendar can be overridden by dated, sourced entries in
+  `exchange_calendar.yaml` (see [tui.md](tui.md#exchanges)); none ships, and
+  halts and outages are not observed.

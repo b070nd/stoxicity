@@ -5,6 +5,8 @@ import (
 	"slices"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/charmbracelet/x/ansi"
 )
 
 // Sort is the order a table is shown in: by the column with this key, largest
@@ -24,7 +26,9 @@ type Column struct {
 	// in it, so no text is ever cut. The last column may leave it 0 to take what
 	// is left, unpadded.
 	Width int
-	Right bool
+	// MaxWidth bounds a text column; zero preserves its full contents.
+	MaxWidth int
+	Right    bool
 	// Desc: the natural order of the column is largest first (counts, times),
 	// so choosing it sorts that way first.
 	Desc bool
@@ -88,9 +92,16 @@ func (t Table) sized() Table {
 	}
 	for _, it := range t.Items {
 		for i := range t.Columns {
-			if i < len(it.Cells) && t.widths[i] > 0 {
-				t.widths[i] = max(t.widths[i], utf8.RuneCountInString(oneLine(it.Cells[i].Text)))
+			c := t.Columns[i]
+			capped := c.MaxWidth > 0 && t.widths[i] >= max(c.MaxWidth, c.width())
+			if i < len(it.Cells) && t.widths[i] > 0 && !capped {
+				t.widths[i] = max(t.widths[i], cellWidth(oneLine(it.Cells[i].Text)))
 			}
+		}
+	}
+	for i, c := range t.Columns {
+		if c.MaxWidth > 0 {
+			t.widths[i] = min(t.widths[i], max(c.MaxWidth, c.width()))
 		}
 	}
 	return t
@@ -130,7 +141,7 @@ func (t Table) column(key string) int {
 func (t Table) Rows(s Sort) []Row {
 	t = t.sized()
 	s = t.Effective(s)
-	return append([]Row{{Text: t.header(s), Style: Heading}}, t.body(s)...)
+	return append([]Row{{Text: t.header(s), Style: Heading, TableHeader: true}}, t.body(s)...)
 }
 
 // Body is the items alone, ordered by s, for a table shown inside a screen
@@ -240,9 +251,14 @@ func (t Table) layout(texts []string) (string, [][2]int) {
 	n := 0 // runes written
 	for i, c := range t.Columns {
 		text := oneLine(texts[i])
+		textWidth := cellWidth(text)
+		if c.MaxWidth > 0 && textWidth > t.widthOf(i) {
+			text = ansi.Truncate(text, t.widthOf(i), "…")
+			textWidth = cellWidth(text)
+		}
 		lead, trail := 0, 0
 		if w := t.widthOf(i); w > 0 {
-			pad := max(w-utf8.RuneCountInString(text), 0)
+			pad := max(w-textWidth, 0)
 			if c.Right {
 				lead = pad
 			} else if i < len(t.Columns)-1 {
@@ -268,6 +284,17 @@ func (t Table) layout(texts []string) (string, [][2]int) {
 		at[i][0], at[i][1] = min(at[i][0], end), min(at[i][1], end)
 	}
 	return line, at
+}
+
+// cellWidth avoids the ANSI/grapheme parser for the overwhelmingly ASCII
+// financial cells; wide or combining Unicode still uses terminal-cell widths.
+func cellWidth(s string) int {
+	for i := range len(s) {
+		if s[i] >= utf8.RuneSelf || s[i] < ' ' {
+			return ansi.StringWidth(s)
+		}
+	}
+	return len(s)
 }
 
 // Choose is the sort that follows cur when the user steps dir columns along

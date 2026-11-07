@@ -17,46 +17,51 @@ import (
 type Action string
 
 const (
-	NextWatch    Action = "next-watch" // the whole point: one key to the next watch
-	PrevWatch    Action = "prev-watch"
-	JumpWatch    Action = "jump-watch" // 1-9: the n-th watch; in an open article, its n-th stock
-	Open         Action = "open"
-	Back         Action = "back"
-	Forward      Action = "forward"
-	GoHome       Action = "home"
-	GoWatches    Action = "watches"
-	GoStocks     Action = "stocks"
-	GoCompanies  Action = "companies" // every known company, filterable
-	TagStock     Action = "tag"       // tag the stock under the cursor
-	ListStock    Action = "list"      // put the stock under the cursor in a list
-	GoTopics     Action = "topics"
-	GoExchanges  Action = "exchanges"     // the markets stocks are listed on
-	NextExchange Action = "next-exchange" // the exchange every screen is narrowed to: the next one, ending with all
-	PrevExchange Action = "prev-exchange"
-	UseExchange  Action = "use-exchange" // narrow every screen to the exchange on this screen
-	GoDomains    Action = "domains"
-	GoSources    Action = "sources"
-	GoLabel      Action = "label"    // the queue of articles to judge
-	OpenURL      Action = "open-url" // the selected article in the browser
-	Up           Action = "up"
-	Down         Action = "down"
-	PageUp       Action = "page-up"
-	PageDown     Action = "page-down"
-	Top          Action = "top"
-	Bottom       Action = "bottom"
-	FocusFilter  Action = "filter"      // the Google-style filter bar
-	Jump         Action = "jump"        // move to the first company that starts with what you type
-	SortNext     Action = "sort-next"   // sort by the next column
-	SortPrev     Action = "sort-prev"   // sort by the previous column
-	SortInvert   Action = "sort-invert" // turn the order round
-	GroupNext    Action = "group"       // group the catalogue by exchange, kind, industry, or not
-	Mark         Action = "mark"        // mark the stock under the cursor and move down
-	Unmark       Action = "unmark"      // clear every mark
-	Keep         Action = "keep"        // label the selected article relevant
-	Drop         Action = "drop"        // label it noise
-	Refresh      Action = "refresh"
-	Help         Action = "help"
-	Quit         Action = "quit"
+	NextSection    Action = "next-section"
+	PrevSection    Action = "previous-section"
+	FocusNav       Action = "focus-navigation"
+	ToggleRelevant Action = "relevant"
+	ToggleFacets   Action = "facets"
+	NextWatch      Action = "next-watch" // the whole point: one key to the next watch
+	PrevWatch      Action = "prev-watch"
+	JumpWatch      Action = "jump-watch" // 1-9: the n-th watch; in an open article, its n-th stock
+	Open           Action = "open"
+	Back           Action = "back"
+	Forward        Action = "forward"
+	GoHome         Action = "home"
+	GoWatches      Action = "watches"
+	GoStocks       Action = "stocks"
+	GoCompanies    Action = "companies" // every known company, filterable
+	TagStock       Action = "tag"       // tag the stock under the cursor
+	ListStock      Action = "list"      // put the stock under the cursor in a list
+	GoTopics       Action = "topics"
+	GoExchanges    Action = "exchanges"     // the markets stocks are listed on
+	NextExchange   Action = "next-exchange" // the exchange every screen is narrowed to: the next one, ending with all
+	PrevExchange   Action = "prev-exchange"
+	UseExchange    Action = "use-exchange" // narrow every screen to the exchange on this screen
+	GoDomains      Action = "domains"
+	GoSources      Action = "sources"
+	GoLabel        Action = "label"    // the queue of articles to judge
+	OpenURL        Action = "open-url" // the selected article in the browser
+	Up             Action = "up"
+	Down           Action = "down"
+	PageUp         Action = "page-up"
+	PageDown       Action = "page-down"
+	Top            Action = "top"
+	Bottom         Action = "bottom"
+	FocusFilter    Action = "filter"      // the Google-style filter bar
+	Jump           Action = "jump"        // move to the first company that starts with what you type
+	SortNext       Action = "sort-next"   // sort by the next column
+	SortPrev       Action = "sort-prev"   // sort by the previous column
+	SortInvert     Action = "sort-invert" // turn the order round
+	GroupNext      Action = "group"       // group the catalogue by exchange, kind, industry, or not
+	Mark           Action = "mark"        // mark the stock under the cursor and move down
+	Unmark         Action = "unmark"      // clear every mark
+	Keep           Action = "keep"        // label the selected article relevant
+	Drop           Action = "drop"        // label it noise
+	Refresh        Action = "refresh"
+	Help           Action = "help"
+	Quit           Action = "quit"
 )
 
 // Need is what a binding wants of the place it is used.
@@ -167,16 +172,20 @@ func (b Binding) Refusal(c Context) string {
 //   - the arrows move through the hierarchy: left is back, right is open, up and
 //     down move the cursor, and on a row of chips left and right move along it.
 //
-// Watch switching sits on the easiest keys (tab and the digits) because it is
-// the most frequent move.
+// Tab cycles sections; watch switching is separate from navigation.
 var DefaultKeys = []Binding{
-	{Keys: []string{"tab"}, Action: NextWatch, Help: "next watch", Bar: "watch"},
-	{Keys: []string{"shift+tab"}, Action: PrevWatch, Help: "previous watch"},
+	{Keys: []string{"tab"}, Action: NextSection, Help: "next section", Bar: "sections"},
+	{Keys: []string{"shift+tab"}, Action: PrevSection, Help: "previous section"},
+	{Keys: []string{"f6"}, Action: FocusNav, Help: "focus navigation; arrows select a section"},
+	{Keys: []string{"ctrl+tab"}, Action: NextWatch, Help: "next watch"},
+	{Keys: []string{"ctrl+shift+tab"}, Action: PrevWatch, Help: "previous watch"},
+	{Keys: []string{"v"}, Action: ToggleRelevant, Help: "toggle relevant-only news", Bar: "relevant"},
+	{Keys: []string{"f"}, Action: ToggleFacets, Help: "expand or collapse catalogue facets", Bar: "facets", Screens: []nav.Kind{nav.Companies}},
 	{Keys: []string{"1", "2", "3", "4", "5", "6", "7", "8", "9"}, Action: JumpWatch, Help: "watch n (in an article: its stock n)", Detail: true},
 	{Keys: []string{"right", "enter"}, Action: Open, Help: "open the row", Bar: "open", Needs: OnRow, Detail: true},
 	{Keys: []string{"left", "esc", "backspace"}, Action: Back, Help: "back up the hierarchy", Bar: "back", Detail: true},
 	{Keys: []string{"]"}, Action: Forward, Help: "forward again"},
-	{Keys: []string{"h"}, Action: GoHome, Help: "Home: the dashboard"},
+	{Keys: []string{"n", "h"}, Action: GoHome, Help: "News: chronological feed"},
 	{Keys: []string{"s"}, Action: GoStocks, Help: "Stocks: all, news first"},
 	{Keys: []string{"c"}, Action: GoCompanies, Help: "Companies (/ narrows)"},
 	{Keys: []string{"t"}, Action: GoTopics, Help: "Topics"},

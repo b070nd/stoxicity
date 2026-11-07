@@ -15,32 +15,43 @@ stoxicity-tui -refresh 10s          # reload every 10 seconds (default: a minute
 ## Layout
 
 ```
- All news  1 Tech (2)  2 Buffett core │ Home  Stocks  Companies …   <- watches, then screens (the key of each is underlined)
+ News  Stocks  Topics  Domains  Exchanges  Sources  Watches  Label
+ [x] Relevant only (v) │ Watch: All │ All exchanges
  all exchanges · sources 21 ok 2 stale 1 failing · next fetch sec-edgar in 0:42 · news 1,204 articles, 87 relevant · 5 unread
- Home › Stocks › NVDA                          <- breadcrumbs
- Stock NVDA · Nvidia Corp                      <- the screen
+ News › Stocks › Stock NVDA · Nvidia Corp      <- trail and screen title
  ...
  → open  ← back  / filter  > sort  Space mark  # tag  ? help  quit
  refreshed 09:41 · default
 ```
 
-- **Screen tabs.** After the watches the bar lists the screens that stand on their
-  own: Home, Stocks, Companies, Topics, Domains, Exchanges, Sources and Watches. The
-  one you are in is lit, and so is the one a detail sits under (a stock opened from
-  Stocks lights Stocks, an exchange lights Exchanges). The key of each is a letter
-  of its own name, underlined in the word: **h**ome, **s**tocks, **c**ompanies,
-  **t**opics, **d**omains, **e**xchanges, s**o**urces, **w**atches. The screens that need something to show (a stock, a topic, a domain,
-  a day, a search, one exchange) are not tabs; they open from the lists.
-- **Watch bar.** `tab` and `shift+tab` go to the next and previous watch, a digit
-  goes to that watch, `w` opens the list of watches. Switching keeps the
-  screen: Home › Topics › AI infrastructure for one watch becomes the same topic
-  page for the next. Loading a watch's screen marks its hits as seen.
-  "All news" shows every article the tenant may see, with no watch applied.
+- **Section navigation.** The header contains only News, Stocks, Topics, Domains,
+  Exchanges, Sources, Watches and Label. `Tab` / `Shift+Tab` switch sections and
+  focus the header. While it is focused, `←` / `→` switch sections and `↓`,
+  `Enter` or `Esc` return to content. `F6` toggles header focus; `↑` from the first
+  content row (or above the exchange chips) also reaches it. The active section
+  remains visible on narrow terminals. Shortcuts remain: `n` (or `h`) News,
+  `s` Stocks, `c` the grouped stock catalogue, `t` Topics, `d` Domains, `e`
+  Exchanges, `o` Sources, `w` Watches, `a` Label. Companies and Stocks now share
+  one Stocks tab.
+- **News filter.** `[x] Relevant only` is a filter, not a separate navigation tab.
+  `v` toggles it for the News feed, search results and day views. The default is
+  relevant-only. The News feed is newest first, with an activity timeline below
+  it; the repeated digest/top-articles/dashboard lists have been removed. The
+  original article evidence remains available, including below-threshold news on
+  stock detail pages. Disabling relevance clears the bundled `all-relevant`
+  watch if selected, since that watch otherwise filters upstream; custom watch
+  constraints remain in force.
+- **Watch scope.** The filter row shows the selected watch. `Ctrl+Tab` /
+  `Ctrl+Shift+Tab` cycle watches, `1`–`9` select one, and `w` opens the full list
+  with unread counts. Digits are an alternative on terminals that do not transmit
+  modified Tab. Watch switching preserves the section. Loading a watch's screen
+  marks its hits as seen. With no watch selected, news is limited only by tenant
+  visibility, exchange scope, query and the relevance checkbox.
 - **Breadcrumbs.** The trail shows where you are in the hierarchy (Home › Exchanges
   › NYSE › KO). `←` (or `esc`, `backspace`) goes up one step, `→` (or `enter`) opens
   what the cursor is on, `]` goes forward again. Going back puts the cursor on the
   row you left.
-- **Meters.** The line under the watch bar is always there: the exchange every
+- **Meters.** The line under the filters is always there: the exchange every
   screen is narrowed to (see Exchanges below), how many sources are
   healthy (`ok`), have not worked for more than two polling intervals or failed
   once or twice (`stale`), or are failing (`failing`); when the next source is
@@ -60,9 +71,10 @@ stoxicity-tui -refresh 10s          # reload every 10 seconds (default: a minute
 - **Status line.** When the data was last loaded, the tenant, how many rows are
   marked, and the last message or error. The screen reloads every minute (see
   `-refresh`) and on `r`. After a reload, the rows that are new or changed since
-  the last one stand out in bold green for a few seconds and the status line
+  the last one stand out in bold for a few seconds and the status line
   counts them; a reload that changes nothing, and sorting, mark nothing. The
-  cursor stays on its row, whatever moved.
+  cursor stays on its row, whatever moved. Refresh emphasis preserves the cells'
+  financial colors instead of turning negative values green.
 
 ## The keys
 
@@ -83,10 +95,11 @@ The key map is data (`DefaultKeys`) and a test keeps four rules over it:
 
 | Where | Keys |
 |-------|------|
-| Watches | `tab` `shift+tab` next and previous · `1`–`9` the n-th |
-| Screens | `h` `s` `c` `t` `d` `e` `o` `w` |
+| Sections | `Tab` `Shift+Tab` next/previous · `F6` focus header · `←` `→` select when focused · `↓` content |
+| Watches | `Ctrl+Tab` `Ctrl+Shift+Tab` next/previous · `1`–`9` the n-th |
+| Screens | `n` / `h` `s` `c` `t` `d` `e` `o` `w` `a` |
 | Move | `↑` `↓` `pgup` `pgdn` `home` `end` · `→` open · `←` back · `]` forward |
-| Query | `/` filter · `j` jump (catalogue) · `>` `<` sort · `i` invert · `g` group (catalogue) |
+| Query | `/` filter with suggestions · `v` relevant only · `f` facets (catalogue) · `j` jump · `>` `<` sort · `i` invert · `g` group |
 | Stocks | `Space` mark · `ctrl+u` clear marks · `#` tag · `l` list |
 | Articles | `+` keep · `-` drop · `b` browser · `1`–`9` open its stock |
 | Exchanges | `x` next · `ctrl+x` previous · `u` use this one · `↑` from the top: the cloud |
@@ -94,7 +107,7 @@ The key map is data (`DefaultKeys`) and a test keeps four rules over it:
 
 ### The exchange cloud
 
-Home, Companies (and Stocks) and Exchanges start with a line of chips: **All** and
+Stocks (including the grouped catalogue) and Exchanges start with chips: **All** and
 each exchange with its number of companies, drawn heavier the bigger it is (the
 same log-scale tiers as the topic cloud); ● marks the one every screen is narrowed
 to. It is the global exchange filter: step up into it from the first row with `↑`,
@@ -111,6 +124,14 @@ Every prompt (the filter bar, `#`, `l` and `j`) edits the same way: `←` `→`
 and the tag and list prompts `↑` and `↓` recall what you typed before, each kind
 of prompt with a history of its own (the last 50). `enter` accepts, `esc`
 cancels.
+
+Search suggests tickers and company names from the local universe, query
+operators, and exchange values. `↑` / `↓` select a suggestion, `Tab` accepts it,
+and `Enter` accepts a selected suggestion without submitting the query. A
+subsequent `Enter` applies the query. With no suggestion selected, `Enter`
+applies the typed query directly. Suggestions preserve preceding query terms,
+never access the network, and never navigate sections while the prompt is open.
+With no suggestions, `↑` / `↓` retain prompt-history behavior.
 
 ## Columns, sorting and marks
 
@@ -129,9 +150,9 @@ marks. Marks stay while you move between screens.
 
 | Key | Screen | What it shows |
 |-----|--------|---------------|
-| `h` | Home | digest, top articles, stocks, domains, topic cloud, 14-day timeline |
+| `n` / `h` | News | chronological news feed, relevant-only checkbox, activity timeline |
 | `s` | All stocks | every stock and ETF (about 16,000), those with news first: the catalogue below, opened with `sort:news` |
-| | Stocks in the news | opened from the Home heading "Stocks ›": only the stocks in relevant news, with mentions, materiality and tone; ★ marks your watchlist |
+| | Stocks in the news | related-stock drill-downs show mentions, materiality and tone; ★ marks your watchlist |
 | `c` | Companies | the catalogue of all stocks and ETFs (about 12,000), narrowed as you type, with counts by exchange, kind, industry, list and tag |
 | | Stock | profile (identity, listing, industry, links, feeds, your lists and tags, watches), the latest news about it (any age, loaded when the page opens), then summary, weekly tone and materiality, timeline, what happened, domains, topics, articles |
 | `t` | Topics | tag cloud and a table with the lift over the window before |
@@ -192,14 +213,25 @@ Estate, Services, Infrastructure, Retail, Mining and so on), one colour each;
 the finer industry is on the stock's page and in `industry:` and `sort:industry`. **DAY** is the day's candle drawn as a bar: the
 whole bar is the range from low to high, the thick part is open to close, so a
 body at the right end closed near its high; green closed above its open, red
-below, dim when the candle is old (more than five days) or the day closed flat.
-**CLOSE** and **CHG** (the move from the day before) take the same colour.
+below, yellow when flat, dim when stale according to the market-data session
+policy. **CLOSE** follows candle direction; **CHG** follows the reconciled
+close-to-close return, which may have a different direction. Stale figures remain
+dim. Yellow is also used for unresolved corporate actions; the `split?` text
+distinguishes these from an actual flat move.
 The ticker is bold, the exchange has a colour of its own (Nasdaq blue, NYSE
 magenta, OTC yellow, CBOE cyan), the news count turns yellow with one article
-and bold yellow with five, tags are magenta, and the star is yellow. The full
-name comes last, so a long one runs to the edge of the screen and is never cut.
-No table cuts a text or shortens it with an ellipsis: a column is as wide as its
-longest entry.
+and bold yellow with five, tags are magenta, and the star is yellow. The name
+sits beside the bold ticker. Numeric columns are right-aligned, missing values
+use a dim dash, and financial colors remain visible on the selected row.
+The stock table adapts to terminal width: secondary metadata and financial
+columns disappear before identity and prices, while the active sort column
+stays visible. Names and metadata have bounded widths and ellipses; numeric
+values are not shortened to fit. All sort keys remain available with `<` / `>`;
+sorting by a hidden column brings it into view. Full values are on the stock's
+detail page. The table header repeats while scrolling, and `f` expands or
+collapses kind/industry/list/tag facets. Growth and margin use green positive,
+yellow neutral and red negative; topic lift is colored relative to 1× coverage,
+not interpreted as a predicted price trend.
 **MCAP**, **REVENUE**, **GROWTH** and **MARGIN** appear once the SEC's figures are
 stored (see `company.fundamentals` in [configuration.md](configuration.md)):
 market value, revenue of the latest fiscal year, its growth over the year
@@ -220,9 +252,9 @@ sales red, awards and tax withholding dim; `b` opens the filing. Try
 often scheduled in advance; a fund that sits on the board (Baker Bros. in
 Madrigal) counts as an insider because the form says so.
 `sort:close`, `sort:change`, `sort:type` and `sort:domain` order by them (a
-stock with no candle is last whichever way round). A move of more than five
-times, or less than a fifth, between two closes a day apart is not a day's
-move (mixed price series, a split not applied) and shows no change; the columns appear once
+stock with no candle is last whichever way round). Unresolved corporate actions
+show `split?`, rather than an invented return or a silently hidden move. The
+selected row's end-of-day session and stale status appear in the footer. The columns appear once
 prices exist (see `company.quotes` in [configuration.md](configuration.md)).
 `enter` on a company opens its profile, which also exists for stocks with no news
 in the window.
@@ -301,13 +333,19 @@ chosen. From the chosen exchange on:
   list of exchanges, the sources and the watches; and one exchange's page is always
   about that exchange, whatever is chosen.
 
-`e` opens the list of exchanges (NOW is `open` in the regular session, `extended`
-before and after it, `closed` otherwise; ● marks the chosen one), and `u` on a row, or
-on an exchange's page, chooses it (again: back to all). The page of an exchange has:
+`e` opens the list of exchanges (NOW is the **schedule**: `open` in the regular
+session, `extended` before and after it, `closed` otherwise; it is read from the
+recurring rules and the calendar file below and is **not** a confirmation that
+trading is available, because halts and outages are not observed; ● marks the
+chosen one), and `u` on a row, or on an exchange's page, chooses it (again: back to
+all). The page of an exchange has:
 
 - **About.** Full name, operator, place, market ID (ISO 10383), currency, website
   (`b` opens it) and what kind of market it is.
-- **Opening hours.** Whether it trades now and until when, each session in the market's
+- **Opening hours.** Whether it is scheduled to trade now and until when (the line
+  says "scheduled open" or "scheduled closed", names the calendar version, any
+  override that decided the day with its source, and that halts and outages are not
+  observed), each session in the market's
   clock and in yours (`Regular 09:30–16:00 EST = 15:30–22:00 CET`), today's calendar
   (closed, early close at 13:00, or a full day) and the next three market holidays.
   The US calendar is built in: the ten holidays with their observed dates (a Saturday
@@ -329,6 +367,55 @@ on an exchange's page, chooses it (again: back to all). The page of an exchange 
 The reference facts (operator, hours, what each exchange lists) are in
 `app/src/exchange`; an exchange the companies name but that package does not know is
 shown with the counts only.
+
+### Exceptional closures and changed sessions
+
+The recurring rules cannot know a special closure. `exchange_calendar.yaml` in the
+configuration folder holds dated, sourced overrides; **none ships**, and nothing is
+fetched for it. A file that is missing means the recurring rules alone
+(`recurring-rules`); one that is invalid (an override without a source, a reason, a
+recorded time or a known venue, an early close without its time) is refused whole and
+the recurring rules apply.
+
+```yaml
+version: 2026-11-a            # names this set; shown beside the status
+overrides:
+  - venue: Nasdaq             # as the exchange list names it, or "*" for every venue
+    date: "2026-11-10"        # the day in the venue's own time zone
+    kind: closed              # closed | early (needs close) | open (a session on a closed day; close optional)
+    close: "13:00"            # for early and open
+    reason: what happened
+    source: where it was announced (a notice's address or reference)
+    recorded: 2026-11-01T09:00:00Z   # when you learned of it; a reading as of an earlier time does not have it
+observations:                 # halts and outages actually seen, not scheduled
+  - venue: Nasdaq
+    kind: halt                # halt | outage | closure
+    from: 2026-11-10T15:00:00Z
+    to: 2026-11-10T15:20:00Z  # empty while it is on
+    source: where it was seen
+    recorded: 2026-11-10T15:01:00Z
+```
+
+An override replaces the recurring rules for that venue and day (the newest by
+`recorded` if there are several); an observation is shown beside the schedule as
+"halted (halt)" with its source and does not change the schedule. Nothing records
+observations automatically, and the entries in the tests are invented.
+
+### Colours and words in the stock table
+
+The figure columns carry a legend under the table. MCAP is the **issuer's** whole
+capitalisation in US dollars (every class of stock), prefixed "issuer" on a class
+that shares it; when there is no figure the cell says why in a word instead of a
+blank or a zero: `stale`, `incomplete`, `unresolved`, `unsupported`, `failed`,
+`pending` (the stock page gives the reason, the dates of the count and the price).
+GROWTH and MARGIN use green for a positive and red for a negative value and yellow
+for zero: the colour is the sign, never a judgement of the stock or a trade. The
+insider columns use cyan and magenta only to tell BUYS from SELLS apart on the
+list. Sorting and filtering see no number for a stock without a figure, so the
+words and the order agree. Columns grow to their content except the text
+columns declared with a maximum width (on the stock table NAME, TYPE, LISTED, DOMAIN
+and TAGS: `MaxWidth` in `app/src/tui/companies.go`), which are cut with "…" at that
+width; the full text is on the stock's page. Figures and states are never cut.
 
 ## The stock page loads the latest news
 

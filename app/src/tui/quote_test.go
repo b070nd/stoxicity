@@ -25,8 +25,8 @@ func TestCandleBarDrawsTheDayFromLowToHigh(t *testing.T) {
 	}{
 		{"closed near the high", Quote{Day: "2026-11-05", Open: 10, High: 20, Low: 10, Close: 20}, "████████", Good},
 		{"opened high, closed low", Quote{Day: "2026-11-05", Open: 19, High: 20, Low: 10, Close: 11}, "─██████─", Bad},
-		{"a doji in the middle", Quote{Day: "2026-11-05", Open: 15, High: 20, Low: 10, Close: 15}, "────┿───", Dim},
-		{"no range at all", Quote{Day: "2026-11-05", Open: 5, High: 5, Low: 5, Close: 5}, "────┿───", Dim},
+		{"a doji in the middle", Quote{Day: "2026-11-05", Open: 15, High: 20, Low: 10, Close: 15}, "────┿───", Warn},
+		{"no range at all", Quote{Day: "2026-11-05", Open: 5, High: 5, Low: 5, Close: 5}, "────┿───", Warn},
 		{"yesterday's candle on a quiet week is dim", Quote{Day: "2026-10-20", Open: 10, High: 20, Low: 10, Close: 20}, "████████", Dim},
 	} {
 		bar, style := candleBar(c.q, candleWidth, quoteNow)
@@ -48,7 +48,7 @@ func TestChangeAndPriceText(t *testing.T) {
 	if s, st := changeText(down, quoteNow); s != "-1.50%" || st != Bad {
 		t.Errorf("down: %q %v", s, st)
 	}
-	if s, st := changeText(Quote{Day: "2026-11-05", Close: 100, Prev: 100, PrevDay: "2026-11-04"}, quoteNow); s != "+0.00%" || st != Dim {
+	if s, st := changeText(Quote{Day: "2026-11-05", Close: 100, Prev: 100, PrevDay: "2026-11-04"}, quoteNow); s != "+0.00%" || st != Warn {
 		t.Errorf("flat: %q %v", s, st)
 	}
 	if s, _ := changeText(Quote{Day: "2026-11-05", Close: 100}, quoteNow); s != "" {
@@ -168,6 +168,7 @@ func (h *harness) numbersFor(n map[string]map[string]float64) {
 
 func TestCompaniesShowMarketCapRevenueGrowthAndMarginAndSortByThem(t *testing.T) {
 	h := newHarness(t)
+	h.m.Update(tea.WindowSizeMsg{Width: 240, Height: 40})
 	h.quotesFor(map[string]Quote{"NVDA": {Day: "2026-11-04", Open: 100, High: 112, Low: 99, Close: 110, Prev: 100, PrevDay: "2026-11-03"}})
 	h.numbersFor(map[string]map[string]float64{
 		"marketcap": {"NVDA": 2.7e12, "KO": 2.6e11},
@@ -257,9 +258,9 @@ func TestCompanyRowsAreNeverCutAndEachKindOfFactHasItsColour(t *testing.T) {
 	if k := paint(ko); k[Warn] != "★|1|" || k[exchangeStyle("NYSE")] != "NYSE|" {
 		t.Errorf("KO is painted %v in %q", k, ko.Text)
 	}
-	// The full name closes the line, after everything else.
-	if !strings.HasSuffix(nvda.Text, "Nvidia Corp") {
-		t.Errorf("the name is not the last column: %q", nvda.Text)
+	// Identity stays together before numeric and metadata columns.
+	if strings.Index(nvda.Text, "Nvidia Corp") > strings.Index(nvda.Text, "Nasdaq") {
+		t.Errorf("the name is not next to the ticker: %q", nvda.Text)
 	}
 }
 
@@ -344,4 +345,39 @@ func TestAMoveNoSplitExplainsIsFlaggedNotShownAsAPriceMove(t *testing.T) {
 	if text, _ := changeText(q, now); text != "" {
 		t.Errorf("sessions missing: %q", text)
 	}
+}
+
+func TestAMissingCapitalisationIsAWordNotABlankAndNeverRedOrGreen(t *testing.T) {
+	h := newHarness(t)
+	h.m.Update(tea.WindowSizeMsg{Width: 240, Height: 40})
+	h.numbersFor(map[string]map[string]float64{"marketcap": {"NVDA": 2.7e12}, "revenue": {"NVDA": 6.0e10, "KO": 4.6e10}})
+	h.be.mu.Lock()
+	h.be.standing = map[string]CapStanding{
+		"NVDA": {State: "valued", Scope: "issuer", CountDay: "2026-10-20", PriceDay: "2026-11-04", Currency: "USD"},
+		"KO":   {State: "stale", Reason: "the count is from 2026-01-02, more than 200 days old", CountDay: "2026-01-02"},
+	}
+	h.be.mu.Unlock()
+	h.m.goTo(nav.Route{Kind: nav.Companies, Arg: "group:none"})
+	h.run(h.m.loadCmd(false))
+	// The issuer's figure on a class of a multi-class issuer says so; a missing one says why in a word.
+	h.mustContain("issuer 2.70T", "stale")
+	// The legend names every state and says a colour is a sign, not a verdict.
+	h.mustContain("MCAP is the issuer's whole capitalisation", "stale (count or price too old)", "unsupported (cannot be valued by this method)",
+		"The colour is the sign, never a judgement of the stock or of a trade")
+	for state, want := range map[string]Style{"stale": Warn, "incomplete": Warn, "unresolved": Hot, "unsupported": Dim, "failed": Hot, "pending": Dim} {
+		got := capCell(Data{Standing: map[string]CapStanding{"X": {State: state}}}, "X")
+		if got.Text != state || got.Style != want || got.Style == Good || got.Style == Bad {
+			t.Errorf("%s = %+v", state, got)
+		}
+		if got.Num != 0 {
+			t.Errorf("%s: a missing figure has no number to sort by", state)
+		}
+	}
+	if got := capCell(Data{}, "X"); got.Text != "—" {
+		t.Errorf("no information is a dash: %+v", got)
+	}
+	// The detail says what the figure rests on.
+	h.m.goTo(nav.Route{Kind: nav.Stock, Arg: "NVDA"})
+	h.run(h.m.loadCmd(false))
+	h.mustContain("cap basis", "share count of 2026-10-20", "last close of 2026-11-04", "USD", "the whole issuer's")
 }

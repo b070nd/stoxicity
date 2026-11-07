@@ -130,6 +130,9 @@ func cmdReconcile(ctx context.Context, a *app, args []string) error {
 	rep, runErr := rc.Discover(ctx, from, to, mode)
 	fmt.Fprintf(a.stdout, "discover %s to %s: %d days; %d already resolved, %d daily and %d quarterly indexes read; %d complete, %d without filings by the calendar or an empty quarter, %d unpublished (retried next run), %d failed; %d filings stored for the first time; forms: %s\n",
 		rep.From, rep.To, rep.Days, rep.Skipped, rep.Daily, rep.Quarterly, rep.Complete, rep.NonFiling, rep.Unpublished, rep.Errors, rep.Added, strings.Join(forms, " "))
+	if rep.FormsChanged > 0 {
+		fmt.Fprintf(a.stdout, "%d days were read again because they had been read for other forms than the ones selected now\n", rep.FormsChanged)
+	}
 	if rep.Pending > 0 {
 		fmt.Fprintf(a.stdout, "%d days of the range are still unresolved (unpublished, failed or partial); the next run reads them again\n", rep.Pending)
 	}
@@ -138,6 +141,15 @@ func cmdReconcile(ctx context.Context, a *app, args []string) error {
 	}
 
 	f, t := rep.From, rep.To
+	if ft, err1 := time.Parse(time.DateOnly, f); err1 == nil {
+		if tt, err2 := time.Parse(time.DateOnly, t); err2 == nil && !tt.Before(ft) {
+			// Completeness is what is stored, not whether the last requests worked.
+			if comp, err := reconcile.Measure(ctx, db, ft, tt, forms); err == nil {
+				fmt.Fprintf(a.stdout, "completeness %s to %s for forms %s: %d of %d days resolved (%.0f%%): %d complete, %d without filings, %d unread, %d unpublished, %d failed, %d read too early, %d read for other forms\n",
+					f, t, strings.Join(forms, " "), comp.Resolved(), comp.Days, comp.Percent(), comp.Complete, comp.NonFiling, comp.Unread, comp.Unpublished, comp.Failed, comp.Partial, comp.FormsStale)
+			}
+		}
+	}
 	a.printDays(ctx, db, f, t)
 
 	missing, err := db.MissingFilings(ctx, f, t)

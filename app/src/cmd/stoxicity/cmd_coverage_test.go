@@ -46,7 +46,7 @@ func TestRenderCoverageMarksThinStories(t *testing.T) {
 	var b bytes.Buffer
 	renderCoverage(&b, stories, p, "default", 5)
 	out := b.String()
-	for _, want := range []string{"1 stories: 0 primary, 0 corroborated, 1 unconfirmed (1 thin)", "unconfirmed [thin]", "Acme warns on margins (ACME)"} {
+	for _, want := range []string{"1 stories: 0 primary, 0 multi-outlet (several outlets, origin not checked), 1 unconfirmed (1 thin)", "unconfirmed [thin]", "Acme warns on margins (ACME)"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output lacks %q:\n%s", want, out)
 		}

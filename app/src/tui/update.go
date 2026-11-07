@@ -21,6 +21,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		m.rebuild()
 		m.vp.Resize(m.bodyHeight() - 1)
 	case tea.KeyPressMsg:
 		return m, m.key(msg)
@@ -231,6 +232,11 @@ func (m *Model) key(k tea.KeyPressMsg) tea.Cmd {
 		m.mode = modeList
 		return nil
 	}
+	if m.detail == nil {
+		if cmd, used := m.navigationKey(k.String()); used {
+			return cmd
+		}
+	}
 	if m.chipFocus && m.detail == nil && m.chipKey(k.String()) {
 		return nil
 	}
@@ -250,6 +256,11 @@ func (m *Model) key(k tea.KeyPressMsg) tea.Cmd {
 	}
 	cur := m.stack.Current()
 	switch b.Action {
+	case ToggleRelevant:
+		return m.toggleRelevant()
+	case ToggleFacets:
+		m.showFacets = !m.showFacets
+		m.rebuild()
 	case Quit:
 		m.quitting = true
 		return tea.Quit
@@ -314,6 +325,10 @@ func (m *Model) key(k tea.KeyPressMsg) tea.Cmd {
 		if m.vp.Cursor() == 0 && m.enterChips() { // up from the first row: the exchange filter
 			return nil
 		}
+		if m.vp.Cursor() == 0 {
+			m.navFocus = true
+			return nil
+		}
 		m.vp.Move(-1)
 	case Down:
 		m.vp.Move(1)
@@ -343,6 +358,7 @@ func (m *Model) key(k tea.KeyPressMsg) tea.Cmd {
 		clear(m.marks)
 		m.ok("marks cleared")
 	case FocusFilter:
+		m.suggestions, m.suggestionAt = nil, -1
 		initial := ""
 		if cur.Kind == nav.Companies { // refine the query on screen
 			initial = cur.Arg
@@ -391,6 +407,11 @@ func (m *Model) detailKey(b Binding, k tea.KeyPressMsg) tea.Cmd {
 // promptKey passes a key to the open prompt and acts on what it came to. What
 // the text means depends on which prompt it is.
 func (m *Model) promptKey(k tea.KeyPressMsg) tea.Cmd {
+	if m.mode == modeFilter {
+		if used := m.suggestionKey(k.String()); used {
+			return nil
+		}
+	}
 	ev := m.prompt.Key(k)
 	switch m.mode {
 	case modeFilter:
@@ -445,6 +466,7 @@ func (m *Model) filterEvent(ev PromptEvent) tea.Cmd {
 	if companies {
 		m.rebuild()
 	}
+	m.updateSuggestions()
 	return nil
 }
 

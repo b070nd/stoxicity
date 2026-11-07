@@ -1,6 +1,7 @@
 package store
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -49,6 +50,17 @@ type EventInput struct {
 	Topics       []string
 	Rationale    string
 	Tone         float64
+	// Claims are the claims of the evidence that make this event.
+	Claims []model.EventClaim
+	// Relations are how this event relates to others when it is written.
+	Relations []model.EventRelation
+	// Complete says the securities, evidence and claims given are the whole
+	// derivation of the event, not an addition to what is stored. Then the stored
+	// revision's are not carried over, provided every article of its evidence is in
+	// Scope (the articles the derivation looked at): an article that was not looked
+	// at cannot have been re-asserted, so its evidence stays.
+	Complete bool
+	Scope    map[string]bool
 }
 
 // SecuritySync says what SyncSecurities did.
@@ -244,7 +256,36 @@ func putEvent(ctx context.Context, tx *sql.Tx, e EventInput, at time.Time) (bool
 	for _, t := range e.Topics {
 		topics[t] = true
 	}
-	if last > 0 {
+	// A claim is identified by its place; the flag says whether it names the event.
+	type claimKey struct {
+		article, version, extractor string
+		seq                         int
+	}
+	claims := map[claimKey]bool{}
+	for _, c := range e.Claims {
+		claims[claimKey{c.ArticleID, c.Version, c.Extractor, c.Seq}] = c.Names
+	}
+	carry := last > 0
+	if carry && e.Complete {
+		inScope := true
+		rows, err := tx.QueryContext(ctx, `SELECT article_id FROM event_evidence WHERE event_id = ? AND revision = ?`, e.EventID, last)
+		if err != nil {
+			return false, err
+		}
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return false, err
+			}
+			if !e.Scope[id] {
+				inScope = false
+			}
+		}
+		rows.Close()
+		carry = !inScope
+	}
+	if carry {
 		rows, err := tx.QueryContext(ctx, `SELECT security_id, role FROM event_security WHERE event_id = ? AND revision = ?`, e.EventID, last)
 		if err != nil {
 			return false, err
@@ -284,6 +325,23 @@ func putEvent(ctx context.Context, tx *sql.Tx, e EventInput, at time.Time) (bool
 			topics[t] = true
 		}
 		rows.Close()
+		rows, err = tx.QueryContext(ctx, `SELECT article_id, assertion_seq, assertion_version, extractor, names FROM event_claim WHERE event_id = ? AND revision = ?`, e.EventID, last)
+		if err != nil {
+			return false, err
+		}
+		for rows.Next() {
+			var c model.EventClaim
+			var names int
+			if err := rows.Scan(&c.ArticleID, &c.Seq, &c.Version, &c.Extractor, &names); err != nil {
+				rows.Close()
+				return false, err
+			}
+			k := claimKey{c.ArticleID, c.Version, c.Extractor, c.Seq}
+			if _, have := claims[k]; !have { // stated again now: the new flag wins
+				claims[k] = names == 1
+			}
+		}
+		rows.Close()
 	}
 
 	// A source that changed its own text about the article is a correction.
@@ -310,6 +368,13 @@ func putEvent(ctx context.Context, tx *sql.Tx, e EventInput, at time.Time) (bool
 	for ev := range evidence {
 		evs = append(evs, ev)
 	}
+	var cls []model.EventClaim
+	for k, names := range claims {
+		cls = append(cls, model.EventClaim{ArticleID: k.article, Seq: k.seq, Version: k.version, Extractor: k.extractor, Names: names})
+	}
+	slices.SortFunc(cls, func(a, b model.EventClaim) int {
+		return cmp.Or(strings.Compare(a.ArticleID, b.ArticleID), a.Seq-b.Seq, strings.Compare(a.Version, b.Version), strings.Compare(a.Extractor, b.Extractor))
+	})
 	slices.SortFunc(evs, func(a, b model.Evidence) int {
 		return strings.Compare(a.ArticleID+"\x00"+a.SourceID, b.ArticleID+"\x00"+b.SourceID)
 	})
@@ -326,6 +391,9 @@ func putEvent(ctx context.Context, tx *sql.Tx, e EventInput, at time.Time) (bool
 	}
 	for _, ev := range evs {
 		fmt.Fprintf(&fp, "e:%s:%s\n", ev.ArticleID, ev.SourceID)
+	}
+	for _, c := range cls {
+		fmt.Fprintf(&fp, "c:%s:%d:%s:%s:%v\n", c.ArticleID, c.Seq, c.Version, c.Extractor, c.Names)
 	}
 	sum := sha256.Sum256([]byte(fp.String()))
 	fingerprint := hex.EncodeToString(sum[:12])
@@ -359,6 +427,18 @@ func putEvent(ctx context.Context, tx *sql.Tx, e EventInput, at time.Time) (bool
 			if _, err := tx.ExecContext(ctx, `INSERT INTO event_topic (event_id, revision, topic) VALUES (?, ?, ?)`, e.EventID, rev, t); err != nil {
 				return false, err
 			}
+		}
+		for _, c := range cls {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO event_claim (event_id, revision, article_id, assertion_seq, assertion_version, extractor, names) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+				e.EventID, rev, c.ArticleID, c.Seq, c.Version, c.Extractor, b2i(c.Names)); err != nil {
+				return false, err
+			}
+		}
+	}
+	for _, r := range e.Relations {
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO event_relation (from_event, to_event, relation, basis, recorded_ms) VALUES (?, ?, ?, ?, ?)`,
+			e.EventID, r.To, r.Relation, r.Basis, ms(at)); err != nil {
+			return false, err
 		}
 	}
 	// An assessment is an interpretation by one rule version; a new rule version
@@ -406,7 +486,7 @@ func (db *DB) SecurityTimeline(ctx context.Context, ticker string, knownAt time.
 		FROM security_ticker t
 		JOIN event_security es ON es.security_id = t.security_id
 		JOIN event_revision r ON r.event_id = es.event_id AND r.revision = es.revision
-		WHERE t.ticker = ? AND r.recorded_ms <= ? AND r.public_ms <= ?
+		WHERE t.ticker = ? AND r.recorded_ms <= ? AND r.public_ms <= ? AND r.status <> 'withdrawn'
 		  AND r.revision = (SELECT MAX(r2.revision) FROM event_revision r2 WHERE r2.event_id = r.event_id AND r2.recorded_ms <= ?)
 		GROUP BY r.event_id
 		ORDER BY r.public_ms DESC, r.event_id LIMIT ?`, strings.ToUpper(strings.TrimSpace(ticker)), known, known, known, limit)
@@ -487,6 +567,22 @@ func (db *DB) EventHistory(ctx context.Context, eventID string) ([]model.EventRe
 			r.Evidence = append(r.Evidence, ev)
 		}
 		erows.Close()
+		crows, err := h.r.QueryContext(ctx, `SELECT article_id, assertion_seq, assertion_version, extractor, names FROM event_claim
+			WHERE event_id = ? AND revision = ? ORDER BY article_id, assertion_seq, assertion_version`, eventID, r.Revision)
+		if err != nil {
+			return nil, err
+		}
+		for crows.Next() {
+			var c model.EventClaim
+			var names int
+			if err := crows.Scan(&c.ArticleID, &c.Seq, &c.Version, &c.Extractor, &names); err != nil {
+				crows.Close()
+				return nil, err
+			}
+			c.Names = names == 1
+			r.Claims = append(r.Claims, c)
+		}
+		crows.Close()
 		trows, err := h.r.QueryContext(ctx, `SELECT topic FROM event_topic WHERE event_id = ? AND revision = ? ORDER BY topic`, eventID, r.Revision)
 		if err != nil {
 			return nil, err
@@ -516,6 +612,183 @@ func (db *DB) EventHistory(ctx context.Context, eventID string) ([]model.EventRe
 			r.Assessments = append(r.Assessments, a)
 		}
 		arows.Close()
+	}
+	return out, nil
+}
+
+// LiveEvent is an event whose latest revision has not been withdrawn.
+type LiveEvent struct {
+	EventID  string
+	Kind     model.EventKind
+	Revision int
+	Articles []string // the articles its latest revision rests on
+}
+
+// LiveEvents returns the events whose latest revision (recorded by the time;
+// zero: now) is not withdrawn.
+func (db *DB) LiveEvents(ctx context.Context, asOf time.Time) ([]LiveEvent, error) {
+	h, err := db.baseHandle()
+	if err != nil {
+		return nil, err
+	}
+	bound := int64(1) << 62
+	if !asOf.IsZero() {
+		bound = ms(asOf)
+	}
+	rows, err := h.r.QueryContext(ctx, `SELECT r.event_id, r.kind, r.revision, COALESCE(group_concat(DISTINCT v.article_id), '')
+		FROM event_revision r LEFT JOIN event_evidence v ON v.event_id = r.event_id AND v.revision = r.revision
+		WHERE r.status <> 'withdrawn'
+		  AND r.revision = (SELECT MAX(r2.revision) FROM event_revision r2 WHERE r2.event_id = r.event_id AND r2.recorded_ms <= ?)
+		GROUP BY r.event_id ORDER BY r.event_id`, bound)
+	if err != nil {
+		return nil, fmt.Errorf("store: live events: %w", err)
+	}
+	defer rows.Close()
+	var out []LiveEvent
+	for rows.Next() {
+		var e LiveEvent
+		var kind, arts string
+		if err := rows.Scan(&e.EventID, &kind, &e.Revision, &arts); err != nil {
+			return nil, fmt.Errorf("store: live events: %w", err)
+		}
+		e.Kind = model.EventKind(kind)
+		e.Articles = splitList(arts)
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// Withdrawal says an event no longer stands, and why.
+type Withdrawal struct {
+	EventID string
+	// Successors are the events that took over its claims, if any.
+	Successors []string
+	Basis      string
+}
+
+// WithdrawEvents appends a revision with the status withdrawn to each event, so
+// that the current state no longer shows it. Nothing is deleted: the earlier
+// revisions, their evidence and their securities stay, and a reading as of a time
+// before the withdrawal still shows the event. An event that is already withdrawn
+// is left alone. It returns how many it withdrew.
+func (db *DB) WithdrawEvents(ctx context.Context, ws []Withdrawal, at time.Time) (int, error) {
+	if len(ws) == 0 {
+		return 0, nil
+	}
+	h, err := db.baseHandle()
+	if err != nil {
+		return 0, err
+	}
+	if at.IsZero() {
+		at = db.now()
+	}
+	tx, err := h.w.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("store: withdraw: %w", err)
+	}
+	defer tx.Rollback()
+	n := 0
+	for _, w := range ws {
+		var rev int
+		var status string
+		err := tx.QueryRowContext(ctx, `SELECT revision, status FROM event_revision WHERE event_id = ? ORDER BY revision DESC LIMIT 1`, w.EventID).Scan(&rev, &status)
+		if errors.Is(err, sql.ErrNoRows) || (err == nil && status == model.StatusWithdrawn) {
+			continue
+		}
+		if err != nil {
+			return 0, fmt.Errorf("store: withdraw: %w", err)
+		}
+		next := rev + 1
+		if _, err := tx.ExecContext(ctx, `INSERT INTO event_revision (event_id, revision, kind, status, title, effective_day, public_ms, recorded_ms,
+				materiality, relevance, lens_version, fingerprint, supersedes)
+			SELECT event_id, ?, kind, ?, title, effective_day, public_ms, ?, materiality, relevance, lens_version, 'withdrawn:' || ?, revision
+			FROM event_revision WHERE event_id = ? AND revision = ?`, next, model.StatusWithdrawn, ms(at), w.Basis, w.EventID, rev); err != nil {
+			return 0, fmt.Errorf("store: withdraw: %w", err)
+		}
+		for _, q := range []string{
+			`INSERT INTO event_security (event_id, revision, security_id, role) SELECT event_id, ?, security_id, role FROM event_security WHERE event_id = ? AND revision = ?`,
+			`INSERT INTO event_evidence (event_id, revision, article_id, source_id, relation) SELECT event_id, ?, article_id, source_id, relation FROM event_evidence WHERE event_id = ? AND revision = ?`,
+			`INSERT INTO event_topic (event_id, revision, topic) SELECT event_id, ?, topic FROM event_topic WHERE event_id = ? AND revision = ?`,
+			`INSERT INTO event_claim (event_id, revision, article_id, assertion_seq, assertion_version, extractor, names)
+				SELECT event_id, ?, article_id, assertion_seq, assertion_version, extractor, names FROM event_claim WHERE event_id = ? AND revision = ?`,
+		} {
+			if _, err := tx.ExecContext(ctx, q, next, w.EventID, rev); err != nil {
+				return 0, fmt.Errorf("store: withdraw: %w", err)
+			}
+		}
+		rel, targets := model.RelationWithdrawn, []string{""}
+		if len(w.Successors) > 0 {
+			rel, targets = model.RelationSuperseded, w.Successors
+		}
+		for _, to := range targets {
+			if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO event_relation (from_event, to_event, relation, basis, recorded_ms) VALUES (?, ?, ?, ?, ?)`,
+				w.EventID, to, rel, w.Basis, ms(at)); err != nil {
+				return 0, fmt.Errorf("store: withdraw: %w", err)
+			}
+		}
+		n++
+	}
+	return n, tx.Commit()
+}
+
+// EventRelations returns the relations recorded for the event, as the source or
+// the target, by the time (zero: now), oldest first.
+func (db *DB) EventRelations(ctx context.Context, eventID string, asOf time.Time) ([]model.EventRelation, error) {
+	h, err := db.baseHandle()
+	if err != nil {
+		return nil, err
+	}
+	bound := int64(1) << 62
+	if !asOf.IsZero() {
+		bound = ms(asOf)
+	}
+	rows, err := h.r.QueryContext(ctx, `SELECT from_event, to_event, relation, basis, recorded_ms FROM event_relation
+		WHERE (from_event = ? OR to_event = ?) AND recorded_ms <= ? ORDER BY seq`, eventID, eventID, bound)
+	if err != nil {
+		return nil, fmt.Errorf("store: relations: %w", err)
+	}
+	defer rows.Close()
+	var out []model.EventRelation
+	for rows.Next() {
+		var r model.EventRelation
+		var at int64
+		if err := rows.Scan(&r.From, &r.To, &r.Relation, &r.Basis, &at); err != nil {
+			return nil, fmt.Errorf("store: relations: %w", err)
+		}
+		r.RecordedAt = fromMS(at)
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// HomeKinds returns, for each event ID that has a history, the kind of its
+// latest revision (withdrawn or not: an ID keeps its meaning for good).
+func (db *DB) HomeKinds(ctx context.Context, eventIDs []string) (map[string]model.EventKind, error) {
+	h, err := db.baseHandle()
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]model.EventKind{}
+	for start := 0; start < len(eventIDs); start += 400 {
+		chunk := eventIDs[start:min(start+400, len(eventIDs))]
+		args := make([]any, len(chunk))
+		for i, id := range chunk {
+			args[i] = id
+		}
+		rows, err := h.r.QueryContext(ctx, `SELECT r.event_id, r.kind FROM event_revision r WHERE r.event_id IN (?`+strings.Repeat(",?", len(chunk)-1)+`)
+			AND r.revision = (SELECT MAX(r2.revision) FROM event_revision r2 WHERE r2.event_id = r.event_id)`, args...)
+		if err != nil {
+			return nil, fmt.Errorf("store: home kinds: %w", err)
+		}
+		for rows.Next() {
+			var id, kind string
+			if err := rows.Scan(&id, &kind); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("store: home kinds: %w", err)
+			}
+			out[id] = model.EventKind(kind)
+		}
+		rows.Close()
 	}
 	return out, nil
 }

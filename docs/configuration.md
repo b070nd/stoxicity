@@ -148,7 +148,7 @@ company:
   quotes_url: ""      # the source's address, for a test (the splits list is read from quotes_url + "splits")
   fundamentals: sec   # where revenue, profit and shares come from: sec (no key) or off
   fundamentals_url: "" # the SEC frames address, for a test (company history from + "companyfacts/", filings from + "archives/")
-  covers_per_cycle: 20 # issuers whose cover page (shares per class) is read in one refresh (0 to 500)
+  covers_per_cycle: 20 # issuers whose cover page (shares per class) is read in one refresh (0 to 500); a failed issuer waits 3 days, doubling to 14
   insiders: sec       # where insider trades come from: sec (the Form 4 filings, no key) or off
   insiders_per_cycle: 300 # unread Form 4 filings read in one refresh (0 to 5000)
   insiders_url: ""    # the SEC web address, for a test (also where `reconcile` reads the daily index)
@@ -285,6 +285,12 @@ article is ingested. Stored articles are not reclassified until a source
 delivers them again.
 
 ## Laya: a second opinion
+
+Laya is an **advisory classifier of articles**, not a claim extractor: it takes no
+part in reading claims or building events (those are rules; see
+[events.md](events.md#the-claim-reader-is-rules-not-a-model)), and in the
+checked-in configuration it is enabled but `apply` is empty, so none of its answers
+changes a score, a watch match or an alert. A test keeps it so.
 
 The keyword lens (stage L0) is the base of every score. With `laya.enabled`
 the pipeline also asks a local [laya](https://huggingface.co/convaiinnovations/laya)

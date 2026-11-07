@@ -302,7 +302,7 @@ var deniable = map[model.EventKind]bool{
 }
 
 // denial matches the words that deny what follows within the next few words.
-var denial = regexp.MustCompile(`\b(?:no|not|never|without|neither|nor|denies|denied|deny|denying|rules? out|ruled out|avoids?|avoided|averts?|averted|unlikely|dismiss\w*)\b(?:\s+[\w'-]+){0,3}\s*$`)
+var denial = regexp.MustCompile(`\b(?:no|not|never|without|neither|nor|denies|denied|deny|denying|rules? out|ruled out|avoids?|avoided|averts?|averted|unlikely|dismiss\w*\s+(?:the\s+|these\s+|those\s+|any\s+)?(?:reports?|claims?|rumou?rs?|allegations?|speculation|suggestions?))\b(?:\s+[\w'-]+){0,3}\s*$`)
 
 // negated says the match that starts at index start is denied by the few words
 // before it, in the same sentence.
@@ -345,6 +345,8 @@ var kindRules = []kindRule{
 	rule(model.EventAcquisition, `\bacqui(?:re|res|red|ring|sition|sitions)\b`),
 	rule(model.EventAcquisition, `\bmergers?\b`),
 	rule(model.EventAcquisition, `\btakeovers?\b`),
+	rule(model.EventAcquisition, `\b(?:agrees?|agreed|agreeing|plans?|planning|seeks?|offers?|offered|moves?|moved|bids?|set|poised|deal|deals)\s+to\s+(?:buy|purchase|take over|take private)\b`),
+	rule(model.EventAcquisition, `\bto be (?:bought|purchased|taken over)\b`),
 	rule(model.EventAnalystTgt, `\bprice targets?\b`),
 	rule(model.EventAnalystTgt, `\b(?:upgrad(?:e|es|ed|ing)|downgrad(?:e|es|ed|ing))\b`),
 	rule(model.EventAnalystTgt, `\binitiat(?:e|es|ed|ing) coverage\b`),

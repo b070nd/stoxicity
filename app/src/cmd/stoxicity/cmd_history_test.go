@@ -55,5 +55,26 @@ func TestFundamentalsClassesReadsTheCoverPageAndValuesTheIssuer(t *testing.T) {
 
 	r := e.run(t, "universe", "fundamentals", "classes", "ACME")
 	r.wantCode(t, exitOK)
-	r.wantOut(t, "read the cover page of ACME", "all shares", "2000000", "mapped (sole-listing", "issuer capitalisation")
+	r.wantOut(t, "read the cover page of ACME", "all shares", "2000000", "mapped (sole-listing", "issuer capitalisation", "completeness: 1 of 1 classes valued", "inputs:", "currency: USD")
+
+	// The coverage report counts every issuer once and says why each missing value is missing.
+	r = e.run(t, "universe", "fundamentals", "coverage", "-list", "all")
+	r.wantCode(t, exitOK)
+	r.wantOut(t, "all issuers", "followed", "VALUED", "UNSUPPORTED", "NOT READ YET", "ACME", "valued")
+	if r := e.run(t, "universe", "fundamentals", "coverage", "-list", "nonsense"); r.code != exitUsage {
+		t.Errorf("an unknown state is a usage error: %d", r.code)
+	}
+
+	// A valuation of a past time says whether it is what was held or a reconstruction,
+	// measures ages at that time, and shows its inputs and completeness.
+	r = e.run(t, "universe", "fundamentals", "classes", "ACME", "-at", "2099-01-01")
+	r.wantCode(t, exitOK)
+	r.wantOut(t, "as known at 2099-01-02", "as this installation had recorded it", "days old", "completeness: 0 of 1 classes valued", "count:", "mapping:")
+	r = e.run(t, "universe", "fundamentals", "classes", "ACME", "-at", "2099-01-01", "-basis", "reconstructed")
+	r.wantCode(t, exitOK)
+	r.wantOut(t, "reconstructed for 2099-01-02", "not what the installation showed then")
+	e.run(t, "universe", "fundamentals", "classes", "ACME", "-at", "2099-01-01", "-basis", "guess").wantCode(t, exitUsage)
+	if r := e.run(t, "universe", "fundamentals", "classes", "ACME", "-at", "2001-01-01"); r.code == exitOK {
+		t.Errorf("nothing was known in 2001:\n%s", r.out)
+	}
 }

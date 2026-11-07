@@ -32,8 +32,8 @@ func (db *DB) PutAssertions(ctx context.Context, results []assertion.Result, at 
 	defer tx.Rollback()
 	st, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO assertion
 		(article_id, version, extractor, seq, kind, method, item, span, span_start, span_end, match, parties, negated, denied, historical, anticipatory,
-		 status, attribution, magnitude, routine, rated, model, prompt_version, truncated, recorded_ms)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		 status, attribution, magnitude, routine, rated, model, prompt_version, truncated, recorded_ms, action)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return 0, fmt.Errorf("store: assertions: %w", err)
 	}
@@ -48,7 +48,7 @@ func (db *DB) PutAssertions(ctx context.Context, results []assertion.Result, at 
 			pj, _ := json.Marshal(ps)
 			res, err := st.ExecContext(ctx, r.ArticleID, r.Version, r.Extractor, a.Seq, string(a.Kind), a.Method, a.Item, a.Span, a.Start, a.End, a.Match, string(pj),
 				b2i(a.Negated), b2i(a.Denied), b2i(a.Historical), b2i(a.Anticipatory), string(a.Status), string(a.Attribution), a.Magnitude, a.Routine, a.Rated,
-				r.Model, r.PromptVersion, b2i(r.Truncated), ms(at))
+				r.Model, r.PromptVersion, b2i(r.Truncated), ms(at), a.Action)
 			if err != nil {
 				return 0, fmt.Errorf("store: assertions: %w", err)
 			}
@@ -75,6 +75,12 @@ func (db *DB) Assertions(ctx context.Context, articleIDs []string, asOf time.Tim
 	if !asOf.IsZero() {
 		limit = ms(asOf)
 	}
+	type readKey struct{ id, version, extractor string }
+	type readEntry struct {
+		r   assertion.Result
+		rec int64
+	}
+	read := map[readKey]*readEntry{}
 	for start := 0; start < len(articleIDs); start += 400 {
 		chunk := articleIDs[start:min(start+400, len(articleIDs))]
 		args := []any{limit}
@@ -82,7 +88,7 @@ func (db *DB) Assertions(ctx context.Context, articleIDs []string, asOf time.Tim
 			args = append(args, id)
 		}
 		rows, err := h.r.QueryContext(ctx, `SELECT article_id, version, extractor, seq, kind, method, item, span, span_start, span_end, match, parties, negated, denied,
-			historical, anticipatory, status, attribution, magnitude, routine, rated, model, prompt_version, truncated
+			historical, anticipatory, status, attribution, magnitude, routine, rated, model, prompt_version, truncated, action, recorded_ms
 			FROM assertion WHERE recorded_ms <= ? AND article_id IN (?`+strings.Repeat(",?", len(chunk)-1)+`) ORDER BY article_id, version, extractor, seq`, args...)
 		if err != nil {
 			return nil, fmt.Errorf("store: assertions: %w", err)
@@ -93,8 +99,9 @@ func (db *DB) Assertions(ctx context.Context, articleIDs []string, asOf time.Tim
 			var kind, status, attr string
 			var neg, den, his, ant, trunc int
 			var mdl, pv string
+			var rec int64
 			if err := rows.Scan(&id, &version, &extractor, &a.Seq, &kind, &a.Method, &a.Item, &a.Span, &a.Start, &a.End, &a.Match, &pj, &neg, &den, &his, &ant,
-				&status, &attr, &a.Magnitude, &a.Routine, &a.Rated, &mdl, &pv, &trunc); err != nil {
+				&status, &attr, &a.Magnitude, &a.Routine, &a.Rated, &mdl, &pv, &trunc, &a.Action, &rec); err != nil {
 				rows.Close()
 				return nil, fmt.Errorf("store: assertions: %w", err)
 			}
@@ -105,16 +112,32 @@ func (db *DB) Assertions(ctx context.Context, articleIDs []string, asOf time.Tim
 			for _, p := range ps {
 				a.Parties = append(a.Parties, assertion.Party{Ticker: p.Ticker, Role: assertion.Role(p.Role), Basis: p.Basis})
 			}
-			r := out[id]
-			r.ArticleID, r.Version, r.Extractor, r.Model, r.PromptVersion, r.Truncated = id, version, extractor, mdl, pv, trunc == 1
-			r.Assertions = append(r.Assertions, a)
-			out[id] = r
+			k := readKey{id, version, extractor}
+			e := read[k]
+			if e == nil {
+				e = &readEntry{rec: rec}
+				e.r.ArticleID, e.r.Version, e.r.Extractor, e.r.Model, e.r.PromptVersion, e.r.Truncated = id, version, extractor, mdl, pv, trunc == 1
+				read[k] = e
+			}
+			e.rec = max(e.rec, rec)
+			e.r.Assertions = append(e.r.Assertions, a)
 		}
 		if err := rows.Err(); err != nil {
 			rows.Close()
 			return nil, fmt.Errorf("store: assertions: %w", err)
 		}
 		rows.Close()
+	}
+	// An article read by several versions of the rules has the claims of the
+	// version recorded last: versions are alternative readings of one text, never
+	// parts of one reading.
+	for k, e := range read {
+		if cur, ok := out[k.id]; ok {
+			if prev := read[readKey{k.id, cur.Version, cur.Extractor}]; prev != nil && (prev.rec > e.rec || (prev.rec == e.rec && cur.Version >= k.version)) {
+				continue
+			}
+		}
+		out[k.id] = e.r
 	}
 	return out, nil
 }

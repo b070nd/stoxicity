@@ -32,7 +32,7 @@ const (
 	defaultEnrichMax = 300
 )
 
-const universeUsage = "expected: status | update [-force] | changes [-days N] [-limit N] | enrich [-all] [-max N] [-force] [-sites=false] [-feeds N] [TICKER...] | feeds [-search N] | quotes [-max N] [TICKER...] | fundamentals [-force] | fundamentals history [-at TIME] [-stored] TICKER | fundamentals classes [-stored] TICKER | insiders [-max N] [TICKER] | find [-limit N] [-days N] [-format table|tsv|json] QUERY... | show TICKER | tag TICKER [-]TAG... | list [ID] | list add|remove ID TICKER..."
+const universeUsage = "expected: status | update [-force] | changes [-days N] [-limit N] | enrich [-all] [-max N] [-force] [-sites=false] [-feeds N] [TICKER...] | feeds [-search N] | quotes [-max N] [TICKER...] | fundamentals [-force] | fundamentals history [-at TIME] [-stored] TICKER | fundamentals classes [-stored] [-at TIME [-basis known|reconstructed]] TICKER | fundamentals coverage [-list STATE,...|all] [-followed] | insiders [-max N] [TICKER] | find [-limit N] [-days N] [-format table|tsv|json] QUERY... | show TICKER | tag TICKER [-]TAG... | list [ID] | list add|remove ID TICKER..."
 
 // cmdUniverse is the reference list of stocks: every company the program
 // knows, searched, tagged and grouped.
@@ -443,7 +443,7 @@ func (a *app) addFigures(ctx context.Context, f *universe.Facts) {
 		f.Num = fundamentals.Figures(fundamentals.Summarize(facts), a.universe().All())
 	}
 	// Market values are class aware: see package valuation.
-	if set, err := valuation.Build(ctx, db, a.universe().All(), time.Time{}, a.now()); err == nil {
+	if set, err := valuation.Build(ctx, db, a.universe().All(), valuation.View{}, a.now()); err == nil {
 		nums, why := set.Figures(a.universe().All())
 		if f.Num == nil {
 			f.Num = map[string]map[string]float64{}

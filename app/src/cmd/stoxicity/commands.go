@@ -36,7 +36,7 @@ func commands() []command {
 		{name: "graph", usage: "graph TICKER [-days 30] [-format text|json|dot]", summary: "the small knowledge graph around one security: events, roles, topics, publishers", bootstrap: true, run: cmdGraph},
 		{name: "export", usage: "export [-out research] [-days 30]", summary: "write the events and securities as Markdown files for Git (only changed files are written)", bootstrap: true, run: cmdExport},
 		{name: "reconcile", usage: "reconcile [-days 7] [-from DAY -to DAY] [-catchup 90] [-enrich] [-facts] [-repair]", summary: "compare the SEC's filing indexes with the stored filings, resumably, and show (or fill in, as backfills) what the live feed missed", bootstrap: true, run: cmdReconcile},
-		{name: "eval", usage: "eval [-days 90] [-threshold X]", summary: "measure the lens against your labels", bootstrap: true, run: cmdEval},
+		{name: "eval", usage: "eval [-days 90] [-threshold X] | eval claims [-json]", summary: "measure the lens against your labels, or the claim reader on the challenge corpus", bootstrap: true, run: cmdEval},
 		{name: "relink", usage: "relink [-days N]", summary: "give stored SEC filings the tickers of their CIK (all of them, or the last N days)", bootstrap: true, run: cmdRelink},
 		{name: "rescore", usage: "rescore [-days N | -from DAY -to DAY]", summary: "score stored articles again with the current lens", bootstrap: true, run: cmdRescore},
 		{name: "classify", usage: "classify [-no-laya] TEXT... | -", summary: "show how one headline is scored and classified; stores nothing", bootstrap: true, run: cmdClassify},

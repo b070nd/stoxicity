@@ -65,7 +65,7 @@ func (db *DB) SignalEvents(ctx context.Context, q SignalQuery) ([]SignalEvent, e
 	}
 	const latest = `WITH latest AS (
 				SELECT r.event_id, r.revision, r.kind, r.title, r.effective_day, r.public_ms, r.materiality FROM event_revision r
-				WHERE r.public_ms >= ? AND r.public_ms < ? AND r.materiality >= ? AND r.recorded_ms <= ?
+				WHERE r.public_ms >= ? AND r.public_ms < ? AND r.materiality >= ? AND r.recorded_ms <= ? AND r.status <> 'withdrawn'
 				  AND r.revision = (SELECT MAX(r2.revision) FROM event_revision r2 WHERE r2.event_id = r.event_id AND r2.recorded_ms <= ?))`
 	args := []any{ms(q.From), ms(q.To), q.MinMateriality, bound, bound}
 	rows, err := h.r.QueryContext(ctx, latest+`

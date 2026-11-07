@@ -117,12 +117,21 @@ type Pick struct {
 // different counts is a conflict and gives that class no count. ok is false
 // when nothing was known.
 func Select(obs []Obs, known time.Time) (Pick, bool) {
+	if known.IsZero() {
+		return SelectView(obs, View{})
+	}
+	return SelectView(obs, View{Mode: ModeKnown, At: known})
+}
+
+// SelectView chooses the counts as the view has them: all of them for the
+// current view; for a known view those stored and public by then; for a
+// reconstructed one those public by then, whenever they were stored.
+func SelectView(obs []Obs, view View) (Pick, bool) {
 	var seen []Obs
 	for _, o := range obs {
-		if !known.IsZero() && (o.Received.After(known) || o.PublicAt().After(known) || o.PublicAt().IsZero()) {
-			continue
+		if view.visible(o) {
+			seen = append(seen, o)
 		}
-		seen = append(seen, o)
 	}
 	if len(seen) == 0 {
 		return Pick{}, false

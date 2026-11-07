@@ -46,7 +46,7 @@ func TestBackingFollowsTheStrongestSource(t *testing.T) {
 	}
 	got := byID(Stories(arts, opt()))
 	for id, want := range map[string]Backing{
-		"primary": BackingPrimary, "corr": BackingCorroborated, "alone": BackingUnconfirmed, "opinion": BackingOpinion,
+		"primary": BackingPrimary, "corr": BackingMultiOutlet, "alone": BackingUnconfirmed, "opinion": BackingOpinion,
 	} {
 		if got[id].Backing != want {
 			t.Errorf("story %q backing = %q, want %q", id, got[id].Backing, want)
@@ -65,7 +65,7 @@ func TestOutletsAreDomainsNotSources(t *testing.T) {
 		t.Errorf("breadth %d sources %d, want 1 outlet and 2 sources", s.Breadth(), len(s.Sources))
 	}
 	if s.Backing != BackingUnconfirmed {
-		t.Errorf("backing = %q: two feeds of one outlet are not corroboration", s.Backing)
+		t.Errorf("backing = %q: two feeds of one outlet are not several outlets", s.Backing)
 	}
 }
 

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"github.com/b070nd/stoxicity/app/src/exchange"
 	"time"
 
 	"github.com/b070nd/stoxicity/app/src/labels"
@@ -98,4 +99,32 @@ type Backend interface {
 // be calculated.
 type Explainer interface {
 	Why() map[string]map[string]string
+}
+
+// CapStanding is where a stock's capitalisation stands: the state in a word, why
+// when there is no figure, the dates of the count and the price it rests on, and
+// whether the figure is the issuer's (every class of stock together) for a
+// security that is one of several classes.
+type CapStanding struct {
+	// State is one of valued, stale, incomplete, unresolved, unsupported, failed or
+	// pending (see package valuation).
+	State              string
+	Reason             string
+	CountDay, PriceDay string
+	// Scope is "issuer" when the figure is the whole issuer's and the security is
+	// one of several classes; empty otherwise.
+	Scope    string
+	Currency string
+}
+
+// Standinger is implemented by a Backend that can say where each capitalisation
+// stands. It reads what is stored and makes no request.
+type Standinger interface {
+	Standings() map[string]CapStanding
+}
+
+// Calendarer is implemented by a Backend that holds the exchange calendar with
+// its dated, sourced overrides. A Backend that does not gets the recurring rules.
+type Calendarer interface {
+	Calendar() exchange.Calendar
 }

@@ -71,23 +71,30 @@ func (db *DB) PutCover(ctx context.Context, r fundamentals.CoverRead) error {
 		}
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO cover_check (cik, checked_ms, accession, problem) VALUES (?, ?, ?, '')
-		ON CONFLICT (cik) DO UPDATE SET checked_ms = excluded.checked_ms, accession = excluded.accession, problem = ''`,
+		ON CONFLICT (cik) DO UPDATE SET checked_ms = excluded.checked_ms, accession = excluded.accession, problem = '',
+		kind = '', failures = 0, next_ms = 0`,
 		r.CIK, ms(at), r.Accession); err != nil {
 		return fmt.Errorf("store: cover: %w", err)
 	}
 	return tx.Commit()
 }
 
-// PutCoverCheck notes an issuer as looked at.
-func (db *DB) PutCoverCheck(ctx context.Context, cik, accession, problem string, at time.Time) error {
+// PutCoverCheck notes an issuer as looked at, with its retry state. An empty
+// accession leaves the stored one.
+func (db *DB) PutCoverCheck(ctx context.Context, cik string, c fundamentals.CoverCheck) error {
 	h, err := db.baseHandle()
 	if err != nil {
 		return err
 	}
-	if _, err := h.w.ExecContext(ctx, `INSERT INTO cover_check (cik, checked_ms, accession, problem) VALUES (?, ?, ?, ?)
-		ON CONFLICT (cik) DO UPDATE SET checked_ms = excluded.checked_ms, problem = excluded.problem,
+	var next int64
+	if !c.Next.IsZero() {
+		next = ms(c.Next)
+	}
+	if _, err := h.w.ExecContext(ctx, `INSERT INTO cover_check (cik, checked_ms, accession, problem, kind, failures, next_ms) VALUES (?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT (cik) DO UPDATE SET checked_ms = excluded.checked_ms, problem = excluded.problem, kind = excluded.kind,
+		failures = excluded.failures, next_ms = excluded.next_ms,
 		accession = CASE WHEN excluded.accession <> '' THEN excluded.accession ELSE cover_check.accession END`,
-		cik, ms(at), accession, problem); err != nil {
+		cik, ms(c.At), c.Accession, truncate(c.Problem, 300), c.Kind, c.Failures, next); err != nil {
 		return fmt.Errorf("store: cover check: %w", err)
 	}
 	return nil
@@ -99,7 +106,7 @@ func (db *DB) CoverChecks(ctx context.Context) (map[string]fundamentals.CoverChe
 	if err != nil {
 		return nil, err
 	}
-	rows, err := h.r.QueryContext(ctx, `SELECT cik, checked_ms, accession, problem FROM cover_check`)
+	rows, err := h.r.QueryContext(ctx, `SELECT cik, checked_ms, accession, problem, kind, failures, next_ms FROM cover_check`)
 	if err != nil {
 		return nil, fmt.Errorf("store: cover checks: %w", err)
 	}
@@ -108,11 +115,14 @@ func (db *DB) CoverChecks(ctx context.Context) (map[string]fundamentals.CoverChe
 	for rows.Next() {
 		var cik string
 		var c fundamentals.CoverCheck
-		var at int64
-		if err := rows.Scan(&cik, &at, &c.Accession, &c.Problem); err != nil {
+		var at, next int64
+		if err := rows.Scan(&cik, &at, &c.Accession, &c.Problem, &c.Kind, &c.Failures, &next); err != nil {
 			return nil, fmt.Errorf("store: cover checks: %w", err)
 		}
 		c.At = fromMS(at)
+		if next > 0 {
+			c.Next = fromMS(next)
+		}
 		out[cik] = c
 	}
 	return out, rows.Err()

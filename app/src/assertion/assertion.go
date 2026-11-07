@@ -31,7 +31,7 @@ import (
 // Version names the extraction rules; ExtractorRules is the extractor that
 // applies them.
 const (
-	Version        = "assert-1"
+	Version        = "assert-2"
 	ExtractorRules = "rules-1"
 )
 
@@ -111,6 +111,11 @@ type Assertion struct {
 	// Magnitude and Routine are phrases of the sentence that make the event
 	// bigger or smaller than its kind alone.
 	Magnitude, Routine string
+	// Action is what the sentence says the company did to the thing the kind
+	// names: suspended, cut, raised or resumed a dividend, authorised or ended a
+	// buyback. The kind says what the event is about; the action says which way it
+	// went. It is empty when the sentence names none.
+	Action string
 	// Rated is the materiality a filing's item states for itself, 0 when the
 	// claim is read from text. It rates the kind of filing, not an amount: a
 	// filing item is evidence that something happened, not proof of its size.
@@ -178,13 +183,16 @@ func Extract(in Input) Result {
 		res.Assertions = append(res.Assertions, filingClaims(in)...)
 	}
 	for _, s := range sentences(text) {
+		if reAddressed.MatchString(lens.Normalized(s.text)) {
+			continue // a sentence that talks to whatever reads it makes no claim about a company
+		}
 		for _, m := range lens.KindMatches(s.text) {
 			if filer && m.Kind != model.EventOther && alreadyHas(res.Assertions, m.Kind) {
 				continue // the filing's own item says this; its prose is not a second claim
 			}
 			a := Assertion{Kind: m.Kind, Method: MethodText, Span: s.text, Start: s.start, End: s.end, Match: m.Text}
 			readContext(&a, s.text, m, in.Published)
-			a.Parties = parties(s.text, a.Kind, in)
+			a.Parties = parties(s.text, a.Kind, in, m)
 			res.Assertions = append(res.Assertions, a)
 		}
 	}
@@ -289,9 +297,9 @@ func sentences(text string) []sentence {
 }
 
 var (
-	reHistorical = regexp.MustCompile(`\b(?:last (?:year|quarter|month|decade)|years? ago|a year ago|previously|formerly|in the past|earlier this year|back in)\b`)
-	reYear       = regexp.MustCompile(`\b(?:in|during|since|from|of|fiscal)\s+(?:(?:early|late|mid)[- ])?(?:(?:january|february|march|april|may|june|july|august|september|october|november|december)\s+)?((?:19|20)\d\d)\b`)
-	reDenied     = regexp.MustCompile(`\b(?:denies|denied|deny|denying|rejects?|rejected|refutes?|refuted|disputes?|disputed|dismisses|dismissed|baseless|unfounded|false claims?|false report)\b`)
+	reHistorical = regexp.MustCompile(`\b(?:last (?:year|quarter|month|decade)|years? ago|a year ago|previously|formerly|in the past|earlier this year|back in|for (?:many |several |the (?:past|last) |some )?(?:years|decades)|over the (?:years|decades)|long[- ](?:running|standing|term)|has long\b|since (?:(?:its|the|his|her|their|an?) )?(?:19|20)\d\d|background)\b`)
+	reYear       = regexp.MustCompile(`\b(?:in|during|since|from|of|fiscal)\s+(?:(?:its|the|his|her|their|an?)\s+)?(?:(?:early|late|mid)[- ])?(?:(?:january|february|march|april|may|june|july|august|september|october|november|december)\s+)?((?:19|20)\d\d)\b`)
+	reDenied     = regexp.MustCompile(`\b(?:denies|denied|deny|denying|rejects?|rejected|refutes?|refuted|disputes?|disputed|dismisses (?:the |these |those |any )?(?:reports?|claims?|rumou?rs?|allegations?|speculation|suggestions?)|dismissed (?:the |these |those |any )?(?:reports?|claims?|rumou?rs?|allegations?|speculation|suggestions?)|baseless|unfounded|false claims?|false report|is (?:false|untrue|incorrect|inaccurate|wrong|not true)|are (?:false|untrue|incorrect|inaccurate)|not true|untrue|without merit)\b`)
 	// reRetracted marks a sentence that restates an earlier story only to withdraw
 	// it ("An earlier version of this story said ..."): the claim it repeats is not
 	// a new event, so it is recorded as denied.
@@ -304,6 +312,13 @@ var (
 	reCompleted = regexp.MustCompile(`\b(?:completed|completes|closed|closes|finali[sz]ed|has (?:acquired|bought|sold)|resigned|resigns|filed|files)\b`)
 	reBeat      = regexp.MustCompile(`\bahead of (?:the )?(?:expectations?|estimates?|forecasts?|consensus|schedule|analysts?|street|guidance|plan)\b`)
 	reClause    = regexp.MustCompile(`[,;:]| - | \(`)
+	// reAddressed marks a sentence written to the reader of the text, human or
+	// program, rather than about a company: "ignore previous instructions",
+	// "classify this article as ...". Such a sentence is the one place text written
+	// by anyone can try to steer the reading, so it is not read for claims. This is
+	// a narrow filter of known phrasings and not a defence in itself: the rules take
+	// no instruction from text, and what they read is only ever claims.
+	reAddressed = regexp.MustCompile(`\b(?:(?:ignore|disregard|forget|override)\b.{0,40}\b(?:previous|prior|above|earlier|all)\b.{0,30}\b(?:instructions?|prompts?|rules?|guidelines?)|system prompt|as an? (?:ai|language model|assistant)|note to (?:the )?(?:classifier|model|assistant|ai|reader|analyst)|(?:you|we) (?:must|should|are to|need to|have to) (?:classify|label|rate|score|output|mark|treat|report)|(?:classify|label|rate|score|mark|treat) (?:this|the|it) (?:article|story|text|item|news|as)\b)`)
 )
 
 // readContext fills what the sentence says about the claim: negation, denial,
@@ -348,13 +363,116 @@ func readContext(a *Assertion, raw string, m lens.KindMatch, published time.Time
 	case reOwn.MatchString(norm):
 		a.Attribution = OwnStatement
 	}
-	a.Magnitude = lens.Magnitude(raw)
+	// Size and routine phrases belong to the clause the keyword is in: "record
+	// earnings, CEO to step down" does not make the departure a record event.
+	cl := clauseAround(norm, m.At, m.At+len(m.Text))
+	a.Magnitude = lens.Magnitude(cl)
 	if !lens.Noise(a.Kind) {
-		a.Routine = lens.Routine(raw)
+		a.Routine = lens.Routine(cl)
 	}
+	a.Action = actionIn(a.Kind, cl)
 }
 
+// clauseSep ends a clause: a comma that is not a thousands separator, a semicolon
+// or colon, a dash with spaces, a bracket, or a joining word.
+var clauseSep = regexp.MustCompile(`(?:[;:(]|\s[-\x{2013}\x{2014}]\s|,(?:\s|$)|\s(?:and|but|while|as|after|with|plus)\s)`)
+
+// clauseAround is the part of norm, the normalised sentence, that holds the
+// keyword at [at, end).
+func clauseAround(norm string, at, end int) string {
+	lo, hi := clauseSpan(norm, at, end)
+	return norm[lo:hi]
+}
+
+// clauseSpan is the byte range of the clause that holds [at, end) in s.
+func clauseSpan(s string, at, end int) (lo, hi int) {
+	at, end = min(max(at, 0), len(s)), min(max(end, 0), len(s))
+	lo, hi = 0, len(s)
+	for _, loc := range clauseSep.FindAllStringIndex(s, -1) {
+		if loc[1] <= at {
+			lo = loc[1]
+		}
+		if loc[0] >= end && hi == len(s) {
+			hi = loc[0]
+		}
+	}
+	if lo > hi {
+		return 0, len(s)
+	}
+	return lo, hi
+}
+
+// keywordAt finds where the matched words stand in the raw sentence: the
+// occurrence nearest to where the normalised text had them.
+func keywordAt(raw string, m lens.KindMatch) (int, int) {
+	lower := strings.ToLower(raw)
+	best := -1
+	for from := 0; from < len(lower); {
+		i := strings.Index(lower[from:], m.Text)
+		if i < 0 {
+			break
+		}
+		i += from
+		if best < 0 || abs(i-m.At) < abs(best-m.At) {
+			best = i
+		}
+		from = i + 1
+	}
+	if best < 0 {
+		return 0, len(raw)
+	}
+	return best, best + len(m.Text)
+}
+
+func abs(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
+}
+
+// actionRules say, for the kinds that have a direction, which verbs give it.
+// adjust moves the claim's materiality: ending a dividend or a buyback departs
+// from the pattern the market priced in.
+var actionRules = map[model.EventKind][]struct {
+	name   string
+	re     *regexp.Regexp
+	adjust int
+}{
+	model.EventDividend: {
+		{"suspended", regexp.MustCompile(`\b(?:suspend\w*|omit\w*|eliminat\w*|halt\w*|scrap\w*|skip\w*|withh[eo]ld\w*|stops?|stopp\w*|ends?|ended|axe[sd]?)\b`), 1},
+		{"cut", regexp.MustCompile(`\b(?:cut|cuts|cutting|reduc\w*|lower\w*|slash\w*|trim\w*)\b`), 1},
+		{"resumed", regexp.MustCompile(`\b(?:resum\w*|reinstat\w*|restor\w*)\b`), 0},
+		{"raised", regexp.MustCompile(`\b(?:rais\w*|increas\w*|boost\w*|hik\w*|lift\w*)\b`), 0},
+		{"initiated", regexp.MustCompile(`\b(?:initiat\w*|institut\w*|launch\w*|first[- ]ever)\b`), 0},
+		{"declared", regexp.MustCompile(`\b(?:declar\w*|announc\w*|approv\w*|authori[sz]\w*|pays?|paid)\b`), 0},
+	},
+	model.EventBuyback: {
+		{"ended", regexp.MustCompile(`\b(?:suspend\w*|terminat\w*|halt\w*|scrap\w*|end\w*|cancel\w*|stops?|stopp\w*)\b`), 1},
+		{"expanded", regexp.MustCompile(`\b(?:expand\w*|increas\w*|boost\w*|rais\w*|add\w*)\b`), 0},
+		{"authorised", regexp.MustCompile(`\b(?:authori[sz]\w*|announc\w*|approv\w*|launch\w*|new)\b`), 0},
+	},
+}
+
+// actionIn finds the action of the kind in the clause ("" when none).
+func actionIn(kind model.EventKind, clause string) string {
+	for _, r := range actionRules[kind] {
+		if r.re.MatchString(clause) {
+			return r.name
+		}
+	}
+	return ""
+}
+
+// reWhenAnnounced is the modifier that dates an earlier announcement ("announced
+// last year"). When the sentence reports the completion, it dates the announcement
+// and not the event.
+var reWhenAnnounced = regexp.MustCompile(`\b(?:announced|agreed|signed|disclosed|unveiled|proposed|first reported)\s+(?:\w+\s+){0,2}?(?:last (?:year|quarter|month)|in (?:19|20)\d\d|\w+ (?:years?|months?) ago)\b`)
+
 func historical(norm string, published time.Time) bool {
+	if reCompleted.MatchString(norm) {
+		norm = reWhenAnnounced.ReplaceAllString(norm, "")
+	}
 	if reHistorical.MatchString(norm) {
 		return true
 	}
@@ -383,7 +501,7 @@ var (
 )
 
 // parties finds the companies a sentence is about and their roles.
-func parties(raw string, kind model.EventKind, in Input) []Party {
+func parties(raw string, kind model.EventKind, in Input, m lens.KindMatch) []Party {
 	type hit struct {
 		ticker string
 		at     int
@@ -414,6 +532,34 @@ func parties(raw string, kind model.EventKind, in Input) []Party {
 	if len(hits) == 0 {
 		return nil
 	}
+	// A claim is about the companies of its own clause. "Acme raises its dividend
+	// and agrees to buy Bolt" says one thing about Acme and another about Acme and
+	// Bolt; Bolt has no part in the dividend. A company named before the clause is
+	// carried into it as the subject when the clause names no subject of its own.
+	carried := false
+	if basis == "named" {
+		ks, ke := keywordAt(raw, m)
+		lo, hi := clauseSpan(strings.ToLower(raw), ks, ke)
+		var inside []hit
+		var before []hit
+		for _, h := range hits {
+			switch {
+			case h.at >= lo && h.at < hi:
+				inside = append(inside, h)
+			case h.at < lo:
+				before = append(before, h)
+			}
+		}
+		switch {
+		case len(inside) == 0 && len(before) > 0:
+			inside, carried = []hit{before[0]}, true
+		case len(inside) > 0 && inside[0].at > lo && len(before) > 0 && relational[kind]:
+			inside, carried = append([]hit{before[0]}, inside...), true
+		}
+		if len(inside) > 0 {
+			hits = inside
+		}
+	}
 	subject := 0
 	if rePassive.MatchString(lens.Normalized(raw)) && len(hits) > 1 {
 		subject = len(hits) - 1 // "Bolt is to be acquired by Acme": the party after "by" acts
@@ -428,6 +574,9 @@ func parties(raw string, kind model.EventKind, in Input) []Party {
 			role = Counterparty
 		}
 		out[i] = Party{Ticker: h.ticker, Role: role, Basis: basis}
+		if carried && i == 0 {
+			out[i].Basis = "carried from earlier in the sentence"
+		}
 	}
 	return out
 }

@@ -46,6 +46,9 @@ type IndexDay struct {
 	Listed    int // filings the index listed that day, all forms
 	Attempts  int
 	LastError string
+	// Forms is the selection of forms the day was read for (sorted, comma
+	// separated); empty when it was not recorded.
+	Forms string
 }
 
 // DayResult is what one reading of a day found.
@@ -57,6 +60,8 @@ type DayResult struct {
 	Err    string
 	Refs   []FilingRef
 	Listed int
+	// Forms is the selection of forms the wanted filings were taken for.
+	Forms string
 }
 
 // PutFilingDay stores the wanted filings of one day and the outcome of reading
@@ -91,8 +96,8 @@ func (db *DB) PutFilingDay(ctx context.Context, r DayResult, at time.Time) (adde
 	err = tx.QueryRowContext(ctx, `SELECT status FROM filing_index_day WHERE day = ?`, r.Day).Scan(&cur)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
-		_, err = tx.ExecContext(ctx, `INSERT INTO filing_index_day (day, read_ms, listed, missing, status, basis, source, attempts, last_attempt_ms, last_error)
-			VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`, r.Day, ms(at), r.Listed, r.Status == DayUnpublished, string(r.Status), r.Basis, r.Source, ms(at), r.Err)
+		_, err = tx.ExecContext(ctx, `INSERT INTO filing_index_day (day, read_ms, listed, missing, status, basis, source, attempts, last_attempt_ms, last_error, forms)
+			VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`, r.Day, ms(at), r.Listed, r.Status == DayUnpublished, string(r.Status), r.Basis, r.Source, ms(at), r.Err, r.Forms)
 	case err != nil:
 		return 0, fmt.Errorf("store: filing index: %w", err)
 	case DayStatus(cur).Resolved() && !r.Status.Resolved():
@@ -100,8 +105,8 @@ func (db *DB) PutFilingDay(ctx context.Context, r DayResult, at time.Time) (adde
 		_, err = tx.ExecContext(ctx, `UPDATE filing_index_day SET attempts = attempts + 1, last_attempt_ms = ?, last_error = ? WHERE day = ?`, ms(at), r.Err, r.Day)
 	default:
 		_, err = tx.ExecContext(ctx, `UPDATE filing_index_day SET read_ms = ?, listed = ?, missing = ?, status = ?, basis = ?, source = ?,
-			attempts = attempts + 1, last_attempt_ms = ?, last_error = ? WHERE day = ?`,
-			ms(at), r.Listed, r.Status == DayUnpublished, string(r.Status), r.Basis, r.Source, ms(at), r.Err, r.Day)
+			attempts = attempts + 1, last_attempt_ms = ?, last_error = ?, forms = ? WHERE day = ?`,
+			ms(at), r.Listed, r.Status == DayUnpublished, string(r.Status), r.Basis, r.Source, ms(at), r.Err, r.Forms, r.Day)
 	}
 	if err != nil {
 		return 0, fmt.Errorf("store: filing index: %w", err)
@@ -123,7 +128,7 @@ func (db *DB) IndexDays(ctx context.Context, from string, to ...string) (map[str
 	if len(to) > 0 && to[0] != "" {
 		upper = to[0]
 	}
-	rows, err := h.r.QueryContext(ctx, `SELECT day, read_ms, listed, status, basis, source, attempts, last_error FROM filing_index_day WHERE day >= ? AND day <= ?`, from, upper)
+	rows, err := h.r.QueryContext(ctx, `SELECT day, read_ms, listed, status, basis, source, attempts, last_error, forms FROM filing_index_day WHERE day >= ? AND day <= ?`, from, upper)
 	if err != nil {
 		return nil, fmt.Errorf("store: filing index: %w", err)
 	}
@@ -133,7 +138,7 @@ func (db *DB) IndexDays(ctx context.Context, from string, to ...string) (map[str
 		var d IndexDay
 		var read int64
 		var status string
-		if err := rows.Scan(&d.Day, &read, &d.Listed, &status, &d.Basis, &d.Source, &d.Attempts, &d.LastError); err != nil {
+		if err := rows.Scan(&d.Day, &read, &d.Listed, &status, &d.Basis, &d.Source, &d.Attempts, &d.LastError, &d.Forms); err != nil {
 			return nil, fmt.Errorf("store: filing index: %w", err)
 		}
 		d.Status, d.Read = DayStatus(status), fromMS(read)

@@ -159,6 +159,7 @@ func (p *Pipeline) Ingest(ctx context.Context, src model.Source, articles []mode
 		p.resolveTickers(&batch[i])
 		sector := p.classify(&batch[i])
 		batch[i].Score = p.cfg.Lens.Score(batch[i])
+		p.present(&batch[i])
 		p.applyClassification(&batch[i], sector)
 	}
 	p.enrich(ctx, batch)
@@ -448,6 +449,7 @@ func (p *Pipeline) Rescore(ctx context.Context, from, to time.Time) (int, error)
 			p.resolveTickers(&batch[i])
 			sector := p.classify(&batch[i])
 			batch[i].Score = p.cfg.Lens.Score(batch[i])
+			p.present(&batch[i])
 			p.applyClassification(&batch[i], sector)
 		}
 		if asking {

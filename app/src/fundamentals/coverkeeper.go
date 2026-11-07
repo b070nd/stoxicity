@@ -27,7 +27,31 @@ const (
 	// is how long one that failed is left.
 	DefaultCoverAge   = 30 * 24 * time.Hour
 	DefaultCoverRetry = 3 * 24 * time.Hour
+	// MaxCoverBackoff caps the wait after repeated failures.
+	MaxCoverBackoff = 14 * 24 * time.Hour
 )
+
+// Kinds of a cover check.
+const (
+	// CheckFailed: the request or the parsing failed; Problem says how.
+	CheckFailed = "failed"
+	// CheckNoCover: the recent reports have no machine-readable cover page. That is
+	// not an error: this method does not support the issuer.
+	CheckNoCover = "nocover"
+)
+
+// Backoff is how long an issuer is left after its n-th consecutive failure: the
+// retry wait doubled for each failure after the first, up to MaxCoverBackoff.
+func Backoff(retry time.Duration, failures int) time.Duration {
+	if retry <= 0 {
+		retry = DefaultCoverRetry
+	}
+	d := retry
+	for i := 1; i < failures && d < MaxCoverBackoff; i++ {
+		d *= 2
+	}
+	return min(d, MaxCoverBackoff)
+}
 
 // CoverRead is the cover page of one report, with the public availability of the
 // report as the SEC's record of the company gives it.
@@ -46,6 +70,12 @@ type CoverCheck struct {
 	At        time.Time
 	Accession string // the report the last good reading took, empty if it found none
 	Problem   string
+	// Kind is "" when the last look worked, otherwise CheckFailed or CheckNoCover.
+	Kind string
+	// Failures counts the failed looks in a row; Next is the earliest time the
+	// issuer is looked at again (zero: by the ordinary age rule).
+	Failures int
+	Next     time.Time
 }
 
 // CoverCandidate is an issuer whose cover page is wanted.
@@ -66,9 +96,10 @@ type CoverStore interface {
 	CoverChecks(ctx context.Context) (map[string]CoverCheck, error)
 	// PutCover stores the share counts of a report and notes the issuer as read.
 	PutCover(ctx context.Context, r CoverRead) error
-	// PutCoverCheck notes an issuer as looked at: problem says why nothing was
-	// stored, and is empty when the issuer simply has no newer report.
-	PutCoverCheck(ctx context.Context, cik, accession, problem string, at time.Time) error
+	// PutCoverCheck notes an issuer as looked at. c.Problem says why nothing was
+	// stored and is empty when the issuer simply has no newer report; an empty
+	// c.Accession leaves the stored one.
+	PutCoverCheck(ctx context.Context, cik string, c CoverCheck) error
 }
 
 // CoverReport says what one refresh did.
@@ -111,8 +142,11 @@ func (k *CoverKeeper) now() time.Time {
 }
 
 // Due returns the candidates that are due for a reading, the most wanted first:
-// issuers never read, then priority issuers, then those with several listings,
-// then the longest unread.
+// the issuers the user follows, then those never read, then those with several
+// listings (only the cover page tells their classes apart), then the longest
+// unread. An issuer that failed is left until its persisted retry time, which
+// grows with each failure in a row; the whole universe is walked in this order,
+// a budget at a time, and a restart continues from the stored state.
 func Due(cands []CoverCandidate, checks map[string]CoverCheck, now time.Time, maxAge, retry time.Duration) []CoverCandidate {
 	if maxAge <= 0 {
 		maxAge = DefaultCoverAge
@@ -130,6 +164,10 @@ func Due(cands []CoverCandidate, checks map[string]CoverCheck, now time.Time, ma
 		ck, ok := checks[c.CIK]
 		switch {
 		case !ok:
+		case !ck.Next.IsZero():
+			if now.Before(ck.Next) {
+				continue
+			}
 		case ck.Problem != "" && now.Sub(ck.At) >= retry:
 		case ck.Problem == "" && now.Sub(ck.At) >= maxAge:
 		default:
@@ -141,13 +179,13 @@ func Due(cands []CoverCandidate, checks map[string]CoverCheck, now time.Time, ma
 		_, aread := checks[a.CIK]
 		_, bread := checks[b.CIK]
 		switch {
-		case aread != bread:
-			if !aread {
+		case a.Priority != b.Priority:
+			if a.Priority {
 				return -1
 			}
 			return 1
-		case a.Priority != b.Priority:
-			if a.Priority {
+		case aread != bread:
+			if !aread {
 				return -1
 			}
 			return 1
@@ -194,7 +232,7 @@ func (k *CoverKeeper) Refresh(ctx context.Context, budget int) (CoverReport, err
 				return rep, err
 			}
 			rep.Bad++
-			if perr := k.Store.PutCoverCheck(ctx, c.CIK, checks[c.CIK].Accession, err.Error(), k.now()); perr != nil {
+			if perr := k.Store.PutCoverCheck(ctx, c.CIK, k.failed(checks[c.CIK], err)); perr != nil {
 				return rep, perr
 			}
 			continue
@@ -219,8 +257,8 @@ func (k *CoverKeeper) Read(ctx context.Context, cik string) (rep CoverReport, st
 	rep.Asked = 1
 	stored, err = k.readOne(ctx, CoverCandidate{CIK: cik}, checks[cik], &rep)
 	if err != nil {
-		if !stopsEverything(err) {
-			_ = k.Store.PutCoverCheck(ctx, cik, checks[cik].Accession, err.Error(), k.now())
+		if !stopsEverything(err) && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			_ = k.Store.PutCoverCheck(ctx, cik, k.failed(checks[cik], err))
 		}
 		return rep, false, err
 	}
@@ -228,6 +266,17 @@ func (k *CoverKeeper) Read(ctx context.Context, cik string) (rep CoverReport, st
 		err = k.Map(ctx, cik, k.now())
 	}
 	return rep, stored, err
+}
+
+// failed is the check that records a failed look: one more failure in a row, and
+// the time before which the issuer is not asked again.
+func (k *CoverKeeper) failed(last CoverCheck, err error) CoverCheck {
+	n := last.Failures + 1
+	if last.Kind != CheckFailed {
+		n = 1
+	}
+	now := k.now()
+	return CoverCheck{At: now, Accession: last.Accession, Problem: err.Error(), Kind: CheckFailed, Failures: n, Next: now.Add(Backoff(k.Retry, n))}
 }
 
 func stopsEverything(err error) bool {
@@ -258,7 +307,7 @@ func (k *CoverKeeper) readOne(ctx context.Context, c CoverCandidate, last CoverC
 		}
 		if f.Accession == last.Accession && last.Problem == "" {
 			rep.Unchanged++
-			return false, k.Store.PutCoverCheck(ctx, c.CIK, f.Accession, "", k.now())
+			return false, k.Store.PutCoverCheck(ctx, c.CIK, CoverCheck{At: k.now(), Accession: f.Accession})
 		}
 		classes, err := k.cover(ctx, f.DocumentURL(k.Archives, c.CIK), rep)
 		if err != nil {
@@ -275,7 +324,13 @@ func (k *CoverKeeper) readOne(ctx context.Context, c CoverCandidate, last CoverC
 		return true, k.Store.PutCover(ctx, r)
 	}
 	rep.Empty++
-	return false, k.Store.PutCoverCheck(ctx, c.CIK, "", "no annual or quarterly report with a machine-readable cover page among the recent filings", k.now())
+	now := k.now()
+	maxAge := k.MaxAge
+	if maxAge <= 0 {
+		maxAge = DefaultCoverAge
+	}
+	return false, k.Store.PutCoverCheck(ctx, c.CIK, CoverCheck{At: now, Kind: CheckNoCover, Next: now.Add(maxAge),
+		Problem: "no annual or quarterly report with a machine-readable cover page among the recent filings"})
 }
 
 // cover reads the cover page of the document at url: from its start when that is

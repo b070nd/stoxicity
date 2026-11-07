@@ -38,6 +38,10 @@ func exchangeChips(b *builder, d Data) {
 	// the arrows.
 	var line []Chip
 	width := len(chipLabel)
+	limit := cloudWidth
+	if d.Width > 0 {
+		limit = d.Width
+	}
 	flush := func() {
 		if len(line) > 0 {
 			texts := make([]string, len(line))
@@ -50,7 +54,7 @@ func exchangeChips(b *builder, d Data) {
 		}
 	}
 	for _, c := range chips {
-		if width+len(c.Text)+4 > cloudWidth {
+		if width+len(c.Text)+4 > limit {
 			flush()
 		}
 		line = append(line, c)
@@ -112,7 +116,7 @@ func (m *Model) chipKey(key string) bool {
 	case "down", "ctrl+n", "esc":
 		m.chipFocus = false
 	case "up", "ctrl+p":
-		// the top of the screen: nothing above
+		m.chipFocus, m.navFocus = false, true
 	default:
 		m.chipFocus = false
 		return false

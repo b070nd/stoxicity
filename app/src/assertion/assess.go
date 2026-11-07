@@ -67,6 +67,10 @@ var importance = []model.EventKind{
 	model.EventInsiderBuy, model.EventInsiderSell,
 }
 
+// Rank orders kinds by importance, the most important first. It is used only to
+// break ties between claims of the same materiality.
+func Rank(k model.EventKind) int { return rank(k) }
+
 func rank(k model.EventKind) int {
 	if i := slices.Index(importance, k); i >= 0 {
 		return i
@@ -99,6 +103,12 @@ func (a Assertion) Materiality() (int, string) {
 	if a.Status == Proposed {
 		m--
 		parts = append(parts, "only proposed -1")
+	}
+	for _, r := range actionRules[a.Kind] {
+		if r.name == a.Action && r.adjust != 0 {
+			m += r.adjust
+			parts = append(parts, fmt.Sprintf("%s: a departure from the usual pattern %+d", a.Action, r.adjust))
+		}
 	}
 	return min(max(m, 1), 5), strings.Join(parts, ", ")
 }

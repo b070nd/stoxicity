@@ -129,3 +129,89 @@ func TestSecurityLabelsAreEffectiveDated(t *testing.T) {
 		t.Error("the reused ticker resolved to the same security for two different companies")
 	}
 }
+
+func TestAWithdrawnEventLeavesTheCurrentStateButNotTheHistory(t *testing.T) {
+	db, _ := openTemp(t)
+	ctx := context.Background()
+	e := ev("evt_w", "Acme to buy Beta", 4, map[string]model.Role{"ACME": model.RoleSubject}, model.Evidence{ArticleID: "a1", SourceID: "wire"})
+	e.Claims = []model.EventClaim{{ArticleID: "a1", Seq: 0, Version: "assert-2", Extractor: "rules", Names: true}}
+	at := t0.Add(time.Hour)
+	if _, err := db.PutEvents(ctx, []EventInput{e}, at); err != nil {
+		t.Fatal(err)
+	}
+	if live, _ := db.LiveEvents(ctx, time.Time{}); len(live) != 1 || live[0].EventID != "evt_w" || len(live[0].Articles) != 1 {
+		t.Fatalf("live = %+v", live)
+	}
+	later := at.Add(time.Hour)
+	n, err := db.WithdrawEvents(ctx, []Withdrawal{{EventID: "evt_w", Basis: "the claim is denied"}, {EventID: "evt_unknown"}}, later)
+	if err != nil || n != 1 {
+		t.Fatalf("withdraw = %d, %v: only an event that exists is withdrawn", n, err)
+	}
+	// A second withdrawal changes nothing.
+	if n, _ := db.WithdrawEvents(ctx, []Withdrawal{{EventID: "evt_w", Basis: "again"}}, later.Add(time.Minute)); n != 0 {
+		t.Errorf("a withdrawn event was withdrawn again (%d)", n)
+	}
+	if live, _ := db.LiveEvents(ctx, time.Time{}); len(live) != 0 {
+		t.Errorf("a withdrawn event is still live: %+v", live)
+	}
+	// As of a time before the withdrawal the event stood.
+	if live, _ := db.LiveEvents(ctx, at.Add(time.Minute)); len(live) != 1 {
+		t.Errorf("as of before the withdrawal: %+v", live)
+	}
+	hist, err := db.EventHistory(ctx, "evt_w")
+	if err != nil || len(hist) != 2 || hist[1].Status != model.StatusWithdrawn || hist[1].Supersedes != 1 || len(hist[1].Evidence) != 1 || len(hist[1].Claims) != 1 {
+		t.Fatalf("history keeps the evidence and claims: %+v, %v", hist, err)
+	}
+	if now, _ := db.SecurityTimeline(ctx, "ACME", time.Time{}, 10); len(now) != 0 {
+		t.Errorf("a withdrawn event is on the timeline: %+v", now)
+	}
+	if then, _ := db.SecurityTimeline(ctx, "ACME", at.Add(time.Minute), 10); len(then) != 1 {
+		t.Errorf("the timeline as of before the withdrawal = %+v", then)
+	}
+	rels, err := db.EventRelations(ctx, "evt_w", time.Time{})
+	if err != nil || len(rels) != 1 || rels[0].Relation != model.RelationWithdrawn {
+		t.Errorf("relations = %+v, %v", rels, err)
+	}
+	if rels, _ := db.EventRelations(ctx, "evt_w", at.Add(time.Minute)); len(rels) != 0 {
+		t.Errorf("a relation recorded later shows in an earlier reading: %+v", rels)
+	}
+	if hk, _ := db.HomeKinds(ctx, []string{"evt_w", "evt_none"}); hk["evt_w"] != model.EventAcquisition || len(hk) != 1 {
+		t.Errorf("home kinds = %v", hk)
+	}
+}
+
+func TestACompleteDerivationReplacesOnlyWhatItLookedAt(t *testing.T) {
+	db, _ := openTemp(t)
+	ctx := context.Background()
+	first := ev("evt_c", "Acme buys Beta", 4, map[string]model.Role{"ACME": model.RoleSubject, "BETA": model.RoleCounterparty},
+		model.Evidence{ArticleID: "a1", SourceID: "wire"}, model.Evidence{ArticleID: "a2", SourceID: "other"})
+	at := t0.Add(time.Hour)
+	db.PutEvents(ctx, []EventInput{first}, at)
+
+	// A complete derivation that looked at only a1 cannot say a2 is gone.
+	partial := ev("evt_c", "Acme buys Beta", 4, map[string]model.Role{"ACME": model.RoleSubject}, model.Evidence{ArticleID: "a1", SourceID: "wire"})
+	partial.Complete, partial.Scope = true, map[string]bool{"a1": true}
+	db.PutEvents(ctx, []EventInput{partial}, at.Add(time.Hour))
+	hist, _ := db.EventHistory(ctx, "evt_c")
+	if last := hist[len(hist)-1]; len(last.Evidence) != 2 || len(last.Securities) != 2 {
+		t.Fatalf("an article that was not looked at lost its evidence: %+v", last)
+	}
+
+	// One that looked at every article replaces: Beta is no longer part of it.
+	whole := ev("evt_c", "Acme buys Beta", 4, map[string]model.Role{"ACME": model.RoleSubject}, model.Evidence{ArticleID: "a1", SourceID: "wire"})
+	whole.Complete, whole.Scope = true, map[string]bool{"a1": true, "a2": true}
+	db.PutEvents(ctx, []EventInput{whole}, at.Add(2*time.Hour))
+	hist, _ = db.EventHistory(ctx, "evt_c")
+	last := hist[len(hist)-1]
+	if len(last.Evidence) != 1 || len(last.Securities) != 1 || last.Securities[0].Ticker == "" && last.Securities[0].SecurityID == "" {
+		t.Fatalf("a derivation that saw everything should replace: %+v", last)
+	}
+	// Repeating it is not a new revision, and the earlier revisions stay.
+	n := len(hist)
+	if w, _ := db.PutEvents(ctx, []EventInput{whole}, at.Add(3*time.Hour)); w != 0 {
+		t.Errorf("a repeated rebuild wrote %d revisions", w)
+	}
+	if hist, _ = db.EventHistory(ctx, "evt_c"); len(hist) != n || len(hist[0].Evidence) != 2 {
+		t.Errorf("history after a repeat: %d revisions, first has %d evidence", len(hist), len(hist[0].Evidence))
+	}
+}

@@ -1,17 +1,15 @@
 package tui
 
-// The shell draws, above every screen, a watch bar: one tab per watch of the
-// tenant with its unread badge, the current one highlighted. tab, shift+tab
-// and the digits switch watch and keep the current screen (see
-// nav.Stack.SwitchWatch), so comparing a topic across watches is one keypress.
+// The shell draws section navigation, news/watch/exchange filters, source
+// meters, and one breadcrumb/title line. Tab cycles sections; F6 gives the
+// header the arrows. Ctrl+Tab and the digits switch watch and keep the screen.
 // Loading a watch's screen marks its hits as seen (Backend.MarkSeen).
 //
 // Build makes the body of each route. Every detail screen has the same layout
 // rules: a summary on top, the timeline (bars per day, then events), the tag
 // cloud, and tables whose rows open other routes.
 //
-//	nav.Home     the digest: top relevant articles, domain table, topics,
-//	             stocks, tag cloud, 14-day timeline
+//	nav.Home     the News feed, newest first, with an activity timeline
 //	nav.Stocks   stocks seen in relevant news, by mentions, with materiality and tone
 //	nav.Stock    summary, tone and materiality by week, timeline, event kinds,
 //	             top domains, topics, articles

@@ -29,7 +29,6 @@ var (
 	styleTab    = lipgloss.NewStyle().Reverse(true).Bold(true)
 	styleHot    = lipgloss.NewStyle().Bold(true).Underline(true) // a key's letter inside its word
 	styleHead   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
-	styleFresh  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("10"))
 	cloud       = [...]lipgloss.Style{
 		lipgloss.NewStyle().Faint(true),
 		lipgloss.NewStyle(),
@@ -110,7 +109,12 @@ func (m *Model) render() string {
 		body = append(body, "")
 	}
 	body = body[:h]
-	lines := []string{m.watchBar(), m.meterLine(), m.crumbs()}
+	if m.mode == modeFilter && len(m.suggestions) > 0 {
+		suggestions := m.suggestionLines()
+		n := min(len(suggestions), max(h-1, 0))
+		copy(body[h-n:], suggestions[:n])
+	}
+	lines := []string{m.watchBar(), m.scopeLine(), m.meterLine(), m.crumbs()}
 	lines = append(lines, body...)
 	lines = append(lines, m.filterLine(), m.statusLine())
 	for i, l := range lines {
@@ -128,9 +132,8 @@ var screenTabs = []struct {
 	key   string
 	kinds []nav.Kind
 }{
-	{"Home", "h", []nav.Kind{nav.Home}},
-	{"Stocks", "s", []nav.Kind{nav.Stocks}},
-	{"Companies", "c", []nav.Kind{nav.Companies}},
+	{"News", "n", []nav.Kind{nav.Home, nav.Search, nav.Day}},
+	{"Stocks", "s", []nav.Kind{nav.Stocks, nav.Companies, nav.Stock}},
 	{"Topics", "t", []nav.Kind{nav.Topics}},
 	{"Domains", "d", []nav.Kind{nav.Domains}},
 	{"Exchanges", "e", []nav.Kind{nav.Exchanges}},
@@ -150,16 +153,10 @@ func (m *Model) litTab() string {
 	if len(trail) > 1 {
 		r = trail[1].Route
 	}
-	if r.Kind == nav.Companies && r.Arg == stocksQuery {
-		return "Stocks"
-	}
 	for _, t := range screenTabs {
 		if slices.Contains(t.kinds, r.Kind) {
 			return t.label
 		}
-	}
-	if r.Kind == nav.Companies {
-		return "Companies"
 	}
 	// A detail opened straight from Home belongs to the list it normally sits under.
 	if p, ok := r.Parent(); ok {
@@ -172,36 +169,43 @@ func (m *Model) litTab() string {
 	return ""
 }
 
-// watchBar is one tab per watch with its unread badge, then one per screen.
-// Each tab has its key underlined in the word: the digit of a watch, the letter
-// of a screen.
+// watchBar contains only sections. Watch and relevance are filters below it.
 func (m *Model) watchBar() string {
-	cur := m.stack.Watch()
-	tab := func(label, key string, active bool) string {
-		rest, hot := lipgloss.NewStyle(), styleHot
-		if active {
-			rest, hot = styleTab, styleTab.Underline(true)
-		}
-		return rest.Render(" ") + hotLabel(key, label, rest, hot) + rest.Render(" ")
-	}
-	parts := []string{tab("All news", "", cur == "")}
-	for i, w := range m.watches {
-		label, key := clean(w.Name), ""
-		if i < 9 {
-			key = fmt.Sprint(i + 1)
-			label = key + " " + label
-		}
-		if w.Unread > 0 && w.ID != cur {
-			label += fmt.Sprintf(" (%d)", w.Unread)
-		}
-		parts = append(parts, tab(label, key, w.ID == cur))
-	}
-	parts = append(parts, styleDim.Render(" │"))
+	var parts []string
 	lit := m.litTab()
 	for _, t := range screenTabs {
-		parts = append(parts, tab(t.label, t.key, t.label == lit))
+		style := styleDim
+		if t.label == lit {
+			style = styleTab
+			if m.navFocus {
+				style = style.Foreground(lipgloss.Color("6")).Underline(true)
+			}
+		}
+		parts = append(parts, style.Render(" ")+hotLabel(t.key, t.label, style, style.Underline(true))+style.Render(" "))
 	}
-	return strings.Join(parts, "")
+	// Keep the active section visible when the terminal cannot fit the whole bar.
+	active := 0
+	for i, t := range screenTabs {
+		if t.label == lit {
+			active = i
+		}
+	}
+	start, end := 0, len(parts)
+	for lipgloss.Width(strings.Join(parts[start:end], " ")) > m.width-2 && end-start > 1 {
+		if start < active {
+			start++
+		} else {
+			end--
+		}
+	}
+	left, right := " ", ""
+	if start > 0 {
+		left = "‹"
+	}
+	if end < len(parts) {
+		right = "›"
+	}
+	return left + strings.Join(parts[start:end], " ") + right
 }
 
 // meterLine is the header: how the sources are doing, when the next fetch is
@@ -266,7 +270,16 @@ func (m *Model) crumbs() string {
 	parts := make([]string, len(cs))
 	for i, c := range cs {
 		l := clean(c.Label)
+		if c.Route.Kind == nav.Home {
+			l = "News"
+		}
+		if c.Route.Kind == nav.Companies {
+			l = "Stocks"
+		}
 		if i == len(cs)-1 {
+			if m.scr.Title != "" {
+				l = clean(m.scr.Title)
+			}
 			l = styleBold.Render(l)
 		}
 		parts[i] = l
@@ -277,7 +290,6 @@ func (m *Model) crumbs() string {
 // bodyLines draws the visible rows of the screen.
 func (m *Model) bodyLines() []string {
 	var out []string
-	out = append(out, styleBold.Render(" "+clean(m.scr.Title)))
 	if len(m.scr.Rows) == 0 {
 		if m.scr.Notice != "" {
 			out = append(out, "", styleDim.Render(" "+clean(m.scr.Notice)))
@@ -289,30 +301,37 @@ func (m *Model) bodyLines() []string {
 		at = -1
 	}
 	from, end := m.vp.Window()
+	for i := 0; i < from; i++ {
+		if m.scr.Rows[i].TableHeader {
+			out = append(out, styleHead.Render("  "+m.scr.Rows[i].Text))
+			break
+		}
+	}
 	for i := from; i < end; i++ {
 		row := m.scr.Rows[i]
 		if len(row.Chips) > 0 {
 			out = append(out, m.chipLine(i, row))
 			continue
 		}
-		text := clean(row.Text)
+		text := safeLine(row.Text)
 		mark := " "
 		if t := markable(row); t != "" && m.marks[t] {
 			mark = "●"
 		}
-		if i == at {
-			out = append(out, styleCursor.Render(fit("▸"+mark+text, m.width)))
-			continue
-		}
 		style := row.Style.lip()
 		if m.isFresh(row) {
-			style = styleFresh
+			style = style.Bold(true) // freshness must not turn a negative figure green
+		}
+		lead := " " + mark
+		if i == at && !m.navFocus && !m.chipFocus {
+			style = style.Reverse(true)
+			lead = "▸" + mark
 		}
 		if len(row.Spans) > 0 && text == row.Text {
-			out = append(out, spanned(style, " "+mark, text, row.Spans))
+			out = append(out, spanned(style, lead, text, row.Spans))
 			continue
 		}
-		out = append(out, style.Render(" "+mark+text))
+		out = append(out, style.Render(lead+text))
 	}
 	return out
 }
@@ -332,6 +351,9 @@ func (m *Model) keyBar() string {
 	c := m.context()
 	type item struct{ key, label string }
 	var items, tail []item
+	if m.navFocus {
+		return " " + styleDim.Render(m.navigationHint()+"  v relevant  ? help  q quit")
+	}
 	switch {
 	case m.chipFocus && m.detail == nil:
 		items = append(items, item{"← →", "exchange"}, item{"enter", "pick"}, item{"↓", "back to the list"})
@@ -383,12 +405,24 @@ func (m *Model) statusLine() string {
 	if m.stack.Current().Kind == nav.Companies && m.vp.Len() > 0 {
 		if pos := m.companyPos(); pos > 0 {
 			parts = append(parts, fmt.Sprintf("company %s of %s", thousands(pos), thousands(m.companies)))
+			if ticker := m.stockUnderCursor(); ticker != "" {
+				if q, ok := m.data.Quotes[ticker]; ok {
+					day := ticker + " EOD " + q.Day
+					if q.stale(m.be.Now()) {
+						day += " (stale)"
+					}
+					parts = append(parts, day)
+				}
+			}
 		} else {
 			parts = append(parts, "enter opens the group")
 		}
 	}
 	if m.stack.Current().Kind == nav.Label && m.progress.Total > 0 {
 		parts = append(parts, progressText(m.progress))
+	}
+	if m.navFocus {
+		parts = append(parts, "navigation")
 	}
 	if n := len(m.marks); n > 0 {
 		parts = append(parts, fmt.Sprintf("%d marked", n))
@@ -562,7 +596,9 @@ func spanned(base lipgloss.Style, lead, text string, spans []Span) string {
 		if from > at {
 			b.WriteString(base.Render(string(runes[at:from])))
 		}
-		b.WriteString(sp.Style.lip().Render(string(runes[from:to])))
+		child := sp.Style.lip()
+		child = child.Reverse(base.GetReverse()).Bold(base.GetBold() || child.GetBold())
+		b.WriteString(child.Render(string(runes[from:to])))
 		at = to
 	}
 	if at < len(runes) {

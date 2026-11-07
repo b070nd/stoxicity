@@ -312,8 +312,18 @@ periodic report's document (first the first megabyte with a `Range` request,
 trusted only when the last cover fact lies in the first half of what was read;
 otherwise the whole document). Order: issuers never read, then ones you follow,
 then ones with several listings, then the longest unread. An issuer is read again
-after 30 days (3 days after a failure) and a newer report is stored as a new
-observation. The SEC's block or rate limit stops the cycle.
+after 30 days and a newer report is stored as a new observation. The SEC's block
+or rate limit stops the cycle.
+
+**Retry state is kept.** Each look is recorded in `cover_check` (migration `0022`)
+with its kind: `''` it worked, `failed` the request or the parsing failed,
+`nocover` the issuer's recent reports have no machine-readable cover page (not an
+error: unsupported by this method). A failed issuer is not looked at again before
+`next_ms`: the wait starts at 3 days and doubles with every consecutive failure,
+to at most 14 days, and a good reading resets it. The order within a cycle is
+followed issuers first, then never read, then several listings, then the oldest.
+A restart continues from the stored state, so the walk through the universe is
+resumable and a failing issuer does not take the cycle's requests again and again.
 
 Each observation is kept in `share_class_obs` (append only): accession, form,
 filing day, acceptance time when the record gives it (`precision` `time`) or only
@@ -357,15 +367,47 @@ A value is computed only if: the class is mapped (not ambiguous, not unmapped);
 the security is not an ADR (the ADR conversion ratio is not known, so an ADR
 mapped class is rejected rather than priced as one share); the count is at most
 200 days old; there is a price for that listing, a raw (not split-adjusted) close,
-in USD, at most 10 days old; and the split list covers the days between the
-count and the price. A split between the count date and the price day multiplies
+at most 10 days old, **whose currency is known and is the output currency (US
+dollars)**; and the split list covers the days between the count and the price.
+
+**Currency is never assumed.** The quote currency is the one the price source
+states for the candle (`candle.currency`, migration `0021`); a candle that states
+none (every candle stored before the column, and any source that does not say) is
+read in the currency of its listing venue (`exchange.Lookup`), and the output says
+which basis it used. A stated currency that contradicts the venue's, or a venue
+that is not known, is rejected as `currency` with the reason. A foreign quote can
+be converted only with a dated, sourced rate (`valuation.Rate`: from, to, day, rate,
+source; at most 4 days from the price session); **no rate feed exists in this
+program, so in operation a non-US-dollar quote is rejected, not converted**. The
+output currency is stated beside every figure. A split between the count date and the price day multiplies
 the count by the split ratio (a reverse split divides it). A split list that was
 not read after the price day is not trusted, and the value is unavailable with
 that reason. Where a value is unavailable the lists show `n/a`, the profile and
 `universe show` print `unavailable: <reason>`, and exports leave the cell empty.
 
-Only the newest stored price exists, so valuation is not offered as of a past
-time (counts and mappings can be queried as known at a time).
+### Valuation at a past time
+
+`classes -at TIME` values the issuer for a past time, in one of two bases that are
+never mixed, and the output names the basis, every input with its dates and the
+completeness (classes valued of classes):
+
+- `-basis known` (default): what **this installation held** then. A count counts
+  if it was received by then and the filing was public; a mapping if it was made
+  by then; a price if it was fetched by then (`candle.fetched_ms`, and the earlier
+  versions of a replaced candle in `candle_revision`); a split if it was first seen
+  by then (`split.first_seen_ms`) and the split coverage as read by then
+  (`split_read`). A price whose fetch time was not recorded (candles stored before
+  migration `0021` are of that kind) cannot be proved to have been held, so a
+  `known` query leaves it out; it is not backdated.
+- `-basis reconstructed`: what the **record supports now** for that time: filings
+  public by then, sessions closed by then (a session is public from the end of its
+  UTC day), splits executed by then, whenever they were found. Mappings are
+  **today's**: they are not reconstructed. It is a reconstruction, not what the
+  installation showed.
+
+Later filings, mappings, prices, splits and assessments never enter either basis.
+A missing input gives a reason (`no price known`, `not mapped`, ...) and the
+figure is withheld, not estimated. Ages are measured at the time asked.
 
 ### Commands
 
@@ -375,18 +417,41 @@ TICKER [-at TIME]`, `universe show TICKER`, queries `marketcap:`.
 New or changed:
 
 ```
-stoxicity universe fundamentals classes TICKER [-stored] [-at TIME]
+stoxicity universe fundamentals classes TICKER [-stored] [-at TIME [-basis known|reconstructed]]
                        per class: symbol, mapping and its basis, count date, shares,
-                       split alignment, price, session, value or reason; revised,
-                       conflict and dropped notes; the issuer total. Without -stored it reads
-                       the cover page first (and stores it); -stored reads what is stored;
-                       -at TIME shows the counts and mappings known by then, with no values
-                       (only the newest price is kept).
+                       split alignment, price, session, currency, value or reason; revised,
+                       conflict and dropped notes; the issuer total; the inputs with their
+                       dates and the completeness. Without -stored it reads the cover page
+                       first, which is a request to the SEC (and stores it); -stored reads
+                       what is stored and makes none; -at TIME values the issuer for a past
+                       time in the named basis (see "Valuation at a past time").
 stoxicity universe fundamentals covers [-max N]
                        read the due cover pages by hand (as the keeper does)
 stoxicity universe fundamentals probe TICKER [-annual SPEC] [-instant SPEC] [-out DIR]
                        the read-only live check of the SEC frames (see PROTOCOL.md section 11)
 ```
+
+### Coverage
+
+```
+stoxicity universe fundamentals coverage [-list STATE,...|all] [-followed]
+```
+
+counts, for all issuers and for the ones you follow: issuers, checked, mapped,
+valued, stale, incomplete, unresolved, unsupported, failed and not read yet, with
+the number waiting for a retry; `-list` names the issuers behind a number, each
+with its reason. The same states appear in the lists (below). It reads what is
+stored; it makes no request.
+
+| state | meaning |
+|---|---|
+| valued | every class has a value |
+| stale | a count or a price is too old |
+| incomplete | something is missing that more data may supply (a price, a mapping) |
+| unresolved | the evidence does not decide (ambiguous mapping, conflicting counts) |
+| unsupported | this method cannot value it (ADR, no cover page, a foreign currency without a rate) |
+| failed | the last look failed; retried later |
+| pending | the cover page has not been read |
 
 Queries accept `classcap:` and `issuercap:` (the same operators as `marketcap:`),
 and `sort:classcap` and `sort:issuercap` order by them. A stock whose value is
@@ -407,6 +472,10 @@ calculation (`valuation.Build`).
 ### Limits
 
 Coverage grows with `covers_per_cycle`; an issuer whose cover has not been read
-has no market cap (it says so). The currency is assumed to be USD (candles come
-from US exchanges); anything else is rejected. ADR ratios are not available.
-Polygon may list a split late.
+has no market cap (it says so). Only US dollars are valued: a candle is read in the
+currency its source states or, failing that, its venue's, and anything else is
+rejected because no rate feed exists. ADR ratios are not available. Polygon may
+list a split late. Candles stored before migration `0021` have no stated currency
+and no fetch time, so a `known` past valuation cannot use them. A reconstructed
+valuation uses today's mappings. The mapping rules are heuristics checked on a
+handful of issuers, not on the universe.

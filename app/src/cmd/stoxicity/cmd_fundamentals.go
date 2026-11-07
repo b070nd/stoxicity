@@ -34,6 +34,8 @@ func (a *app) universeFundamentals(ctx context.Context, args []string) error {
 			return a.fundamentalsHistory(ctx, args[1:])
 		case "classes":
 			return a.fundamentalsClasses(ctx, args[1:])
+		case "coverage":
+			return a.fundamentalsCoverage(ctx, args[1:])
 		case "probe":
 			return a.fundamentalsProbe(ctx, args[1:])
 		}

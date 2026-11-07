@@ -23,6 +23,10 @@ type fakeSEC struct {
 	quarters map[string][]byte // "2026/QTR3" -> gzip body
 	records  map[string]string // CIK -> JSON
 	calls    []string
+	// quarterErr, when set, is what every request for a quarterly index fails with.
+	quarterErr error
+	// hook is called with the number of requests made so far, before each is answered.
+	hook func(n int)
 }
 
 func newSEC() *fakeSEC {
@@ -31,6 +35,9 @@ func newSEC() *fakeSEC {
 
 func (s *fakeSEC) Do(_ context.Context, req httpx.Request) (*httpx.Response, error) {
 	s.calls = append(s.calls, req.URL)
+	if s.hook != nil {
+		s.hook(len(s.calls))
+	}
 	notFound := &httpx.Error{Class: httpx.Permanent, Status: 404, URL: req.URL}
 	switch {
 	case strings.Contains(req.URL, "/daily-index/"):
@@ -42,6 +49,8 @@ func (s *fakeSEC) Do(_ context.Context, req httpx.Request) (*httpx.Response, err
 			return &httpx.Response{Status: 200, Body: []byte(body)}, nil
 		}
 		return nil, notFound
+	case strings.Contains(req.URL, "/full-index/") && s.quarterErr != nil:
+		return nil, s.quarterErr
 	case strings.Contains(req.URL, "/full-index/"):
 		key := req.URL[strings.Index(req.URL, "full-index/")+len("full-index/") : strings.LastIndex(req.URL, "/master.gz")]
 		if body, ok := s.quarters[key]; ok {
@@ -348,5 +357,185 @@ func TestEnrichResolvesWantedAccessionsOnlyAndNeverMakesUpATime(t *testing.T) {
 	var he *httpx.Error
 	if _, err := Enrich(ctx, db, client, urls, map[string][]string{"0009999999": {"x"}}, nil, now, 0); !errors.As(err, &he) {
 		t.Errorf("an unknown company is an error: %v", err)
+	}
+}
+
+// weekdays fills the daily indexes of the weekdays of [from, to] with one 8-K each.
+func weekdays(sec *fakeSEC, from, to string) []string {
+	var days []string
+	for x := d(from); !x.After(d(to)); x = x.AddDate(0, 0, 1) {
+		if x.Weekday() == time.Saturday || x.Weekday() == time.Sunday {
+			continue
+		}
+		key := x.Format("20060102")
+		sec.days[key] = index(line(2000000+x.YearDay(), "8-K", x.Format(time.DateOnly), x.YearDay()))
+		days = append(days, key)
+	}
+	return days
+}
+
+func TestAFailedOrOversizedOrMissingQuarterlyIndexFallsBackToDailyOnesAndLeavesNothingResolvedWrongly(t *testing.T) {
+	for name, err := range map[string]error{
+		"temporarily unavailable": &httpx.Error{Class: httpx.Retryable, Status: 503, URL: "https://sec.test/full-index"},
+		"oversized":               &httpx.Error{Class: httpx.Permanent, Status: 200, URL: "https://sec.test/full-index", Err: errors.New("body too large")},
+		"not found":               nil,
+	} {
+		t.Run(name, func(t *testing.T) {
+			sec := newSEC()
+			sec.quarterErr = err
+			cfg, db := setup(t, sec, now)
+			ctx := context.Background()
+			days := weekdays(sec, "2026-07-06", "2026-07-24")
+			rep, derr := cfg.Discover(ctx, d("2026-07-06"), d("2026-07-24"), "range")
+			if derr != nil || rep.Quarterly != 0 || rep.Daily != len(days) || rep.Complete != len(days) || rep.Pending != 0 {
+				t.Fatalf("the daily indexes carry the range: %+v %v", rep, derr)
+			}
+			q, ok, _ := db.FilingQuarter(ctx, 2026, 3)
+			if err != nil && (!ok || q.Status != "error" || q.LastError == "") {
+				t.Errorf("the failed quarter is recorded with why: %+v %v", q, ok)
+			}
+			if err == nil && ok {
+				t.Errorf("a quarter the SEC does not have is not recorded as read: %+v", q)
+			}
+			c, _ := Measure(ctx, db, d("2026-07-06"), d("2026-07-24"), cfg.Forms)
+			if c.Percent() != 100 || len(c.Gaps) != 0 || c.Complete != len(days) {
+				t.Errorf("%+v", c)
+			}
+		})
+	}
+}
+
+func TestAnInterruptedMultiMonthBackfillResumesReadingOnlyTheDayInFlightAgainAndReportsItsGaps(t *testing.T) {
+	sec := newSEC()
+	cfg, db := setup(t, sec, now)
+	cfg.NoQuarterly, cfg.MaxRequests = true, 12
+	ctx := context.Background()
+	days := weekdays(sec, "2026-07-06", "2026-08-14") // 30 weekdays
+	from, to := d("2026-07-06"), d("2026-08-14")
+
+	// Run 1 stops at the request budget.
+	rep, err := cfg.Discover(ctx, from, to, "range")
+	if err != nil || rep.Daily != 12 || rep.Stopped == "" || rep.Pending != 0 {
+		t.Fatalf("%+v %v", rep, err)
+	}
+	// Completeness counts the days never asked for as gaps, though no request failed.
+	c, _ := Measure(ctx, db, from, to, cfg.Forms)
+	if c.Complete != 12 || c.Unread <= 0 || c.Percent() >= 100 || len(c.Gaps) == 0 || c.Gaps[0].Status != "unread" {
+		t.Fatalf("a stopped run is incomplete whatever its requests did: %+v", c)
+	}
+
+	// Run 2 is cut off by the context in the middle.
+	ctx2, cancel := context.WithCancel(ctx)
+	sec.hook = func(n int) {
+		if n == len(sec.calls) && len(sec.calls) == 12+5 {
+			cancel()
+		}
+	}
+	rep, err = cfg.Discover(ctx2, from, to, "range")
+	if !errors.Is(err, context.Canceled) || rep.Stopped != "interrupted" {
+		t.Fatalf("interrupted: %+v %v", rep, err)
+	}
+	run, ok, _ := db.LastReconcileRun(ctx)
+	if !ok || !run.Finished.IsZero() || run.Note != "interrupted" {
+		t.Errorf("an interrupted run is visible as unfinished: %+v", run)
+	}
+
+	// Run 3 finishes the rest and reads no day a second time.
+	sec.hook = nil
+	cfg.MaxRequests = 0
+	rep, err = cfg.Discover(ctx, from, to, "range")
+	if err != nil || rep.Stopped != "" || rep.Pending != 0 {
+		t.Fatalf("%+v %v", rep, err)
+	}
+	seen := map[string]int{}
+	for _, u := range sec.calls {
+		seen[u]++
+	}
+	again := 0
+	for u, n := range seen {
+		if n > 2 {
+			t.Errorf("read %d times: %s", n, u)
+		}
+		if n == 2 {
+			again++ // the day whose request was out when the run was cut off
+		}
+	}
+	if again != 1 {
+		t.Errorf("only the day in flight is read again, not %d days", again)
+	}
+	if len(seen) != len(days) {
+		t.Errorf("%d requests for %d weekdays", len(seen), len(days))
+	}
+	c, _ = Measure(ctx, db, from, to, cfg.Forms)
+	if c.Percent() != 100 || c.Unread != 0 || c.Complete != len(days) {
+		t.Errorf("%+v", c)
+	}
+}
+
+func TestAFailedRequestKeepsTheDayRetryableAndAGoodReadIsNeverUndone(t *testing.T) {
+	sec := newSEC()
+	cfg, db := setup(t, sec, now)
+	ctx := context.Background()
+	sec.days["20261109"] = index(line(1000001, "8-K", "2026-11-09", 1))
+	sec.failing["20261109"] = true
+	rep, err := cfg.Discover(ctx, d("2026-11-09"), d("2026-11-09"), "range")
+	if err == nil || rep.Errors != 1 || rep.Pending != 1 {
+		t.Fatalf("%+v %v", rep, err)
+	}
+	c, _ := Measure(ctx, db, d("2026-11-09"), d("2026-11-09"), cfg.Forms)
+	if c.Failed != 1 || len(c.Gaps) != 1 || c.Gaps[0].Status != "error" || !strings.Contains(c.Gaps[0].Why, "503") {
+		t.Errorf("a failed day is a gap with its error: %+v", c)
+	}
+	delete(sec.failing, "20261109")
+	if rep, err = cfg.Discover(ctx, d("2026-11-09"), d("2026-11-09"), "range"); err != nil || rep.Complete != 1 || rep.Pending != 0 {
+		t.Fatalf("%+v %v", rep, err)
+	}
+	// A later failure (a forced re-read) does not undo the good read.
+	sec.failing["20261109"] = true
+	cfg.Refetch = true
+	cfg.Discover(ctx, d("2026-11-09"), d("2026-11-09"), "range")
+	if days, _ := db.IndexDays(ctx, "2026-11-09"); days["2026-11-09"].Status != store.DayComplete {
+		t.Errorf("a failed retry undid a read: %+v", days["2026-11-09"])
+	}
+}
+
+func TestAChangeOfSelectedFormsReadsTheCompleteDaysAgainAndOnlyThem(t *testing.T) {
+	sec := newSEC()
+	cfg, db := setup(t, sec, now)
+	ctx := context.Background()
+	sec.days["20261109"] = index(line(1000001, "8-K", "2026-11-09", 1), line(1000002, "10-Q", "2026-11-09", 2))
+	cfg.Discover(ctx, d("2026-11-09"), d("2026-11-09"), "range")
+	if days, _ := db.IndexDays(ctx, "2026-11-09"); days["2026-11-09"].Forms != "8-K" {
+		t.Fatalf("the day records the forms it was read for: %+v", days["2026-11-09"])
+	}
+	before := sec.daily()
+	if rep, _ := cfg.Discover(ctx, d("2026-11-09"), d("2026-11-09"), "range"); sec.daily() != before || rep.Skipped != 1 || rep.FormsChanged != 0 {
+		t.Errorf("an unchanged selection reads nothing: %+v", rep)
+	}
+	// A narrower selection is covered by what was read.
+	cfg.Forms = nil
+	if rep, _ := cfg.Discover(ctx, d("2026-11-09"), d("2026-11-09"), "range"); rep.Skipped != 1 {
+		t.Errorf("no forms wanted is covered: %+v", rep)
+	}
+	// A wider one is not: the 10-Q was never taken.
+	cfg.Forms = []string{"8-K", "10-Q"}
+	c, _ := Measure(ctx, db, d("2026-11-09"), d("2026-11-09"), cfg.Forms)
+	if c.FormsStale != 1 || len(c.Gaps) != 1 || !strings.Contains(c.Gaps[0].Why, "not for") {
+		t.Errorf("the day is a gap for the new selection: %+v", c)
+	}
+	rep, err := cfg.Discover(ctx, d("2026-11-09"), d("2026-11-09"), "range")
+	if err != nil || rep.FormsChanged != 1 || rep.Added != 1 || rep.Skipped != 0 {
+		t.Fatalf("%+v %v", rep, err)
+	}
+	if c, _ = Measure(ctx, db, d("2026-11-09"), d("2026-11-09"), cfg.Forms); c.FormsStale != 0 || len(c.Gaps) != 0 {
+		t.Errorf("%+v", c)
+	}
+	// Weekends and calendar holidays have no filings of any form and are not read again.
+	if _, err := db.PutFilingDay(ctx, store.DayResult{Day: "2026-11-08", Status: store.DayNonFiling, Basis: "calendar: Sunday", Source: "calendar"}, now); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Forms = []string{"8-K", "10-Q", "4"}
+	if rep, _ := cfg.Discover(ctx, d("2026-11-08"), d("2026-11-08"), "range"); rep.Skipped != 1 {
+		t.Errorf("a Sunday has no filings of any form: %+v", rep)
 	}
 }

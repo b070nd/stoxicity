@@ -107,7 +107,7 @@ func buildExchanges(d Data) Screen {
 		st := stats[c.Name]
 		now, hours, operator, open := "—", "", "", 0.0
 		if info, ok := exchange.Lookup(c.Name); ok {
-			status := info.StatusAt(d.Now)
+			status := d.Calendar.StatusAt(info, d.Now)
 			now, hours, operator = openWord(status), coreHours(info), info.Operator
 			if status.Open {
 				open = 1
@@ -128,7 +128,7 @@ func buildExchanges(d Data) Screen {
 		})
 	}
 	var b builder
-	b.styled(Dim, fmt.Sprintf("%d exchanges · NEWS = relevant articles in %s that name one of its stocks · hours are the regular session in the market's own time · → opens one, u narrows every screen to it (● = chosen), x cycles", len(names), d.Params.Describe()))
+	b.styled(Dim, fmt.Sprintf("%d exchanges · NEWS = relevant articles in %s that name one of its stocks · NOW is the schedule, not confirmation that trading is available (halts and outages are not observed) · hours are the regular session in the market's own time · → opens one, u narrows every screen to it (● = chosen), x cycles", len(names), d.Params.Describe()))
 	exchangeChips(&b, d)
 	b.rows = append(b.rows, t.Rows(d.Sort)...)
 	s.Rows, s.Table, s.Sort = b.rows, t.shape(), t.Effective(d.Sort)
@@ -272,12 +272,13 @@ func aboutRows(b *builder, i exchange.Info) {
 func hoursRows(b *builder, i exchange.Info, d Data) {
 	b.heading("Opening hours", nil)
 	now := d.Now
-	st := i.StatusAt(now)
+	st := d.Calendar.StatusAt(i, now)
 	style := Dim
 	if st.Open {
 		style = Good
 	}
 	b.styled(style, "  now          "+st.Describe(now))
+	b.styled(Dim, "  basis        "+st.Caveat())
 	user := d.Params.Zone
 	if user == nil {
 		user = time.UTC
@@ -294,12 +295,20 @@ func hoursRows(b *builder, i exchange.Info, d Data) {
 		b.text(line)
 	}
 	b.text("  days         Monday to Friday, except the market holidays")
-	cal := i.DayOf(now)
+	cal := d.Calendar.Day(i, now)
+	over := ""
+	if cal.Override != nil {
+		over = fmt.Sprintf(" · override: %s", cal.Override.Source)
+	}
 	switch {
 	case cal.Closed != "":
-		b.text(fmt.Sprintf("  today        closed: %s", cal.Closed))
+		b.text(fmt.Sprintf("  today        closed: %s%s", cal.Closed, over))
 	case cal.Early:
-		b.text(fmt.Sprintf("  today        early close at %s (%s)", i.EarlyClose(), cal.Why))
+		at := cal.Close
+		if at == "" {
+			at = i.EarlyClose()
+		}
+		b.text(fmt.Sprintf("  today        early close at %s (%s)%s", at, cal.Why, over))
 	default:
 		b.text("  today        a full day (" + now.In(loc).Format("Mon 2 Jan") + ")")
 	}

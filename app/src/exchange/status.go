@@ -3,6 +3,7 @@ package exchange
 import (
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -21,23 +22,55 @@ type Status struct {
 	Closed string
 	// Early: today closes early.
 	Early bool
+	// Scheduled is always true: the status is read from the venue's schedule and
+	// the calendar. Nothing here observes the market, so an open status is not a
+	// statement that trading is available; Halt carries what was observed.
+	Scheduled bool
+	// Override is the calendar override that decided today, nil when the
+	// recurring rules did.
+	Override *Override
+	// CalendarVersion names the calendar the status was read from.
+	CalendarVersion string
+	// Halt is an observed halt or outage covering the venue now, with its source;
+	// nil when none is recorded (which is not the same as none happening).
+	Halt *Observation
+}
+
+// Caveat says what the status does not establish.
+func (s Status) Caveat() string {
+	var parts []string
+	if s.Override != nil {
+		parts = append(parts, fmt.Sprintf("calendar override for %s: %s (%s)", s.Override.Date, s.Override.Reason, s.Override.Source))
+	}
+	if s.Halt != nil {
+		parts = append(parts, fmt.Sprintf("observed %s since %s (%s)", s.Halt.Kind, s.Halt.From.UTC().Format("2006-01-02 15:04Z"), s.Halt.Source))
+	} else {
+		parts = append(parts, "schedule only: trading halts and outages are not observed, so this is not confirmation that trading is available")
+	}
+	if s.CalendarVersion != "" {
+		parts = append(parts, "calendar "+s.CalendarVersion)
+	}
+	return strings.Join(parts, " · ")
 }
 
 // Describe is the status in a few words: "open · regular, closes in 2h10m".
 func (s Status) Describe(now time.Time) string {
 	in := s.Change.Sub(now).Round(time.Minute)
+	if s.Halt != nil {
+		return fmt.Sprintf("halted (%s) · scheduled %s, next change in %s", s.Halt.Kind, strings.ToLower(s.Session), span(in))
+	}
 	if s.Open {
 		kind := s.Session
 		if s.Early {
 			kind += ", early close"
 		}
-		return fmt.Sprintf("open · %s, ends in %s", kind, span(in))
+		return fmt.Sprintf("scheduled open · %s, ends in %s", kind, span(in))
 	}
 	why := ""
 	if s.Closed != "" {
 		why = " (" + s.Closed + ")"
 	}
-	return fmt.Sprintf("closed%s · %s opens in %s", why, s.Session, span(in))
+	return fmt.Sprintf("scheduled closed%s · %s opens in %s", why, s.Session, span(in))
 }
 
 // span writes a duration as "2h10m", "45m" or "3d4h".
@@ -69,10 +102,13 @@ type Window struct {
 
 // SessionsOn are the sessions of the date of t, trimmed for an early close;
 // none when the market is shut that day.
-func (i Info) SessionsOn(t time.Time) []Window {
+func (i Info) SessionsOn(t time.Time) []Window { return Calendar{}.SessionsOn(i, t) }
+
+// SessionsOn are the sessions of the date of t as this calendar has it.
+func (c Calendar) SessionsOn(i Info, t time.Time) []Window {
 	loc := i.Location()
 	day := t.In(loc)
-	cal := i.DayOf(day)
+	cal := c.Day(i, day)
 	if cal.Closed != "" {
 		return nil
 	}
@@ -83,7 +119,11 @@ func (i Info) SessionsOn(t time.Time) []Window {
 			coreEnd = s.To
 		}
 	}
-	early := at(day, i.earlyClose(), loc)
+	closeAt := i.earlyClose()
+	if cal.Close != "" {
+		closeAt = cal.Close
+	}
+	early := at(day, closeAt, loc)
 	for _, s := range i.Sessions {
 		w := Window{Session: s, From: at(day, s.From, loc), To: at(day, s.To, loc)}
 		if cal.Early {
@@ -118,19 +158,26 @@ func minTime(a, b time.Time) time.Time {
 }
 
 // StatusAt is the status of the market at now.
-func (i Info) StatusAt(now time.Time) Status {
+func (i Info) StatusAt(now time.Time) Status { return Calendar{}.StatusAt(i, now) }
+
+// StatusAt is the status of the market at now as this calendar has it: the
+// scheduled status, with the override that decided today and any halt or outage
+// recorded for the venue. A recorded halt does not close the schedule; it is
+// reported beside it.
+func (c Calendar) StatusAt(i Info, now time.Time) Status {
 	loc := i.Location()
 	local := now.In(loc)
-	today := i.DayOf(local)
-	st := Status{Closed: today.Closed, Early: today.Early}
-	for _, w := range i.SessionsOn(local) {
+	today := c.Day(i, local)
+	st := Status{Closed: today.Closed, Early: today.Early, Scheduled: true, Override: today.Override, CalendarVersion: c.Version}
+	st.Halt = c.haltAt(i, now)
+	for _, w := range c.SessionsOn(i, local) {
 		if !local.Before(w.From) && local.Before(w.To) {
 			st.Open, st.Session, st.Core, st.Change = true, w.Name, w.Core, w.To
 			return st
 		}
 	}
 	for d := 0; d < 14; d++ {
-		for _, w := range i.SessionsOn(local.AddDate(0, 0, d)) {
+		for _, w := range c.SessionsOn(i, local.AddDate(0, 0, d)) {
 			if w.From.After(local) {
 				st.Session, st.Change = w.Name, w.From
 				return st

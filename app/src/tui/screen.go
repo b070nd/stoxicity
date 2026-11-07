@@ -2,6 +2,8 @@ package tui
 
 import (
 	"fmt"
+	"github.com/b070nd/stoxicity/app/src/exchange"
+	"slices"
 	"strings"
 	"time"
 
@@ -65,9 +67,10 @@ type Row struct {
 	// cursor stops on, but a zone you step up into from the first row and move
 	// along with the left and right arrows.
 	Chips []Chip
-	// Spans colour parts of the line, cell by cell (a table whose columns each
-	// have a colour of their own). The cursor row ignores them.
+	// Spans colour parts of the line, cell by cell, including the selected row.
 	Spans []Span
+	// TableHeader repeats above the rows when a table is scrolled.
+	TableHeader bool
 }
 
 // Span is a stretch of a row's text drawn in a style of its own: the cells
@@ -126,6 +129,12 @@ type Screen struct {
 
 // Data is everything a screen is built from.
 type Data struct {
+	// Width is the available terminal cells; zero keeps the full table.
+	Width int
+	// ShowFacets expands the optional catalogue breakdown.
+	ShowFacets bool
+	// AllNews includes articles below the relevance threshold in the news feed.
+	AllNews   bool
 	Params    pages.Params
 	Articles  []model.Article // the window, plus the one before it
 	Watchlist []string
@@ -173,6 +182,12 @@ type Data struct {
 	// Why says why a market value is missing, by figure name and ticker (see
 	// Explainer); nil when the backend does not say.
 	Why map[string]map[string]string
+	// Standing is where each stock's capitalisation stands, by ticker (see
+	// Standinger); nil when the backend does not say.
+	Standing map[string]CapStanding
+	// Calendar is the exchange calendar the schedule screens read; the zero value
+	// is the recurring rules alone.
+	Calendar exchange.Calendar
 }
 
 func (d Data) name(t string) string {
@@ -244,7 +259,14 @@ func (b *builder) blank()                          { b.add(Row{}) }
 func (b *builder) heading(s string, to *nav.Route) { b.add(Row{Text: s, Style: Heading, Go: to}) }
 func (b *builder) article(a model.Article, d Data) {
 	a2 := a
-	b.add(Row{Text: articleLine(a, d), Style: articleStyle(a, d), Article: &a2})
+	r := Row{Text: articleLine(a, d), Style: articleStyle(a, d), Article: &a2}
+	if a.Score.Materiality >= 4 && a.Title != "" {
+		if at := strings.Index(r.Text, a.Title); at >= 0 {
+			from := len([]rune(r.Text[:at]))
+			r.Spans = []Span{{From: from, To: from + len([]rune(a.Title)), Style: Strong}}
+		}
+	}
+	b.add(r)
 }
 func (b *builder) articles(list []model.Article, d Data) {
 	for _, a := range list {
@@ -384,44 +406,26 @@ func buildHome(d Data) Screen {
 	p := d.Params
 	window := pages.InWindow(d.Articles, p)
 	rel := pages.RelevantNewest(window, p.Threshold)
-	s := Screen{Title: "Home · " + p.Describe()}
+	s := Screen{Title: "News · " + p.Describe()}
 	if len(window) == 0 {
 		s.Notice = "No articles in this window. Run `stoxicity fetch` or `stoxicity run`."
 		return s
 	}
 	var b builder
-	b.styled(Dim, fmt.Sprintf("%d articles, %d relevant", len(window), len(rel)))
-	exchangeChips(&b, d)
-	b.blank()
-	b.heading("Digest", nil)
-	sum := summarize.Summarize(rel, pages.SummaryLines)
-	if len(sum.Lines) == 0 {
-		b.styled(Dim, "nothing relevant yet")
+	list := rel
+	if d.AllNews {
+		list = append([]model.Article(nil), window...)
+		slices.SortStableFunc(list, func(a, b model.Article) int { return b.Published.Compare(a.Published) })
 	}
-	summaryRows(&b, sum)
-	b.blank()
-	b.heading("Top articles ›", route(nav.Search, "after:"+p.First.Format(time.DateOnly)))
-	b.articles(pages.TopArticles(rel, homeRows), d)
-
-	stocks := pages.BuildStocksPage(d.Articles, d.Watchlist, p)
-	b.blank()
-	b.heading("Stocks ›", &nav.Route{Kind: nav.Stocks})
-	b.rows = append(b.rows, stockTable(pages.Head(stocks.Rows, homeRows), d).Body(Sort{})...)
-
-	doms := pages.Head(domains.Aggregate(window, p.Threshold), homeRows)
-	b.blank()
-	b.heading("Domains ›", &nav.Route{Kind: nav.Domains})
-	for _, st := range doms {
-		b.add(domainLine(st))
+	b.styled(Dim, fmt.Sprintf("%s articles · newest first · Enter details · b source · v relevant only", thousands(len(list))))
+	if len(list) == 0 {
+		s.Notice = "No relevant news in this window. Press v to include all news."
+		return s
 	}
-
-	topics := pages.BuildTopicsPage(d.Articles, p)
+	b.heading("Latest news", nil)
+	b.articles(list, d)
 	b.blank()
-	b.heading("Topics ›", &nav.Route{Kind: nav.Topics})
-	cloudRows(&b, topics.Cloud, 24)
-
-	b.blank()
-	b.heading("Timeline", nil)
+	b.heading("Activity timeline", nil)
 	timelineRows(&b, pages.DayRows(window, p))
 	s.Rows = b.rows
 	return s
@@ -618,7 +622,7 @@ func buildTopics(d Data) Screen {
 		t.Items = append(t.Items, Item{
 			Cells: []Cell{
 				Str(r.Topic), Num(fmt.Sprint(r.Count), float64(r.Count)),
-				Num(fmt.Sprintf("%.1f", r.Prior), r.Prior), Num(fmt.Sprintf("%.1fx", r.Lift), r.Lift),
+				Num(fmt.Sprintf("%.1f", r.Prior), r.Prior), Num(fmt.Sprintf("%.1fx", r.Lift), r.Lift).Styled(gainStyle(r.Lift - 1)),
 			},
 			Row: Row{Go: route(nav.Topic, r.Topic)},
 		})

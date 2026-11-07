@@ -584,15 +584,15 @@ fixtures, and no crash-injection drill was performed.
 | 6 | Evaluation depends on a lossy wake-up event | **Fixed** | `stoxicity run` evaluates all watches at start and on every delivery tick, as well as on events. Evaluation is idempotent (cursor, hits recorded once). |
 | 7 | Splits look like crashes | **Fixed** | Polygon candles are now fetched raw (`adjusted=false`) and marked `raw`; splits come from Polygon's splits list (`split`, `split_run`, migration `0013`) and are read once a day. `marketdata.Compare` reconciles two closes with the splits between them: the move is shown on one basis, not hidden for its size. A candle of unknown basis next to a later split, or a split-like move the known splits do not cover (the coverage is recorded), is `unresolved` and shows as `split?` in the lists. Old candles stay of unknown basis until fetched again: `universe quotes -refetch 30 -max 30` fetches the last 30 days again (paced to the free plan's five requests a minute; days already raw are skipped, so an interrupted run resumes). |
 | 8 | Change spans missing sessions | **Fixed** | `SessionChange` needs both closes of consecutive sessions (at most one weekday between, for a holiday). |
-| 9 | Market cap from the wrong share count | **Fixed for covered issuers (section 11)** | Lists, filters, sorting, details and exports use class-aware values (`classcap`, `issuercap`; `marketcap` is issuer capitalisation) from cover-page counts read in the background and stored per class. An issuer whose cover page is not read, whose class is unmapped or ambiguous, or whose price is missing, stale or in the way of a split shows `n/a` with the reason. Left: ADR conversion ratios, non-USD, coverage that depends on `covers_per_cycle`. |
+| 9 | Market cap from the wrong share count | **Fixed for covered issuers (section 11)** | Lists, filters, sorting, details and exports use class-aware values (`classcap`, `issuercap`; `marketcap` is issuer capitalisation) from cover-page counts read in the background and stored per class. An issuer whose cover page is not read, whose class is unmapped or ambiguous, or whose price is missing, stale or in the way of a split shows `n/a` with the reason. Left: ADR conversion ratios, foreign currencies (rejected: no rate feed), coverage that depends on `covers_per_cycle` (measured: section 12). |
 | 10 | Insider amendments and instrument identity | **Fixed** | 4/A is read and replaces the earlier forms of the same owner and period; only common stock counts; P and S are called purchases and sales. Footnotes are not read. |
 | 11 | Unknown insider value shown as nothing | **Fixed** | Unpriced trades are counted and warned about; list and page summaries come from the same trades. |
 | 12 | Older response erases newer "Latest news" | **Fixed** | Generation numbers; stale answers are dropped. |
-| 13 | Negation and incidental keywords | **Partial** | Bankruptcy, restatement and delisting outrank dividend and buyback in one story; a denied bankruptcy, restatement, cyber incident or delisting ("denies", "no", "not", "without" within three words, same sentence) is not that event, and a denied "going concern" adds no magnitude. Not done: assertions with polarity, attribution and time per issuer; the AI still cannot replace a rule's non-`other` kind (it is recorded as "disagrees"). |
+| 13 | Negation and incidental keywords | **Partial** | Bankruptcy, restatement and delisting outrank dividend and buyback in one story; a denied bankruptcy, restatement, cyber incident or delisting ("denies", "no", "not", "without" within three words, same sentence) is not that event, and a denied "going concern" adds no magnitude. Since then (section 12): assertions with polarity, attribution, time and roles per sentence, and an article presented from its best live claim; the reader's remaining errors are measured by `eval claims`. The laya classifier still cannot replace a rule's non-`other` kind (it is recorded as "disagrees"). |
 | 14 | Exchange-qualified symbols | **Partial** | A prefix such as `LSE:` must agree with the market area of the listing (MIC or exchange name); a contradiction is rejected. A ticker listed in two market areas is not guessed from a bare mention or a cashtag. The index still holds one entity per ticker, so the London listing itself is not found. |
 | 15 | Dedup removes the correction | **Fixed** | Two sentences are alike only if they also agree on denial and on the numbers; a differing sentence of the same cluster is kept. Both claims are shown; neither is marked as the correction. |
-| 16 | Reposts and incidental mentions | **Partial** | Trends count a cluster once per topic. Events carry observed roles per security (subject, counterparty, mentioned: `event_security`), and assessments are kept apart. The trend and list counts do not yet use the roles. |
-| 17 | AI exposure enabled in the config | **Fixed (config)** | `laya.apply` is empty in the checked-in config: answers are advisory. Not done: untrusted-content boundaries and truncation provenance in the model prompt, adversarial evaluation. |
+| 16 | Reposts and incidental mentions | **Partial** | Trends count a cluster once per topic. Events carry observed roles per security (subject, counterparty, mentioned: `event_security`), and assessments are kept apart. The trend and list counts do not yet use the roles. Events are one per kind within a story (section 12.1). |
+| 17 | AI exposure enabled in the config | **Fixed (config)** | `laya.apply` is empty in the checked-in config: answers are advisory. No model reads claims (section 12.1, item 11); laya stays an advisory classifier. Not done for laya's prompt: untrusted-content boundaries and truncation provenance, adversarial evaluation. |
 | 18 | Undelivered alerts recorded as delivered | **Fixed** | A missing channel keeps the alert (and digest) pending, counted as `Blocked` and warned about. What each channel received is stored (`delivered_channel`, migration `0003`), so a retry or a later configuration sends only to the channels that lack it. Not done: stable event IDs for idempotent receivers. |
 
 ### Other traps
@@ -602,7 +602,7 @@ fixtures, and no crash-injection drill was performed.
 | Partial fetch failure reads as healthy | **Partial**: reported as `INCOMPLETE`; the health grade is unchanged. |
 | Mixed fiscal periods under one label | **Fixed**: revenue and income are paired only for the same year end. |
 | Staleness too permissive | **Fixed for the age**: a candle older than one missing weekday is dim. The catalogue's newest date is still not compared with each row. |
-| Exceptional exchange closures | **Open**: needs a calendar source; recurring rules only. |
+| Exceptional exchange closures | **Partial** (section 12): dated, sourced overrides in `exchange_calendar.yaml` replace the recurring rules; none ships and nothing fetches them; halts and outages are not observed; screens say "scheduled". |
 | Historical financial facts overwritten | **Fixed** (new data): every fact read goes to `fundamental_fact` with its accession, concept, unit, dimensions and receipt time, and a restatement is a new row. `universe fundamentals history TICKER -at TIME` answers what was known then, counting a filing as public the day after its filing day. Facts without a known filing day are left out of as-of answers. |
 
 ### Still not met
@@ -788,9 +788,11 @@ Multiple assertions per article, roles, negation, denial (including
 retractions), history, anticipation, status and attribution; filing items are
 evidence of kind not size; assessments are separate and versioned; materiality,
 novelty, urgency and price impact are distinct; the system abstains when evidence
-is insufficient and price impact always abstains. The AI path exists as a schema
-and a vetting function only (model and prompt versions, truncation and evidence
-spans are stored; source-embedded instructions change nothing).
+is insufficient and price impact always abstains. No model reads claims: what
+exists for one is a schema and a vetting function (model and prompt versions,
+truncation and evidence spans are stored; source-embedded instructions change
+nothing). Superseded in detail by section 12 (rules `assert-2`, presentation, events
+per kind, `eval claims`).
 
 ### 11.8 Migrations and what they mean
 
@@ -799,12 +801,16 @@ defaults on `filing_index_day`, one `UPDATE` that classifies the days already re
 missing become `unpublished`, so they are retried, read-after-the-day ones
 `complete`, the others `partial`), quarters, runs, filing metadata and backfill marks; `0017` class
 observations, mappings, cover checks, plus `INSERT OR IGNORE ... SELECT` from the old
-`share_class`; `0018` assertions and assessments. Nothing is dropped and no stored
-evidence is rewritten; the old `share_class` table stays. They run when the
-database is opened, so back up `data/` before the first run of the new binary. No
-downgrade script exists.
+`share_class`; `0018` assertions and assessments; then (section 12) `0019` origin suspicion and
+matches, `0020` event claims and relations, `0021` price provenance (candle
+currency and fetch time, replaced candle versions, every split reading), `0022`
+cover-check retry state, `0023` the forms an EDGAR index day was read for. Nothing is
+dropped and no stored evidence is rewritten; the old `share_class` table stays.
+They run when the database is opened, so back up `data/` first
+(`./backup.sh backup`, section 12.3). No downgrade script exists.
 
-Run on a **copy** of the live data on 2026-11-07 (the live files untouched): the
+Run on a **copy** of the live data on 2026-11-07 (the live files untouched; the
+second drill for 19 to 23 is in section 12.3): the
 reference database went from migration 14 to 18, the two stored `share_class`
 rows were copied to `share_class_obs` (2), and the tenant database was at 4 (it
 has its own migration series). `events rebuild -days 365` on the copy wrote 3,233
@@ -823,19 +829,117 @@ information received, decided, mapped or assessed after the cutoff.
 
 ### 11.10 Unresolved limitations
 
-- Current feeds supply no provider IDs; wire attribution is read from text and not
-  verified; near-copy detection is not built, so a rewritten copy is `unknown`.
-- No AI extractor is wired in. The lens's per-article score is still first-keyword;
-  events use assertions. One event per story remains; several claims are kept as
-  assertions. Claim importance ranking is a judgement, not calibrated.
-- Market cap exists only for issuers whose cover page was read; coverage grows with
-  `covers_per_cycle`. ADR conversion ratios are unavailable (ADR classes are
-  rejected, not guessed). Currency is assumed USD.
-- Only the newest stored session price exists, so valuation is not offered as of a
-  past time. A split that the source lists late can misalign a count and a price;
-  the split-list coverage rule then rejects the value.
-- The holiday calendar cannot know special closures. `acceptanceDateTime` is used as
-  the SEC writes it. The quarterly index can exceed the HTTP body limit; the daily
-  indexes are used then.
+**This list was written at the end of the first pass; several items are
+superseded. The current list is section 12.2.** Still true from it: current feeds
+supply no provider IDs and wire attribution is read from text, unverified; claim
+importance ranking is a judgement; a split that the source lists late can misalign a
+count and a price (the split-list coverage rule then rejects the value);
+`acceptanceDateTime` is used as the SEC writes it; the quarterly index can exceed the
+HTTP body limit and the daily indexes are used then. No longer true: "near-copy
+detection is not built" (section 12.1, item 1), "one event per story" (item 3),
+"currency is assumed USD" (item 5), "valuation is not offered as of a past time"
+(item 6), "the holiday calendar cannot know special closures" (item 8).
 - Still not a trading tool (section 5): nothing here predicts prices or gives
   advice.
+
+## 12. Second pass: what is implemented, what is partial, what is pending (2026-11-07)
+
+Nothing is committed. This section replaces the completion claims of section 11
+where they differ; read it first. The words are used strictly. **Implemented** means
+the behaviour exists, is covered by tests that pass, and its limits are listed beside
+it. **Partial** means part of the requirement is met and the rest is named.
+**Pending** means not done. Passing tests show that the code does what the tests
+say; they do not show that it is right on real news, and none of this predicts a
+price (section 5 stands).
+
+### 12.1 Requirement by requirement
+
+| # | Requirement | Status | Implemented behaviour | Limits and what is pending |
+|---|---|---|---|---|
+| 1 | Near-copy detection | **Partial** | Exact copies count once; a near copy (at least 85% of three-word runs shared, 30 words or more) counts once with its original; a passage overlap (half of the shorter text's runs, quoted words excluded, or 12 equal words in a row) is only a *suspected derivative*: it is not counted as independent. Findings keep their observations (`origin_match`) and version (`origin-2`). [events.md](docs/events.md#reporting-origin) | Word-run overlap only: paraphrase and translation are not seen. Thresholds are judgement, not fitted to a labelled set of real syndicated copies; no such set exists here. |
+| 2 | Origin uncertainty cannot inflate corroboration | **Implemented** | Only an origin with `attributed` standing (a named agency) is independent; a byline, a provider ID, a distinct domain, an unknown or suspected origin is not. A verdict of *corroborated* needs two origins that do not rest on each other, at least one independent; otherwise *primary* (the issuer's own document) or *unresolved*, with the reason. The same dossier feeds `signals`, `graph`, `export` and the TUI. Tests include several rewritten copies of unknown origin staying unresolved. | An agency name in the text is taken as written, not verified. |
+| 3 | Multiple events per story | **Partial** | One article announcing earnings, a CEO departure and an acquisition gives separate events per kind, each with its own claims, evidence and securities (`evt_<cluster>` keeps its ID; `evt_<cluster>~<kind>` splits from it; `event_claim`, `event_relation`; stale events are withdrawn by a revision). A company only mentioned by another company's claim is not on the event. | The unit is the kind within a story: two acquisitions in one article, or two issuers' dividends in one headline, are one event each. Splitting by counterparty or issuer is pending. On the copy of the live data: 3,431 stored events, 3,238 kept with their IDs and kinds unchanged, 193 withdrawn, 373 new (358 of them splits). |
+| 4 | Replace first-keyword article scoring | **Partial** | Lists show the article as its best live claim reads it (kind, materiality, relevance moved 0.15 per level, reasons including why the other claims lost, status, attribution, action); denied, negated, past and preview claims make no event. Materiality, novelty, urgency and price impact are separate, versioned readings (`assess-1`); price impact abstains; materiality is not part of corroboration. | The lens's own score is unchanged and is the fallback. Relevance is still the lens's number moved by materiality. The lens version covers its boost/demote settings, not its keyword table, so a rule edit does not change the version. |
+| 5 | Remove implicit USD assumptions | **Implemented** | A price's currency is the one its source states or, failing that, its listing venue's, and the basis is printed; a conflict, an unknown venue or a foreign currency is rejected with a reason. Conversion exists only with a dated, sourced rate (`Rate`), within 4 days of the session, and the output currency is stated. ADRs are rejected. | **No rate feed exists**, so in operation a non-USD quote is rejected, never converted. Candles stored before migration `0021` state no currency (267,466 on the copy) and rely on the venue's. |
+| 6 | Point-in-time valuation | **Implemented** | `classes -at TIME -basis known\|reconstructed`: *known* is what this installation held (counts received, mappings made, prices fetched, splits first seen, split coverage read, all by then); *reconstructed* is what the record supports now for that time (filings public, sessions closed, splits executed; **today's mappings**). Inputs, dates and completeness are printed; later filings, mappings, prices, splits and assessments are excluded. Replaced candles are kept (`candle_revision`), every split reading is kept (`split_read`). | Prices stored before `0021` have no fetch time and cannot enter a *known* valuation. Mappings are not reconstructed. The live data has one split reading and no revised candles yet, so only that history exists. |
+| 7 | Conservative near-copy fingerprints | **Partial** | See row 1. | See row 1. |
+| 8 | Claim selection explainable and evaluated | **Partial** | `Result.Explain` says which claim names the event and why each other lost; presentation reasons carry it. `eval claims` measures extraction, polarity, attribution, roles, action and naming apart, with abstentions, by group, with every error. [events.md](docs/events.md#measuring-the-reader) | 39 invented cases written by the rules' author; three rule defects were fixed against them, so the figures are optimistic. 11 errors remain, all stated limits (missing phrases, "fears fade", a denial after "CEO"). Contradictions inside one article are not scored. No held-out real articles. |
+| 9 | Share-class coverage | **Implemented** | `universe fundamentals coverage` counts issuers checked, mapped, valued, stale, incomplete, unresolved, unsupported, failed and not read yet, for all and for followed issuers, and lists the issuers behind each with the reason. Retry state is persisted (`cover_check`, backoff 3 to 14 days); followed issuers come first, then the rest resumably; the TUI shows the state and its reason with count and price dates and makes no request while drawing. | On the copy of the live data 1 of 6,388 issuers had been read. Coverage is a measured gap, not a closed one; it grows with `covers_per_cycle`. |
+| 10 | Historical EDGAR reconciliation | **Implemented** | Tests cover quarterly-to-daily fallback, interrupted progress, an oversized response, delayed publication, a temporary 404, a changed form selection (`filing_index_day.forms`), idempotent repair and no urgent alerts for backfills. Completeness is reported apart from request success (`reconcile.Measure`). A cancelled run stops between days and resumes. | Not run against the live SEC (not authorised). The quarterly index can exceed the shared body limit; daily indexes are used then. |
+| 11 | Exchange-calendar overrides | **Partial** | Dated, sourced, versioned overrides (closed, early, open) in `exchange_calendar.yaml` override the recurring rules; a reading as of an earlier time lacks later overrides; an invalid file is refused whole. Screens say "scheduled" and print the override and its source, the calendar version, and that halts and outages are not observed. Observations of halts/outages can be recorded in the same file and are shown beside the schedule. | **No override ships and no feed supplies one**: a real closure must be entered by hand with its source. No halt or outage is observed by anything. The entries in the tests are invented. |
+| 12 | Stocks table semantics and colours | **Implemented** | A legend under the table; a state word (stale, incomplete, unresolved, unsupported, failed, pending) instead of a blank or a number; "issuer" marks class-level rows that show the issuer total; sorting and filtering see no number for a stock without a figure; green/red mean only the sign of GROWTH and MARGIN, said in the legend; insider columns no longer use good/bad colours. | The stock page still colours a purchase green and a sale red (an existing test asserts it). Text columns with a declared maximum width are cut with "…" (the user's own change; the earlier rule was never to cut). |
+| 13 | AI integration an explicit decision | **Decided: no model reads claims** | The deterministic rules are the only extractor and are documented. Laya is an advisory classifier with `apply` empty (a test keeps it). A defined gate (`challenge.Gate`) refuses an extractor that is weaker than the rules on any stage, names events where none is current more often, or is steered by the injection cases. Text addressed to the reader is not read for claims. The vetting function and schema exist for a future extractor. | Nothing model-driven is wired in or evaluated. The gate is a precondition only; real labelled articles are also needed. The addressed-sentence filter knows a few phrasings. |
+| 14 | Migration and recovery drill | **Done on a copy** | Section 12.3. | The live data has not been opened by the new binary for migrations 19 to 23. |
+
+### 12.2 Unresolved limitations (the current list)
+
+- The keyword table decides what claims can be found at all; `eval claims` lists
+  what it misses. The lens version does not cover that table.
+- Events are per kind within a story, not per issuer or counterparty.
+- Near-copy detection does not see paraphrase or translation; thresholds are
+  uncalibrated; no provider IDs from current feeds; wire attribution is unverified.
+- No FX rates: foreign quotes are rejected. No ADR conversion ratios.
+- Share-class coverage is small and grows slowly; mapping rules are heuristics.
+- Past valuations: prices before migration `0021` have no fetch time; mappings are
+  today's in a reconstructed valuation; the history that exists starts when it was
+  first recorded.
+- Calendar: no shipped overrides, no halt or outage feed.
+- A rebuild's events and readings are known from the rebuild's time; urgency
+  decays with the article's age, so a rebuild at a later time can add a reading.
+- Other feeds than EDGAR have no authoritative index; news can still be missed.
+- The reconcile and cover keeper code has not been run against the live SEC in this
+  pass. No live network repair was run.
+- Not a trading tool. Nothing has been measured about whether any signal helps a
+  trade; the software tests show the software does what it is written to do.
+
+### 12.3 Migration and recovery drill (copy of the live data)
+
+Method: the live `base.db` (migration 18) and the tenant database (migration 4) were
+copied to the scratchpad; every command below ran on copies with
+`STOXICITY_DATA_DIR`; the live files were not opened by the new binary for these
+steps. No request was sent to any network service except one: `universe fundamentals
+classes MOG.A` without `-stored` read the cover page from the SEC once (2 requests),
+by mistake, and stored it **in the copy only**. Use `-stored` to avoid it.
+
+1. **Backup.** `./backup.sh backup DATA ROOT` uses SQLite's online `.backup`, checks
+   each copy's integrity and row counts against its source, writes a SHA-256
+   manifest. `./backup.sh verify DIR` re-checks. Result: both databases and the
+   company files backed up and verified.
+2. **Migration.** The new binary took the copy from 18 to 23. Row counts of every
+   legacy table were unchanged afterwards (5,295 articles, 267,466 candles, 1,875
+   splits, 120,331 fundamentals, 5,383 observations, 10,484 scores, 2 class
+   observations); the tenant database stayed at 4. A Go test also builds a database
+   at migration 18 with legacy rows and checks the conversions of 19 to 23: candle
+   currency stays unknown, the old split reading becomes one `split_read` row, cover
+   checks are classified failed or no-cover, index days read before the forms column
+   are read again, and a second run changes nothing.
+3. **Rebuild.** `events rebuild -days 365`: 3,611 events from 5,270 articles, 262
+   stories read as more than one event, 193 stored events withdrawn (central-bank
+   speeches and filings of entities with no company: nothing deleted), 4,778 claims,
+   18,540 readings, 3,336 origin findings. The old event count 3,431 became 3,804
+   (3,611 current + 193 withdrawn), revisions 3,511 to 7,315 (+3,804, one per
+   change); of the 3,431 old events 3,238 kept their ID and kind (none changed
+   kind), 193 were withdrawn; 373 are new. A second rebuild wrote **0** events, 0
+   claims and 0 origin findings; it wrote 1 urgency reading, because urgency depends
+   on the time of reading (57 article/company/dimension keys have more than one
+   reading). Duplicate current events per ID: 0.
+4. **Historical queries.** `signals -at` before the rebuild finds no events (they
+   were decided at the rebuild time and are not backdated); `classes -at ... -basis
+   known` for Moog says that no count was known then; `-basis reconstructed` values
+   it from the filing and the 2026-10-30 session, labelled as a reconstruction.
+5. **Failure and recovery.** The working copy's `base.db` was emptied; `./backup.sh
+   restore` verified the backup, set the damaged folder aside as
+   `data.before-restore-<time>` and restored; the row counts equalled the backup's.
+   A backup whose file had been altered was refused. A rebuild killed with SIGKILL
+   0.7 s into the run left an intact database (`integrity_check` ok) with no partial
+   state, and the rerun produced the same counts as an uninterrupted run (events,
+   revisions, evidence, securities, claims, relations, assertions, origins).
+6. **Live data.** Before the first run of the new binary against `data/`: run
+   `./backup.sh backup`, then `./backup.sh verify` on the result; the new binary
+   migrates on open and there is no downgrade; restore with `./backup.sh restore`
+   while the program is stopped.
+
+One caution: `stoxicity eval claims` goes through the normal start-up, which
+touched the live tenant database (migration 4, no schema change). The live
+`base.db` was not modified (its modification time is unchanged and it was at
+migration 18 when copied). Any other command may migrate it.

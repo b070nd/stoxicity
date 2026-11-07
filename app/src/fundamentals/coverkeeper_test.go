@@ -39,12 +39,13 @@ func (m *coverMem) PutCover(_ context.Context, r CoverRead) error {
 	return nil
 }
 
-func (m *coverMem) PutCoverCheck(_ context.Context, cik, acc, problem string, at time.Time) error {
+func (m *coverMem) PutCoverCheck(_ context.Context, cik string, n CoverCheck) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	c := m.checks[cik]
-	c.At, c.Problem = at, problem
-	if acc != "" {
+	acc := c.Accession
+	c = n
+	if c.Accession == "" {
 		c.Accession = acc
 	}
 	m.checks[cik] = c
@@ -180,7 +181,7 @@ func TestCoverKeeperStopsOnABlockAndNotesOtherFailuresForALaterRetry(t *testing.
 	}
 }
 
-func TestDueOrdersNeverReadThenPriorityThenSeveralListingsAndHonoursTheWaits(t *testing.T) {
+func TestDueOrdersFollowedThenNeverReadThenSeveralListingsAndHonoursTheWaits(t *testing.T) {
 	checks := map[string]CoverCheck{
 		"read-old":   {At: coverNow.Add(-40 * 24 * time.Hour), Accession: "a"},
 		"read-young": {At: coverNow.Add(-5 * 24 * time.Hour), Accession: "a"},
@@ -195,7 +196,7 @@ func TestDueOrdersNeverReadThenPriorityThenSeveralListingsAndHonoursTheWaits(t *
 	for _, c := range Due(cands, checks, coverNow, 0, 0) {
 		got = append(got, c.CIK)
 	}
-	want := "prio multi single read-old bad-old" // read-old is a priority issuer
+	want := "prio read-old multi single bad-old" // the followed issuers come first, then those never read
 	if strings.Join(got, " ") != want {
 		t.Errorf("got %v, want %s", got, want)
 	}
@@ -205,5 +206,90 @@ func TestParseCoverAtSaysWhereTheCoverEnds(t *testing.T) {
 	_, last, err := ParseCoverAt(padded(cover, 100))
 	if err != nil || last <= 0 || last > int64(len(cover)) {
 		t.Errorf("the last cover fact lies within the cover, not the filler: %d (cover is %d bytes) %v", last, len(cover), err)
+	}
+}
+
+func TestBackoffDoublesWithEachFailureInARowAndIsCapped(t *testing.T) {
+	day := 24 * time.Hour
+	for n, want := range map[int]time.Duration{1: 3 * day, 2: 6 * day, 3: 12 * day, 4: MaxCoverBackoff, 9: MaxCoverBackoff, 0: 3 * day} {
+		if got := Backoff(0, n); got != want {
+			t.Errorf("Backoff(%d) = %v, want %v", n, got, want)
+		}
+	}
+}
+
+func TestAFailedLookIsRememberedWithItsRetryTimeAndAGoodOneForgetsIt(t *testing.T) {
+	ctx := context.Background()
+	st := newCoverMem()
+	f := httpx.NewFake()
+	f.Fail(fmt.Sprintf(subsFmt, "0000000001"), &httpx.Error{Class: httpx.Permanent, Err: errors.New("gone")})
+	k := newKeeper(f, st, CoverCandidate{CIK: "0000000001"})
+	if _, err := k.Refresh(ctx, 5); err != nil {
+		t.Fatal(err)
+	}
+	c := st.checks["0000000001"]
+	if c.Kind != CheckFailed || c.Failures != 1 || !c.Next.Equal(coverNow.Add(DefaultCoverRetry)) || c.Problem == "" {
+		t.Fatalf("after one failure: %+v", c)
+	}
+	// Not asked again before the stored retry time; asked when it has come, and the wait doubles.
+	if len(Due([]CoverCandidate{{CIK: "0000000001"}}, st.checks, coverNow.Add(DefaultCoverRetry-time.Minute), 0, 0)) != 0 {
+		t.Error("asked again before the retry time")
+	}
+	later := coverNow.Add(DefaultCoverRetry + time.Minute)
+	k.Now = func() time.Time { return later }
+	k.Refresh(ctx, 5)
+	if c := st.checks["0000000001"]; c.Failures != 2 || !c.Next.Equal(later.Add(2*DefaultCoverRetry)) {
+		t.Errorf("after two failures: %+v", c)
+	}
+	// A look that works clears it.
+	f2 := httpx.NewFake()
+	f2.Reply(fmt.Sprintf(subsFmt, "0000000001"), submissions([5]string{"0000000001-26-000010", "10-Q", "2026-10-30", "q.htm", ""}))
+	f2.Reply(docURL("1", "0000000001-26-000010", "q.htm"), httpx.Response{Status: 200, Body: []byte(cover)})
+	k.Client = f2
+	k.Now = func() time.Time { return later.Add(30 * 24 * time.Hour) }
+	if _, err := k.Refresh(ctx, 5); err != nil {
+		t.Fatal(err)
+	}
+	if c := st.checks["0000000001"]; c.Kind != "" || c.Failures != 0 || c.Problem != "" || !c.Next.IsZero() {
+		t.Errorf("after a good look: %+v", c)
+	}
+}
+
+func TestAnIssuerWithoutAMachineReadableCoverIsUnsupportedNotFailed(t *testing.T) {
+	f := httpx.NewFake()
+	f.Reply(fmt.Sprintf(subsFmt, "0000000001"), submissions([5]string{"0000000001-26-000010", "10-Q", "2026-10-30", "q.htm", ""}))
+	f.Reply(docURL("1", "0000000001-26-000010", "q.htm"), httpx.Response{Status: 200, Body: []byte("<html><body>plain</body></html>")})
+	st := newCoverMem()
+	rep, err := newKeeper(f, st, CoverCandidate{CIK: "0000000001"}).Refresh(context.Background(), 5)
+	c := st.checks["0000000001"]
+	if err != nil || rep.Empty != 1 || rep.Bad != 0 || c.Kind != CheckNoCover || c.Failures != 0 || !c.Next.Equal(coverNow.Add(DefaultCoverAge)) {
+		t.Errorf("%+v %v %+v", rep, err, c)
+	}
+}
+
+func TestAnInterruptedWalkResumesFromTheStoredStateFollowedFirst(t *testing.T) {
+	ctx := context.Background()
+	st := newCoverMem()
+	f := httpx.NewFake()
+	var cands []CoverCandidate
+	for _, id := range []string{"0000000001", "0000000002", "0000000003", "0000000004"} {
+		f.Reply(fmt.Sprintf(subsFmt, id), submissions([5]string{id + "-26-000010", "10-Q", "2026-10-30", "q.htm", ""}))
+		f.Reply(fmt.Sprintf("%s%s/%s/q.htm", arch, strings.TrimLeft(id, "0"), strings.ReplaceAll(id+"-26-000010", "-", "")), httpx.Response{Status: 200, Body: []byte(cover)})
+		cands = append(cands, CoverCandidate{CIK: id, Priority: id == "0000000004"})
+	}
+	// Two at a time: the followed issuer goes first, then the walk goes on where it stopped.
+	k := newKeeper(f, st, cands...)
+	var order []string
+	for i := 0; i < 3; i++ {
+		before := len(st.reads)
+		if _, err := k.Refresh(ctx, 2); err != nil {
+			t.Fatal(err)
+		}
+		for _, r := range st.reads[before:] {
+			order = append(order, r.CIK)
+		}
+	}
+	if strings.Join(order, " ") != "0000000004 0000000001 0000000002 0000000003" {
+		t.Errorf("order = %v", order)
 	}
 }

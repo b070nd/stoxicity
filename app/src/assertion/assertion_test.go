@@ -294,3 +294,26 @@ func TestAheadOfEstimatesIsAComparisonNotAPreview(t *testing.T) {
 		t.Fatalf("a result reported ahead of estimates is a current earnings event: %+v", r.Assertions)
 	}
 }
+
+func TestExplainNamesTheSameClaimAsBestAndSaysWhyTheOthersLost(t *testing.T) {
+	for _, r := range []Result{
+		Extract(in("Acme Corp raises dividend and agrees to acquire Bolt Industries",
+			"Acme Corp agreed to acquire Bolt Industries for $4 billion. Separately, Acme Corp raised its quarterly dividend by 5%.", "ACME", "BOLT")),
+		Extract(in("Acme Corp denies bankruptcy rumours", "Acme Corp said it is not filing for bankruptcy.", "ACME")),
+		Extract(in("Weather was fine", "Nothing happened.", "ACME")),
+	} {
+		best, _, ok := r.Best()
+		ex := r.Explain()
+		if ok == ex.Abstained || (ok && ex.Chosen.Seq != best.Seq) {
+			t.Errorf("Explain disagrees with Best: %+v vs %+v (%v)", ex, best, ok)
+		}
+		if ex.Summary == "" {
+			t.Errorf("an explanation with no words: %+v", ex)
+		}
+	}
+	ex := Extract(in("Acme Corp raises dividend and agrees to acquire Bolt Industries",
+		"Acme Corp agreed to acquire Bolt Industries for $4 billion. Separately, Acme Corp raised its quarterly dividend by 5%.", "ACME", "BOLT")).Explain()
+	if !strings.Contains(ex.Summary, "dividend lost") {
+		t.Errorf("the dividend's loss is not explained: %s", ex.Summary)
+	}
+}

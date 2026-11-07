@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -72,7 +73,7 @@ func claimed(t *testing.T, arts ...model.Article) (map[string]assertion.Result, 
 	for _, a := range arts {
 		claims[a.ID] = Claims(a, names, nil)
 	}
-	return claims, EventsFrom(arts, claims)
+	return claims, EventsFrom(arts, claims, nil)
 }
 
 func text(id, title, summary string, tickers ...string) model.Article {
@@ -82,21 +83,111 @@ func text(id, title, summary string, tickers ...string) model.Article {
 	return a
 }
 
-func TestAStoryThatSaysTwoThingsIsNamedAfterTheMoreImportantClaimWithRoles(t *testing.T) {
+func byKind(evs []store.EventInput) map[model.EventKind]store.EventInput {
+	out := map[model.EventKind]store.EventInput{}
+	for _, e := range evs {
+		out[e.Kind] = e
+	}
+	return out
+}
+
+func tickersOf(e store.EventInput) string {
+	var out []string
+	for _, s := range e.Securities {
+		out = append(out, s.Ticker+":"+string(s.Role))
+	}
+	slices.Sort(out)
+	return strings.Join(out, ",")
+}
+
+func TestAStoryThatSaysTwoThingsIsTwoEventsEachWithItsOwnCompanies(t *testing.T) {
 	a := text("a1", "Acme Corp raises dividend and agrees to acquire Bolt Industries", "", "ACME", "BOLT", "ZETA")
 	_, got := claimed(t, a)
-	if len(got) != 1 || got[0].Kind != model.EventAcquisition {
-		t.Fatalf("the lens's first keyword said dividend; the claims say acquisition: %+v", got)
+	if len(got) != 2 {
+		t.Fatalf("a dividend and a deal are two events: %+v", got)
 	}
-	roles := map[string]model.Role{}
-	for _, s := range got[0].Securities {
-		roles[s.Ticker] = s.Role
+	k := byKind(got)
+	if tickersOf(k[model.EventDividend]) != "ACME:subject" {
+		t.Errorf("Bolt has no part in the dividend: %s", tickersOf(k[model.EventDividend]))
 	}
-	if roles["ACME"] != model.RoleSubject || roles["BOLT"] != model.RoleCounterparty || roles["ZETA"] != model.RoleMentioned {
-		t.Errorf("roles %v", roles)
+	if tickersOf(k[model.EventAcquisition]) != "ACME:subject,BOLT:counterparty" {
+		t.Errorf("the deal is Acme's and Bolt's: %s", tickersOf(k[model.EventAcquisition]))
 	}
-	if !strings.HasSuffix(got[0].LensVersion, "+"+assertion.Version) {
-		t.Errorf("the revision records which reading made it: %s", got[0].LensVersion)
+	if k[model.EventAcquisition].EventID != "evt_a1" || k[model.EventDividend].EventID != "evt_a1~dividend" {
+		t.Errorf("the most important claim keeps the story's ID, the other says what it is: %s %s", k[model.EventAcquisition].EventID, k[model.EventDividend].EventID)
+	}
+	if rel := k[model.EventDividend].Relations; len(rel) != 1 || rel[0].To != "evt_a1" || rel[0].Relation != model.RelationSplitFrom {
+		t.Errorf("a later event of a story says it split from the first: %+v", rel)
+	}
+	if !strings.HasSuffix(k[model.EventAcquisition].LensVersion, "+"+assertion.Version) {
+		t.Errorf("the revision records which reading made it: %s", k[model.EventAcquisition].LensVersion)
+	}
+	if !strings.Contains(k[model.EventAcquisition].Rationale, "claim 2 of 2") || len(k[model.EventAcquisition].Claims) != 1 || !k[model.EventAcquisition].Claims[0].Names {
+		t.Errorf("an event says which claim made it: %+v %s", k[model.EventAcquisition].Claims, k[model.EventAcquisition].Rationale)
+	}
+}
+
+func TestEarningsADepartureAndADealAreThreeEventsAndNotCopiedOntoEveryCompany(t *testing.T) {
+	a := text("a1", "Acme Corp posts record earnings, CEO to step down and agrees to buy Bolt Industries", "Shares of Zeta Ltd also rose.", "ACME", "BOLT", "ZETA")
+	_, got := claimed(t, a)
+	if len(got) != 3 {
+		t.Fatalf("earnings, a departure and a deal: %+v", got)
+	}
+	k := byKind(got)
+	for kind, want := range map[model.EventKind]string{
+		model.EventResults: "ACME:subject", model.EventOfficerChange: "ACME:subject", model.EventAcquisition: "ACME:subject,BOLT:counterparty",
+	} {
+		if tickersOf(k[kind]) != want {
+			t.Errorf("%s: companies %q, want %q", kind, tickersOf(k[kind]), want)
+		}
+	}
+	// "record" is about the earnings, not the departure.
+	if k[model.EventResults].Materiality != 4 || k[model.EventOfficerChange].Materiality != 2 {
+		t.Errorf("materiality results %d, departure %d", k[model.EventResults].Materiality, k[model.EventOfficerChange].Materiality)
+	}
+	ids := map[string]bool{}
+	for _, e := range got {
+		ids[e.EventID] = true
+		if len(e.Evidence) != 1 || e.Evidence[0].ArticleID != "a1" || len(e.Claims) != 1 {
+			t.Errorf("%s: evidence %v claims %v", e.EventID, e.Evidence, e.Claims)
+		}
+	}
+	if len(ids) != 3 {
+		t.Errorf("distinct IDs: %v", ids)
+	}
+}
+
+func TestAnArticleIsEvidenceOnlyOfTheEventsItsClaimsMake(t *testing.T) {
+	a := text("a1", "Acme Corp posts record earnings and agrees to buy Bolt Industries", "", "ACME", "BOLT")
+	b := text("a2", "Acme Corp agrees to buy Bolt Industries", "", "ACME", "BOLT")
+	for _, x := range []*model.Article{&a, &b} {
+		x.ClusterID = "c1"
+	}
+	_, got := claimed(t, a, b)
+	k := byKind(got)
+	if len(k[model.EventResults].Evidence) != 1 || k[model.EventResults].Evidence[0].ArticleID != "a1" {
+		t.Errorf("the second article says nothing of earnings: %+v", k[model.EventResults].Evidence)
+	}
+	if len(k[model.EventAcquisition].Evidence) != 2 {
+		t.Errorf("both articles are evidence of the deal: %+v", k[model.EventAcquisition].Evidence)
+	}
+}
+
+func TestAnEventKeepsItsIDAndMeaningWhenAStoryGainsAnotherClaim(t *testing.T) {
+	a := text("a1", "Acme Corp posts quarterly results and agrees to buy Bolt Industries", "", "ACME", "BOLT")
+	claims := map[string]assertion.Result{"a1": Claims(a, func(tk string) []string {
+		return map[string][]string{"ACME": {"Acme Corp"}, "BOLT": {"Bolt Industries"}}[tk]
+	}, nil)}
+	// The story's own event was stored earlier as results: the ID stays with that meaning.
+	got := EventsFrom([]model.Article{a}, claims, map[string]model.EventKind{"evt_a1": model.EventResults})
+	k := byKind(got)
+	if k[model.EventResults].EventID != "evt_a1" || k[model.EventAcquisition].EventID != "evt_a1~acquisition" {
+		t.Errorf("%s %s", k[model.EventResults].EventID, k[model.EventAcquisition].EventID)
+	}
+	// A story not seen before gives its ID to the most important claim.
+	got = EventsFrom([]model.Article{a}, claims, nil)
+	if byKind(got)[model.EventAcquisition].EventID != "evt_a1" {
+		t.Errorf("%+v", got)
 	}
 }
 
@@ -155,7 +246,7 @@ func TestAssessmentsAreSeparateReadingsAndKnowWhatCameBefore(t *testing.T) {
 
 func TestTextWithoutClaimsKeepsTheLensReading(t *testing.T) {
 	a := scored("a1", "", "8-K - Acme Corp", 4, "ACME")
-	if got := EventsFrom([]model.Article{a}, map[string]assertion.Result{}); len(got) != 1 {
+	if got := EventsFrom([]model.Article{a}, map[string]assertion.Result{}, nil); len(got) != 1 {
 		t.Errorf("an article the claims were not read for is read as before: %+v", got)
 	}
 }

@@ -23,7 +23,7 @@ const (
 	freshFor       = 8 * time.Second // how long a row that came in or changed stands out
 	searchLimit    = 200
 	loadTimeout    = 30 * time.Second
-	chromeLines    = 5 // watch bar, meters, breadcrumbs, key bar (or prompt), status line
+	chromeLines    = 6 // navigation, filters, meters, breadcrumbs, key bar, status
 	minWidth       = 40
 	minHeight      = 8
 )
@@ -69,6 +69,12 @@ type Model struct {
 	// on the chip numbered chip.
 	chipFocus bool
 	chip      int
+	// navFocus gives the section bar the arrows instead of the content.
+	navFocus     bool
+	relevantOnly bool
+	showFacets   bool
+	suggestions  []suggestion
+	suggestionAt int
 	// scoped is the last narrowing of the news, kept while nothing it came from
 	// changes.
 	scoped scopedNews
@@ -179,6 +185,7 @@ func New(ctx context.Context, opts Options) *Model {
 		width: 100, height: 30, cursors: map[string]int{},
 		sorts: map[nav.Kind]Sort{}, marks: map[string]bool{}, fresh: map[string]time.Time{},
 		verdicts: map[string]labels.Verdict{}, latest: map[string][]model.Article{}, latestAsked: map[string]int{},
+		relevantOnly: true, suggestionAt: -1,
 	}
 	watch := opts.Watch
 	if watch == "" {
@@ -351,6 +358,7 @@ func (m *Model) rebuild() {
 		clear(m.fresh) // another screen: nothing on it is news yet
 	}
 	d := Data{
+		Width: m.width - 2, ShowFacets: m.showFacets, AllNews: !m.relevantOnly,
 		Params: p, Watchlist: m.be.Watchlist(), Topics: m.be.TopicNames(),
 		Name: m.be.CompanyName, Verdicts: m.verdicts, Sources: m.sources,
 		Watches: m.watches, WatchID: m.stack.Watch(), Now: m.be.Now(), Truncated: m.truncated,
@@ -360,6 +368,12 @@ func (m *Model) rebuild() {
 	if ex, ok := m.be.(Explainer); ok {
 		d.Why = ex.Why()
 	}
+	if cb, ok := m.be.(Calendarer); ok {
+		d.Calendar = cb.Calendar()
+	}
+	if sb, ok := m.be.(Standinger); ok {
+		d.Standing = sb.Standings()
+	}
 	d.Exchange, d.Chosen = m.scopeOf(r), m.exchange
 	if needsShared(r.Kind) {
 		d.Articles = m.scoped.news(d.Universe, m.shared, d.Exchange)
@@ -368,6 +382,9 @@ func (m *Model) rebuild() {
 	}
 	if r.Kind == nav.Stock {
 		d.Latest, d.LatestOK = m.latest[strings.ToUpper(r.Arg)], m.latestKnown(r.Arg)
+	}
+	if m.relevantOnly && (r.Kind == nav.Search || r.Kind == nav.Day) {
+		d.Articles = relevantArticles(d.Articles, p.Threshold)
 	}
 	if !filtering { // the query being typed may say sort: or group: itself
 		d.Sort = m.sorts[r.Kind]

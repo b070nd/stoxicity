@@ -19,9 +19,9 @@ func (h *harness) chipRow() string {
 	return ""
 }
 
-func TestExchangeCloudIsOnHomeCompaniesAndExchanges(t *testing.T) {
+func TestExchangeCloudIsOnStocksAndExchanges(t *testing.T) {
 	h := newHarness(t)
-	for _, key := range []string{"h", "c", "e"} {
+	for _, key := range []string{"c", "e"} {
 		h.press(key)
 		row := h.chipRow()
 		for _, want := range []string{"All 4", "Nasdaq 3", "NYSE 1"} {
@@ -41,8 +41,10 @@ func TestExchangeCloudIsOnHomeCompaniesAndExchanges(t *testing.T) {
 
 func TestExchangeCloudWeighsByCount(t *testing.T) {
 	h := newHarness(t)
+	h.press("c")
 	var nasdaq, nyse Style
-	for _, c := range h.m.scr.Rows[1].Chips {
+	chips, _ := h.m.chipList()
+	for _, c := range chips {
 		switch c.Value {
 		case "Nasdaq":
 			nasdaq = c.Style

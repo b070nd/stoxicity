@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/b070nd/stoxicity/app/src/feeds/edgar"
@@ -83,10 +84,13 @@ func (c Config) log() *slog.Logger {
 
 // Report says what a Discover run did.
 type Report struct {
-	RunID            int64
-	From, To         string
-	Days             int // days in the range
-	Skipped          int // already resolved
+	RunID    int64
+	From, To string
+	Days     int // days in the range
+	Skipped  int // already resolved
+	// FormsChanged counts resolved days read again because they were read for other
+	// forms than the ones selected now.
+	FormsChanged     int
 	Daily, Quarterly int // daily indexes and quarterly indexes read
 	Complete         int
 	NonFiling        int
@@ -95,6 +99,53 @@ type Report struct {
 	Added            int    // filings stored that were not before
 	Pending          int    // days of the range still unresolved after the run
 	Stopped          string // why the run ended early, empty when it ran to the end
+}
+
+// FormsKey writes a selection of forms in the way the days record it: upper case,
+// sorted, without repeats, comma separated.
+func FormsKey(forms []string) string {
+	seen := map[string]bool{}
+	var out []string
+	for _, f := range forms {
+		if f = strings.ToUpper(strings.TrimSpace(f)); f != "" && !seen[f] {
+			seen[f] = true
+			out = append(out, f)
+		}
+	}
+	slices.Sort(out)
+	return strings.Join(out, ",")
+}
+
+// readFor says whether a day read for the forms in stored covers the forms in
+// want. A day read before the selection was recorded covers nothing.
+func readFor(stored, want string) bool {
+	if want == "" {
+		return true
+	}
+	if stored == "" {
+		return false
+	}
+	have := map[string]bool{}
+	for _, f := range strings.Split(stored, ",") {
+		have[f] = true
+	}
+	for _, f := range strings.Split(want, ",") {
+		if !have[f] {
+			return false
+		}
+	}
+	return true
+}
+
+// covered says whether a stored day needs no further reading for the forms: it is
+// resolved and, when its filings were taken from an index, taken for these forms.
+// A day with no filings by the calendar or by an empty completed quarter has none
+// of any form.
+func covered(d store.IndexDay, forms string) bool {
+	if !d.Status.Resolved() {
+		return false
+	}
+	return d.Status == store.DayNonFiling || readFor(d.Forms, forms)
 }
 
 func day(t time.Time) time.Time { return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC) }
@@ -163,16 +214,25 @@ func (c Config) Discover(ctx context.Context, from, to time.Time, mode string) (
 	if err != nil {
 		return rep, err
 	}
+	forms := FormsKey(c.Forms)
 	var need []time.Time
 	for d := from; !d.After(to); d = d.AddDate(0, 0, 1) {
 		rep.Days++
-		if h, ok := stored[d.Format(time.DateOnly)]; ok && h.Status.Resolved() && !c.Refetch {
-			rep.Skipped++
-			continue
+		if h, ok := stored[d.Format(time.DateOnly)]; ok && !c.Refetch {
+			if covered(h, forms) {
+				rep.Skipped++
+				continue
+			}
+			if h.Status.Resolved() {
+				rep.FormsChanged++
+			}
 		}
 		need = append(need, d)
 	}
-	run, err := c.DB.StartReconcileRun(ctx, rep.From, rep.To, mode, len(need), now)
+	// What was read is written even when the run is being cut off: a cancelled
+	// context stops the requests, not the record of what they found.
+	wctx := context.WithoutCancel(ctx)
+	run, err := c.DB.StartReconcileRun(wctx, rep.From, rep.To, mode, len(need), now)
 	if err != nil {
 		return rep, err
 	}
@@ -183,7 +243,7 @@ func (c Config) Discover(ctx context.Context, from, to time.Time, mode string) (
 		if finished {
 			fin = c.now()
 		}
-		if err := c.DB.UpdateReconcileRun(ctx, run, done, note, fin); err != nil {
+		if err := c.DB.UpdateReconcileRun(wctx, run, done, note, fin); err != nil {
 			c.log().Warn("reconcile: could not record progress", "err", err)
 		}
 	}
@@ -231,8 +291,15 @@ func (c Config) Discover(ctx context.Context, from, to time.Time, mode string) (
 		}
 		key := d.Format(time.DateOnly)
 		entries, found, err := c.Indexer.Day(ctx, d)
+		if cerr := ctx.Err(); cerr != nil {
+			// The run was cut off while the request was out: nothing was learned of the
+			// day, and that is not the SEC's failure. It stays as it was and is read next time.
+			runErr = cerr
+			rep.Stopped = "interrupted"
+			break
+		}
 		rep.Daily++
-		res := store.DayResult{Day: key, Source: "daily"}
+		res := store.DayResult{Day: key, Source: "daily", Forms: forms}
 		switch {
 		case err != nil:
 			res.Status, res.Err = store.DayError, err.Error()
@@ -260,7 +327,7 @@ func (c Config) Discover(ctx context.Context, from, to time.Time, mode string) (
 				rep.Complete++
 			}
 		}
-		added, perr := c.DB.PutFilingDay(ctx, res, now)
+		added, perr := c.DB.PutFilingDay(wctx, res, now)
 		if perr != nil {
 			return rep, perr
 		}
@@ -275,7 +342,7 @@ func (c Config) Discover(ctx context.Context, from, to time.Time, mode string) (
 			}
 		}
 	}
-	rem, err := c.DB.UnresolvedDays(ctx, rep.From, rep.To)
+	rem, err := c.DB.UnresolvedDays(wctx, rep.From, rep.To)
 	if err != nil {
 		return rep, err
 	}
@@ -342,7 +409,7 @@ func (c Config) quarterly(ctx context.Context, days []time.Time, today, now time
 		for _, d := range ds {
 			key := d.Format(time.DateOnly)
 			list := byDay[key]
-			res := store.DayResult{Day: key, Source: "quarterly", Listed: len(list), Status: store.DayComplete, Basis: "quarterly index"}
+			res := store.DayResult{Day: key, Source: "quarterly", Listed: len(list), Status: store.DayComplete, Basis: "quarterly index", Forms: FormsKey(c.Forms)}
 			for _, e := range edgar.Wanted(list, c.Forms) {
 				res.Refs = append(res.Refs, refOf(e))
 			}

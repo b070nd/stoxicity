@@ -41,7 +41,7 @@ import (
 
 // Version names the rules. It is stored with every origin so that a later
 // version adds rows instead of rewriting what an earlier one found.
-const Version = "origin-1"
+const Version = "origin-2"
 
 // Kind says what sort of origin it is.
 type Kind string
@@ -69,6 +69,7 @@ const (
 	MethodByline          Method = "byline"
 	MethodExactCopy       Method = "exact-copy"
 	MethodNearCopy        Method = "near-copy"
+	MethodPassageOverlap  Method = "passage-overlap"
 	MethodNone            Method = "none"
 )
 
@@ -99,19 +100,78 @@ type Origin struct {
 	// does not confirm it.
 	DerivedFrom string
 	// CopyOf is the article this one copies, for exact and near copies.
-	CopyOf     string
+	CopyOf string
+	// SuspectedFrom is the article this one is suspected to derive from: a
+	// substantial passage of its own words equals a passage of that article, but
+	// not enough to call it a copy. It is a suspicion, not a finding of a common
+	// origin, so the origin keeps its own Key; until the suspicion is settled it
+	// is not counted as an independent report.
+	SuspectedFrom string
+	// Matches are the observations behind CopyOf and SuspectedFrom.
+	Matches    []Match
 	Method     Method
 	Confidence float64 // 0..1, how sure the rule is, not how true the report is
 	Detail     string  // the text or fact that decided it
 	Version    string
 }
 
-// Independent says whether the origin can stand as a confirmation apart from
-// the issuer's own statements: it is a report of an agency or of a newsroom's
-// own byline, and nothing seen shows it resting on a document.
-func (o Origin) Independent() bool {
-	return (o.Kind == KindWire || o.Kind == KindReported) && o.DerivedFrom == ""
+// Match is what was seen when two articles were compared.
+type Match struct {
+	Other      string  // the article compared with
+	Method     Method  // exact-copy, near-copy or passage-overlap
+	Score      float64 // the measure the method uses (share of equal word runs)
+	Shared     int     // three-word runs the two articles share
+	LongestRun int     // the longest run of consecutive equal words
+	Passage    string  // the longest shared run, as written in the earlier article
 }
+
+// Standing says how far an origin is established as a report of its own. It is
+// what the corroboration verdict reads, never the publisher's domain: ten sites
+// are ten publishers however they are named.
+type Standing string
+
+const (
+	// StandingOwn: a primary document or the issuer's own release.
+	StandingOwn Standing = "own"
+	// StandingAttributed: the text names a news agency as its source (a
+	// dateline, a credit line). The attribution is the text's own claim and is not
+	// verified, but it is explicit and it names who reported.
+	StandingAttributed Standing = "attributed"
+	// StandingClaimed: the article claims reporting of its own (a byline, a
+	// provider's story ID) and nothing more. Rewrites of other reports carry
+	// bylines too, so this does not establish independence.
+	StandingClaimed Standing = "claimed"
+	// StandingSuspected: a substantial passage equals one of an earlier article.
+	StandingSuspected Standing = "suspected-derivative"
+	// StandingDerived: rests on a document or another report.
+	StandingDerived Standing = "derived"
+	// StandingUnknown: nothing says where it came from.
+	StandingUnknown Standing = "unknown"
+)
+
+// Standing classifies the origin.
+func (o Origin) Standing() Standing {
+	switch {
+	case o.Own():
+		return StandingOwn
+	case o.Kind == KindUnknown:
+		return StandingUnknown
+	case o.Kind == KindDerived || o.DerivedFrom != "":
+		return StandingDerived
+	case o.SuspectedFrom != "":
+		return StandingSuspected
+	case o.Kind == KindWire:
+		return StandingAttributed
+	default:
+		return StandingClaimed
+	}
+}
+
+// Independent says whether the origin can stand as a confirmation apart from
+// the issuer's own statements: an agency's attributed report that rests on no
+// document and is not suspected of being derived from another article. A byline
+// alone, a distinct domain, or an unknown origin never is.
+func (o Origin) Independent() bool { return o.Standing() == StandingAttributed }
 
 // Own says whether the origin is the issuer or a primary document speaking for
 // itself.
@@ -308,31 +368,74 @@ func shingles(s string) map[string]bool {
 	return out
 }
 
-// NearCopy is the least share of shared three-word runs at which two texts are
-// taken for copies of one another.
+// NearCopy is the least share of shared three-word runs (of all the runs of
+// both texts) at which two texts are taken for copies of one another.
 const NearCopy = 0.85
 
 // minNearWords is the fewest words a text needs to be compared for near copies:
 // short headlines of different stories are alike by chance.
 const minNearWords = 30
 
+// Passage overlap, the weaker test: an edited syndication keeps long stretches
+// of the original's words but adds, drops and reorders. Two texts are suspected
+// of deriving one from the other when, with quoted words left out (outlets
+// quote the same statement without copying each other), at least
+// SuspectContainment of the shorter text's three-word runs occur in the other,
+// or SuspectRun consecutive words are equal. Both texts need minSuspectWords
+// words outside quotation marks.
+const (
+	SuspectContainment = 0.5
+	SuspectRun         = 12
+	minSuspectWords    = 20
+)
+
 func jaccard(a, b map[string]bool) float64 {
 	if len(a) == 0 || len(b) == 0 {
 		return 0
 	}
+	return float64(shared(a, b)) / float64(len(a)+len(b)-shared(a, b))
+}
+
+func shared(a, b map[string]bool) int {
 	inter := 0
 	for k := range a {
 		if b[k] {
 			inter++
 		}
 	}
-	return float64(inter) / float64(len(a)+len(b)-inter)
+	return inter
 }
 
-// Link joins the copies among the articles of one story: an article whose text
+var quoted = regexp.MustCompile(`"[^"]{8,}"|\x{201C}[^\x{201D}]{8,}\x{201D}`)
+
+// unquoted is the text without what is inside quotation marks.
+func unquoted(s string) string { return quoted.ReplaceAllString(s, " ") }
+
+// longestRun returns the longest run of consecutive equal words of a and b.
+func longestRun(a, b []string) (n int, at int) {
+	prev := make([]int, len(b)+1)
+	for i := 1; i <= len(a); i++ {
+		cur := make([]int, len(b)+1)
+		for j := 1; j <= len(b); j++ {
+			if a[i-1] == b[j-1] {
+				cur[j] = prev[j-1] + 1
+				if cur[j] > n {
+					n, at = cur[j], i-cur[j]
+				}
+			}
+		}
+		prev = cur
+	}
+	return n, at
+}
+
+// Link joins the copies among the articles of one story. An article whose text
 // equals, or nearly equals, the text of an earlier article takes that article's
-// origin. ins and os run in parallel; the result is a new slice in the same order.
-// A primary document is never a copy of anything.
+// origin. An article that shares a substantial passage with an earlier one, but
+// is not a near copy, is marked as suspected of deriving from it and keeps its
+// own origin. ins and os run in parallel; the result is a new slice in the same
+// order. A primary document is never a copy of anything, and no finding rests on
+// the topic: two articles about one acquisition are alike only if their words are.
 func Link(ins []Input, os []Origin) []Origin {
 	out := slices.Clone(os)
 	order := make([]int, len(ins))
@@ -345,38 +448,75 @@ func Link(ins []Input, os []Origin) []Origin {
 		}
 		return strings.Compare(ins[a].ArticleID, ins[b].ArticleID)
 	})
-	fp := make([]string, len(ins))
-	sh := make([]map[string]bool, len(ins))
-	nw := make([]int, len(ins))
+	n := len(ins)
+	fp := make([]string, n)
+	sh, shq := make([]map[string]bool, n), make([]map[string]bool, n)
+	nw, nq := make([]int, n), make([]int, n)
+	wq := make([][]string, n)
 	for i, in := range ins {
+		text := in.Title + " " + clip(in.Summary, 600)
 		fp[i] = Fingerprint(in.Title, in.Summary)
-		sh[i] = shingles(in.Title + " " + clip(in.Summary, 600))
-		nw[i] = len(words(in.Title + " " + clip(in.Summary, 600)))
+		sh[i] = shingles(text)
+		nw[i] = len(words(text))
+		wq[i] = words(unquoted(text))
+		nq[i] = len(wq[i])
+		shq[i] = shingles(unquoted(text))
 	}
 	for pos, i := range order {
 		if out[i].Kind == KindPrimary {
 			continue
 		}
+		var best *Match
 		for _, j := range order[:pos] {
 			if out[j].Kind == KindPrimary || ins[j].ArticleID == ins[i].ArticleID {
 				continue
 			}
 			switch {
 			case fp[i] != "" && fp[i] == fp[j]:
-				adopt(&out[i], out[j], ins[j].ArticleID, MethodExactCopy, 0.95, "the title and opening text equal those of "+ins[j].ArticleID)
+				m := Match{Other: ins[j].ArticleID, Method: MethodExactCopy, Score: 1, Shared: len(sh[i])}
+				adopt(&out[i], out[j], m, 0.95, "the title and opening text equal those of "+ins[j].ArticleID)
+				best = nil
 			case nw[i] >= minNearWords && nw[j] >= minNearWords && jaccard(sh[i], sh[j]) >= NearCopy:
-				adopt(&out[i], out[j], ins[j].ArticleID, MethodNearCopy, 0.6, fmt.Sprintf("%.0f%% of the three-word runs equal those of %s", jaccard(sh[i], sh[j])*100, ins[j].ArticleID))
+				sc := jaccard(sh[i], sh[j])
+				m := Match{Other: ins[j].ArticleID, Method: MethodNearCopy, Score: sc, Shared: shared(sh[i], sh[j])}
+				adopt(&out[i], out[j], m, 0.7, fmt.Sprintf("%.0f%% of the three-word runs equal those of %s", sc*100, ins[j].ArticleID))
+				best = nil
 			default:
+				if nq[i] < minSuspectWords || nq[j] < minSuspectWords {
+					continue
+				}
+				run, at := longestRun(wq[i], wq[j])
+				short := min(len(shq[i]), len(shq[j]))
+				contain := 0.0
+				if short > 0 {
+					contain = float64(shared(shq[i], shq[j])) / float64(short)
+				}
+				if contain < SuspectContainment && run < SuspectRun {
+					continue
+				}
+				m := Match{Other: ins[j].ArticleID, Method: MethodPassageOverlap, Score: contain, Shared: shared(shq[i], shq[j]), LongestRun: run}
+				if run > 0 {
+					m.Passage = strings.Join(wq[i][at:at+run], " ")
+				}
+				if best == nil || m.Score > best.Score || (m.Score == best.Score && m.LongestRun > best.LongestRun) {
+					best = &m
+				}
 				continue
 			}
 			break
+		}
+		if best != nil && out[i].CopyOf == "" {
+			out[i].SuspectedFrom = best.Other
+			out[i].Matches = append(slices.Clone(out[i].Matches), *best)
+			out[i].Detail += fmt.Sprintf("; suspected derivative of %s (%.0f%% of its word runs recur, longest equal run %d words), not proven", best.Other, best.Score*100, best.LongestRun)
 		}
 	}
 	return out
 }
 
 // adopt makes o a copy of src.
-func adopt(o *Origin, src Origin, from string, m Method, conf float64, why string) {
-	o.Key, o.Kind, o.DerivedFrom = src.Key, src.Kind, src.DerivedFrom
-	o.CopyOf, o.Method, o.Confidence, o.Detail = from, m, conf, why
+func adopt(o *Origin, src Origin, m Match, conf float64, why string) {
+	o.Key, o.Kind, o.DerivedFrom, o.SuspectedFrom = src.Key, src.Kind, src.DerivedFrom, src.SuspectedFrom
+	o.CopyOf, o.Method, o.Confidence, o.Detail = m.Other, m.Method, conf, why
+	o.Matches = append(slices.Clone(o.Matches), m)
 }

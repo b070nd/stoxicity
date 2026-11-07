@@ -10,12 +10,12 @@ copies any such service; the design is the idea only.
 
 A story is a cluster of articles about one event (package `cluster`: canonical
 URL, then title similarity within 48 hours). Outlets are counted by **domain**,
-so two feeds of one publisher are one outlet, not corroboration.
+so two feeds of one publisher are one outlet.
 
 | Backing | Meaning |
 |---|---|
 | `primary` | a tier 1 source reports it: a filing, a regulator, a central bank. Strongest, even with one outlet |
-| `corroborated` | no primary source, but two or more independent outlets of tier 2 report it |
+| `multi-outlet` | no primary source, but two or more outlets (domains) of tier 2 report it. This counts sites only; it does not check where each site got the story, so it is **not** corroboration. Corroboration is judged from reporting origins by `signals` |
 | `unconfirmed` | one tier 2 outlet only |
 | `opinion` | only commentary (tier 3) |
 
@@ -25,7 +25,7 @@ is the counterpart of a "blind spot": not a story one camp ignores, but a
 consequential claim that only one newsroom carries.
 
 ```
-stoxicity coverage [-days 7] [-limit 20] [-backing primary|corroborated|unconfirmed|opinion] [-thin] [-all]
+stoxicity coverage [-days 7] [-limit 20] [-backing primary|multi-outlet|unconfirmed|opinion] [-thin] [-all]
 ```
 
 By default only stories at or above the lens threshold are listed; `-all` adds

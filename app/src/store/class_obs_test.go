@@ -78,7 +78,7 @@ func TestPutCoverKeepsDuplicatesConflictsAndRevisionsWithoutOverwriting(t *testi
 	if checks["0000000001"].Accession != "0000000001-26-000002" || checks["0000000001"].Problem != "" {
 		t.Errorf("%+v", checks)
 	}
-	if err := db.PutCoverCheck(ctx, "0000000001", "", "boom", at.Add(48*time.Hour)); err != nil {
+	if err := db.PutCoverCheck(ctx, "0000000001", fundamentals.CoverCheck{At: at.Add(48 * time.Hour), Problem: "boom", Kind: fundamentals.CheckFailed, Failures: 1}); err != nil {
 		t.Fatal(err)
 	}
 	if c, _ := db.CoverChecks(ctx); c["0000000001"].Problem != "boom" || c["0000000001"].Accession != "0000000001-26-000002" {

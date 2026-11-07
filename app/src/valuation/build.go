@@ -18,78 +18,120 @@ type Source interface {
 	ClassMaps(ctx context.Context, at time.Time) (map[string]map[string]Mapping, error)
 	// LatestCandles returns the newest candles of each stock, newest first.
 	LatestCandles(ctx context.Context) (map[string][]marketdata.Candle, error)
+	// CandlesAsOf returns the newest candles of each stock that were public by at
+	// and, when known is not zero, held by this system by then (see the store).
+	CandlesAsOf(ctx context.Context, at, known time.Time) (map[string][]marketdata.Candle, error)
 	Splits(ctx context.Context) ([]marketdata.Split, error)
 	SplitCoverage(ctx context.Context) (marketdata.SplitCoverage, error)
+	// SplitsAsOf and SplitCoverageAsOf are the split list and what it covered as
+	// held by this system by the time (zero: now).
+	SplitsAsOf(ctx context.Context, known time.Time) ([]marketdata.Split, error)
+	SplitCoverageAsOf(ctx context.Context, known time.Time) (marketdata.SplitCoverage, error)
 }
 
 // Set is the valuation of every issuer with a stored count, by SEC number.
 type Set struct {
 	ByCIK map[string]Value
-	// Known is the time the counts and mappings were read as of; zero is now.
-	Known time.Time
+	// View is what the set is as of.
+	View View
 }
 
-// Build values every issuer. Counts and mappings are read as known at the time
-// (zero: now); prices are always the newest stored ones, so a valuation as of a
-// past time is not offered: callers pass a past time only to see which counts
-// and mappings were known.
-func Build(ctx context.Context, src Source, profiles []universe.Profile, known, now time.Time) (Set, error) {
+// Annotate fills in, from the universe, what a mapping needs and does not store:
+// the kind of security and the exchange it is listed on.
+func Annotate(maps map[string]Mapping, profiles []universe.Profile) map[string]Mapping {
+	type info struct{ typ, venue string }
+	by := map[string]info{}
+	for _, p := range profiles {
+		by[marketdata.NormTicker(p.Ticker)] = info{p.Type(), p.Exchange}
+	}
+	out := make(map[string]Mapping, len(maps))
+	for d, m := range maps {
+		i := by[marketdata.NormTicker(m.Ticker)]
+		m.Type, m.Venue = i.typ, i.venue
+		out[d] = m
+	}
+	return out
+}
+
+// Build values every issuer as the view has it. For a known view the counts,
+// mappings, prices and splits are those this installation had stored by the
+// time; for a reconstructed view, those the record supports as of the time (see
+// Mode). The ages of the inputs are measured against the view's time, not the
+// wall clock.
+func Build(ctx context.Context, src Source, profiles []universe.Profile, view View, now time.Time) (Set, error) {
 	obs, err := src.ClassObs(ctx)
 	if err != nil {
 		return Set{}, err
 	}
-	maps, err := src.ClassMaps(ctx, known)
+	var mapAt time.Time
+	if view.Mode == ModeKnown {
+		mapAt = view.At
+	}
+	maps, err := src.ClassMaps(ctx, mapAt)
 	if err != nil {
 		return Set{}, err
 	}
-	m, err := LoadMarket(ctx, src)
+	m, err := LoadMarketView(ctx, src, view)
 	if err != nil {
 		return Set{}, err
-	}
-	types := map[string]string{}
-	for _, p := range profiles {
-		types[marketdata.NormTicker(p.Ticker)] = p.Type()
 	}
 	byCIK := map[string][]Obs{}
 	for _, o := range obs {
 		byCIK[o.CIK] = append(byCIK[o.CIK], o)
 	}
-	set := Set{ByCIK: make(map[string]Value, len(byCIK)), Known: known}
+	set := Set{ByCIK: make(map[string]Value, len(byCIK)), View: view}
 	for cik, os := range byCIK {
-		pick, ok := Select(os, known)
+		pick, ok := SelectView(os, view)
 		if !ok {
 			continue
 		}
-		mp := map[string]Mapping{}
-		for d, mm := range maps[cik] {
-			mm.Type = types[marketdata.NormTicker(mm.Ticker)]
-			mp[d] = mm
-		}
-		set.ByCIK[cik] = Compute(pick, mp, m, now)
+		set.ByCIK[cik] = Compute(pick, Annotate(maps[cik], profiles), m, view.Ref(now))
 	}
 	return set, nil
 }
 
-// LoadMarket reads the prices and splits.
+// LoadMarket reads the newest prices and all the splits.
 func LoadMarket(ctx context.Context, src Source) (Market, error) {
-	latest, err := src.LatestCandles(ctx)
-	if err != nil {
-		return Market{}, err
+	return LoadMarketView(ctx, src, View{})
+}
+
+// LoadMarketView reads the prices and splits as the view has them.
+func LoadMarketView(ctx context.Context, src Source, view View) (Market, error) {
+	var latest map[string][]marketdata.Candle
+	var splits []marketdata.Split
+	var cov marketdata.SplitCoverage
+	var err error
+	if view.Historical() {
+		var heldBy time.Time
+		if view.Mode == ModeKnown {
+			heldBy = view.At
+		}
+		if latest, err = src.CandlesAsOf(ctx, view.At, heldBy); err != nil {
+			return Market{}, err
+		}
+		if splits, err = src.SplitsAsOf(ctx, heldBy); err != nil {
+			return Market{}, err
+		}
+		if cov, err = src.SplitCoverageAsOf(ctx, heldBy); err != nil {
+			return Market{}, err
+		}
+	} else {
+		if latest, err = src.LatestCandles(ctx); err != nil {
+			return Market{}, err
+		}
+		if splits, err = src.Splits(ctx); err != nil {
+			return Market{}, err
+		}
+		if cov, err = src.SplitCoverage(ctx); err != nil {
+			return Market{}, err
+		}
 	}
-	splits, err := src.Splits(ctx)
-	if err != nil {
-		return Market{}, err
-	}
-	cov, err := src.SplitCoverage(ctx)
-	if err != nil {
-		return Market{}, err
-	}
-	m := Market{Prices: make(map[string]Price, len(latest)), Splits: map[string][]marketdata.Split{}, Coverage: cov}
+	m := Market{Prices: make(map[string]Price, len(latest)), Splits: map[string][]marketdata.Split{}, Coverage: cov, View: view}
 	for t, cs := range latest {
 		if len(cs) == 0 {
 			continue
 		}
-		m.Prices[marketdata.NormTicker(t)] = Price{Ticker: t, Day: cs[0].Day, Close: cs[0].Close, Currency: QuoteCurrency, Raw: cs[0].Raw}
+		m.Prices[marketdata.NormTicker(t)] = Price{Ticker: t, Day: cs[0].Day, Close: cs[0].Close, Currency: cs[0].Currency, Raw: cs[0].Raw, Fetched: cs[0].FetchedAt}
 	}
 	for _, s := range splits {
 		k := marketdata.NormTicker(s.Ticker)

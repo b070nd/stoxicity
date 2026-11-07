@@ -91,12 +91,41 @@ type EventRevision struct {
 	Supersedes   int
 	Securities   []EventSecurity
 	Evidence     []Evidence
-	Topics       []string
-	Assessments  []Assessment
+	// Claims are the sentences of the evidence that this revision rests on.
+	Claims      []EventClaim
+	Topics      []string
+	Assessments []Assessment
+}
+
+// EventClaim ties a revision to one claim (assertion) of one article of its
+// evidence. Names marks the claim that decides the event's kind and title.
+type EventClaim struct {
+	ArticleID string
+	Seq       int
+	Version   string
+	Extractor string
+	Names     bool
+}
+
+// Event relations.
+const (
+	RelationSplitFrom  = "split_from"
+	RelationWithdrawn  = "withdrawn"
+	RelationSuperseded = "superseded"
+)
+
+// EventRelation says how an event relates to another.
+type EventRelation struct {
+	From, To, Relation, Basis string
+	RecordedAt                time.Time
 }
 
 // Event statuses.
 const (
 	StatusReported  = "reported"
 	StatusCorrected = "corrected"
+	// StatusWithdrawn: under the rules now in force the evidence does not support
+	// an event of this kind (the claim is denied, in the past, or about nobody).
+	// The revision stays in the history; readers of the current state skip it.
+	StatusWithdrawn = "withdrawn"
 )

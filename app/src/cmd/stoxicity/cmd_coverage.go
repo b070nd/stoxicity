@@ -34,12 +34,12 @@ func (a *app) coverageOptions() coverage.Options {
 }
 
 // cmdCoverage lists the stories of the last days with how well each is
-// covered: how many independent outlets report it and what it rests on.
+// covered: how many outlets report it and what it rests on.
 func cmdCoverage(ctx context.Context, a *app, args []string) error {
 	fs := newFlags("coverage")
 	days := fs.Int("days", defaultCoverageDays, "days the list covers, ending today")
 	limit := fs.Int("limit", defaultCoverageLimit, "most stories to print")
-	backing := fs.String("backing", "", "only stories with this backing: primary, corroborated, unconfirmed or opinion")
+	backing := fs.String("backing", "", "only stories with this backing: primary, multi-outlet, unconfirmed or opinion")
 	thin := fs.Bool("thin", false, "only thin stories: material, one outlet, no primary source")
 	all := fs.Bool("all", false, "include stories below the relevance threshold")
 	rest, err := parseFlags(fs, args)
@@ -56,7 +56,7 @@ func cmdCoverage(ctx context.Context, a *app, args []string) error {
 	if *backing != "" {
 		want = coverage.Backing(*backing)
 		if want.Rank() == 0 {
-			return usageErrorf("-backing must be primary, corroborated, unconfirmed or opinion")
+			return usageErrorf("-backing must be primary, multi-outlet, unconfirmed or opinion")
 		}
 	}
 	if _, err := a.requireTenant(); err != nil {
@@ -102,8 +102,8 @@ func renderCoverage(w io.Writer, stories []coverage.Story, p pages.Params, tenan
 		}
 	}
 	fmt.Fprintf(w, "Coverage, tenant %s, %s to %s (%d days)\n", tenantID, p.First.Format(time.DateOnly), p.Last.Format(time.DateOnly), p.Days)
-	fmt.Fprintf(w, "%d stories: %d primary, %d corroborated, %d unconfirmed (%d thin), %d opinion\n",
-		len(stories), counts[coverage.BackingPrimary], counts[coverage.BackingCorroborated],
+	fmt.Fprintf(w, "%d stories: %d primary, %d multi-outlet (several outlets, origin not checked), %d unconfirmed (%d thin), %d opinion\n",
+		len(stories), counts[coverage.BackingPrimary], counts[coverage.BackingMultiOutlet],
 		counts[coverage.BackingUnconfirmed], thin, counts[coverage.BackingOpinion])
 	if len(stories) == 0 {
 		fmt.Fprintln(w, "\nNo stories match.")

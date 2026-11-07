@@ -167,11 +167,11 @@ func TestEarlyCloseTrimsTheSessions(t *testing.T) {
 func TestStatusDescribe(t *testing.T) {
 	n := nasdaq(t)
 	now := et(t, "2026-11-05 14:00")
-	if got := n.StatusAt(now).Describe(now); got != "open · Regular, ends in 2h00m" {
+	if got := n.StatusAt(now).Describe(now); got != "scheduled open · Regular, ends in 2h00m" {
 		t.Errorf("open: %q", got)
 	}
 	now = et(t, "2026-11-07 11:00")
-	if got := n.StatusAt(now).Describe(now); !strings.HasPrefix(got, "closed (weekend) · Pre-market opens in 1d17h") {
+	if got := n.StatusAt(now).Describe(now); !strings.HasPrefix(got, "scheduled closed (weekend) · Pre-market opens in 1d17h") {
 		t.Errorf("closed: %q", got)
 	}
 }

@@ -33,7 +33,7 @@ func TestSignalsGraphAndExportRunOverTheEventHistory(t *testing.T) {
 	r = e.run(t, "graph", "ACME", "-days", "3650")
 	r.wantCode(t, exitOK)
 	// The story says two things; the more important claim names the event, not the first keyword.
-	r.wantOut(t, "results: Acme Corp announces record earnings", "[subject]", "evidence: news.example.com (1)", "evidence: unresolved: independence not established")
+	r.wantOut(t, "results: Acme Corp announces record earnings", "[subject]", "buyback: Acme Corp announces", "evidence: news.example.com (2)", "evidence: unresolved: independence not established")
 	if r := e.run(t, "graph", "ACME", "-days", "3650", "-format", "dot"); !strings.Contains(r.out, "digraph signal") {
 		t.Errorf("dot: %s", r.out)
 	}
@@ -44,15 +44,16 @@ func TestSignalsGraphAndExportRunOverTheEventHistory(t *testing.T) {
 	dir := filepath.Join(e.dir, "research")
 	r = e.run(t, "export", "-out", dir, "-days", "3650")
 	r.wantCode(t, exitOK)
-	r.wantOut(t, "exported 1 securities and 1 events", "2 files written")
+	r.wantOut(t, "exported 1 securities and 2 events", "3 files written")
 	events, _ := os.ReadDir(filepath.Join(dir, "events"))
 	secs, _ := os.ReadDir(filepath.Join(dir, "securities"))
-	if len(events) != 1 || len(secs) != 1 || !strings.HasPrefix(events[0].Name(), "evt_") || !strings.HasPrefix(secs[0].Name(), "sec_") {
+	// One story, two claims, two events; the second carries its kind in its name.
+	if len(events) != 2 || len(secs) != 1 || !strings.HasPrefix(events[0].Name(), "evt_") || !strings.HasPrefix(secs[0].Name(), "sec_") || !strings.Contains(events[1].Name(), "~buyback") {
 		t.Fatalf("files: %v %v", events, secs)
 	}
 	body, _ := os.ReadFile(filepath.Join(dir, "events", events[0].Name()))
 	if !strings.Contains(string(body), "## Assessments (interpretation, not observation)") {
 		t.Errorf("event file:\n%s", body)
 	}
-	e.run(t, "export", "-out", dir, "-days", "3650").wantOut(t, "0 files written, 2 already up to date")
+	e.run(t, "export", "-out", dir, "-days", "3650").wantOut(t, "0 files written, 3 already up to date")
 }

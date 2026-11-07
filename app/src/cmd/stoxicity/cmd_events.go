@@ -73,16 +73,12 @@ func eventsRebuild(ctx context.Context, a *app, db *store.DB, args []string) err
 	for _, art := range arts {
 		claims[art.ID] = pipeline.Claims(art, names, edgar.Rate)
 	}
-	in := pipeline.EventsFrom(arts, claims)
-	wrote := 0
-	for start := 0; start < len(in); start += 500 {
-		n, err := db.PutEvents(ctx, in[start:min(start+500, len(in))], now)
-		if err != nil {
-			return err
-		}
-		wrote += n
+	rep, in, err := pipeline.RebuildEvents(ctx, db, arts, claims, now)
+	if err != nil {
+		return err
 	}
-	fmt.Fprintf(a.stdout, "events: %d from %d articles, %d revisions written\n", len(in), len(arts), wrote)
+	fmt.Fprintf(a.stdout, "events: %d from %d articles, %d revisions written; %d stories read as more than one event; %d stored events withdrawn (nothing deleted)\n",
+		rep.Events, len(arts), rep.Written, rep.Split, rep.Withdrawn)
 
 	results, assessments := pipeline.Assessments(arts, claims, nil, now)
 	na, err := db.PutAssertions(ctx, results, now)

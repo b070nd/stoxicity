@@ -88,7 +88,7 @@ func TestHotKeyFindsTheFirstLetterIgnoringCase(t *testing.T) {
 }
 
 func TestWatchSwitchingIsOneKey(t *testing.T) {
-	for key, want := range map[string]Action{"tab": NextWatch, "shift+tab": PrevWatch, "3": JumpWatch} {
+	for key, want := range map[string]Action{"ctrl+tab": NextWatch, "ctrl+shift+tab": PrevWatch, "3": JumpWatch, "tab": NextSection, "shift+tab": PrevSection} {
 		b, ok := Lookup(key)
 		if !ok || b.Action != want {
 			t.Errorf("Lookup(%q) = %+v, %v; want %s", key, b, ok, want)

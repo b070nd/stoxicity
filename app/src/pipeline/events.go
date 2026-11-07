@@ -34,7 +34,7 @@ func EventID(a model.Article) string {
 // article that says nothing of an event (no kind, little weight) gives none;
 // articles of one story give one, with the securities they name (the strongest
 // role of each), all of them as evidence, and the earliest publication time.
-func Events(articles []model.Article) []store.EventInput { return EventsFrom(articles, nil) }
+func Events(articles []model.Article) []store.EventInput { return EventsFrom(articles, nil, nil) }
 
 // Claims reads what an article claims: one assertion for each event it reports,
 // each with the companies it is about and the sentence it comes from.
@@ -45,20 +45,166 @@ func Claims(a model.Article, names func(ticker string) []string, rating func(ite
 	})
 }
 
-// EventsFrom reads the events out of articles whose claims have been read. An
-// article gives an event only when one of its claims is a current event about a
-// company (not negated, denied, past, a preview, or about nobody); the claim that
-// matters most names the event and gives its materiality, so that a story that
-// says two things is not named after whichever keyword comes first. An article
-// without claims in the map is read as Events always did, from the lens's score.
-func EventsFrom(articles []model.Article, claims map[string]assertion.Result) []store.EventInput {
-	var out []store.EventInput
-	at := map[string]int{}
+// EventsFrom reads the events out of articles whose claims have been read.
+//
+// A story can be several events, and an article several claims. Each live claim
+// about a company (not negated, denied, past, a preview, or about nobody) makes
+// evidence of an event of its kind in its story; the claims of one kind in a
+// story are one event, with only the companies those claims name and only the
+// articles that make them. An article that announces earnings, a departure and a
+// deal is evidence of three events, and a company mentioned in one sentence has
+// no part in the others.
+//
+// Identity: the story's first event keeps the story's own ID ("evt_<story>"), so
+// every event that existed before keeps its ID and its meaning; homes says which
+// kind that is for stories already stored. A story seen for the first time gives
+// that ID to its most important claim. The other events of the story are
+// "evt_<story>~<kind>" and say, in their relations, that they split from the
+// first. An article without claims in the map is read as Events always did, from
+// the lens's score, as one event of its story.
+func EventsFrom(articles []model.Article, claims map[string]assertion.Result, homes map[string]model.EventKind) []store.EventInput {
+	type cand struct {
+		art     model.Article
+		kind    model.EventKind
+		claims  []assertion.Assertion
+		mat     int
+		top     assertion.Assertion
+		total   int
+		version string
+	}
+	var cands []cand
+	var legacy []model.Article
 	for _, a := range articles {
-		a, roles, ok := eventReading(a, claims)
-		if !ok {
+		res, have := claims[a.ID]
+		if !have {
+			if isEvent(a) {
+				legacy = append(legacy, a)
+			}
 			continue
 		}
+		byKind := map[model.EventKind]*cand{}
+		var order []model.EventKind
+		for _, x := range res.Assertions {
+			if !x.Live() || !hasActor(x) {
+				continue
+			}
+			m, _ := x.Materiality()
+			if x.Kind == model.EventOther && m < minOtherMateriality {
+				continue
+			}
+			c := byKind[x.Kind]
+			if c == nil {
+				c = &cand{art: a, kind: x.Kind, total: len(res.Assertions), version: res.Version}
+				byKind[x.Kind] = c
+				order = append(order, x.Kind)
+			}
+			c.claims = append(c.claims, x)
+			if len(c.claims) == 1 || m > c.mat || (m == c.mat && x.Seq < c.top.Seq) {
+				c.mat, c.top = m, x
+			}
+		}
+		// Chatter about a price or a rating is an event only when it is all the
+		// article says: beside a result or a deal it is background.
+		substantive := slices.ContainsFunc(order, func(k model.EventKind) bool { return !lens.Noise(k) })
+		for _, k := range order {
+			if substantive && lens.Noise(k) {
+				continue
+			}
+			cands = append(cands, *byKind[k])
+		}
+	}
+
+	// Which kind of a story keeps the story's ID.
+	best := map[string]struct {
+		kind model.EventKind
+		mat  int
+	}{}
+	for _, c := range cands {
+		base := EventID(c.art)
+		b, ok := best[base]
+		if !ok || c.mat > b.mat || (c.mat == b.mat && assertion.Rank(c.kind) < assertion.Rank(b.kind)) {
+			best[base] = struct {
+				kind model.EventKind
+				mat  int
+			}{c.kind, c.mat}
+		}
+	}
+	idOf := func(base string, kind model.EventKind) string {
+		home, ok := homes[base]
+		if !ok {
+			home = best[base].kind
+		}
+		if kind == home {
+			return base
+		}
+		return base + "~" + string(kind)
+	}
+	var out []store.EventInput
+	at := map[string]int{}
+	for _, c := range cands {
+		a := c.art
+		base := EventID(a)
+		id := idOf(base, c.kind)
+		i, seen := at[id]
+		rel, why := eventScore(a, c.kind, c.mat, c.top, c.total)
+		if !seen {
+			at[id] = len(out)
+			out = append(out, store.EventInput{
+				EventID: id, Kind: c.kind, Title: a.Title, PublicAt: a.Published,
+				Materiality: c.mat, Relevance: rel, LensVersion: lensVersion(a.Score.LensVersion, c.version), Rationale: why,
+			})
+			i = len(out) - 1
+			if id != base {
+				out[i].Relations = append(out[i].Relations, model.EventRelation{From: id, To: base, Relation: model.RelationSplitFrom,
+					Basis: "another event of the same story, read from a different claim of its articles"})
+			}
+		}
+		e := &out[i]
+		if a.Published.Before(e.PublicAt) {
+			e.PublicAt = a.Published
+		}
+		named := false
+		if seen && c.mat > e.Materiality { // the most material claim names the event
+			e.Title, e.Materiality, e.Relevance, e.LensVersion, e.Rationale = a.Title, c.mat, rel, lensVersion(a.Score.LensVersion, c.version), why
+			named = true
+		}
+		if !seen {
+			named = true
+		}
+		if named {
+			for k := range e.Claims {
+				e.Claims[k].Names = false
+			}
+		}
+		e.Evidence = append(e.Evidence, model.Evidence{ArticleID: a.ID, SourceID: a.SourceID})
+		for _, x := range c.claims {
+			e.Claims = append(e.Claims, model.EventClaim{ArticleID: a.ID, Seq: x.Seq, Version: c.version, Extractor: assertion.ExtractorRules, Names: named && x.Seq == c.top.Seq})
+			for _, p := range x.Parties {
+				r := model.RoleMentioned
+				switch p.Role {
+				case assertion.Subject:
+					r = model.RoleSubject
+				case assertion.Counterparty:
+					r = model.RoleCounterparty
+				}
+				if k := slices.IndexFunc(e.Securities, func(s model.EventSecurity) bool { return s.Ticker == p.Ticker }); k >= 0 {
+					if r.Strength() > e.Securities[k].Role.Strength() {
+						e.Securities[k].Role = r
+					}
+				} else {
+					e.Securities = append(e.Securities, model.EventSecurity{Ticker: p.Ticker, Role: r})
+				}
+			}
+		}
+		for _, t := range a.Topics {
+			if !slices.Contains(e.Topics, t) {
+				e.Topics = append(e.Topics, t)
+			}
+		}
+	}
+
+	// Articles without claims: one event of the story, as the lens read it.
+	for _, a := range legacy {
 		id := EventID(a)
 		i, seen := at[id]
 		if !seen {
@@ -74,17 +220,13 @@ func EventsFrom(articles []model.Article, claims map[string]assertion.Result) []
 		if a.Published.Before(e.PublicAt) {
 			e.PublicAt = a.Published
 		}
-		if seen && a.Score.Materiality > e.Materiality { // the most material evidence names the event
+		if seen && a.Score.Materiality > e.Materiality {
 			e.Kind, e.Title, e.Materiality, e.Relevance, e.LensVersion = a.Score.Kind, a.Title, a.Score.Materiality, a.Score.Relevance, a.Score.LensVersion
 			e.Rationale = strings.Join(a.Score.Reasons, "; ")
 		}
 		e.Evidence = append(e.Evidence, model.Evidence{ArticleID: a.ID, SourceID: a.SourceID})
 		for _, tk := range a.Tickers {
-			role, has := roles[tk]
-			if !has {
-				role = RoleOf(a, tk)
-			}
-			e.Securities = append(e.Securities, model.EventSecurity{Ticker: tk, Role: role})
+			e.Securities = append(e.Securities, model.EventSecurity{Ticker: tk, Role: RoleOf(a, tk)})
 		}
 		for _, t := range a.Topics {
 			if !slices.Contains(e.Topics, t) {
@@ -95,57 +237,44 @@ func EventsFrom(articles []model.Article, claims map[string]assertion.Result) []
 	return out
 }
 
-// eventReading is the article as the event reads it: with the kind, materiality
-// and relevance of its most important current claim when its claims are known,
-// and the roles those claims give the companies. ok is false when the article
-// is no evidence of an event.
-func eventReading(a model.Article, claims map[string]assertion.Result) (model.Article, map[string]model.Role, bool) {
-	res, have := claims[a.ID]
-	if !have {
-		return a, nil, isEvent(a)
+// lensVersion marks a score as read from claims: the version of the rules that
+// read them follows the lens's own.
+func lensVersion(lens, claims string) string {
+	if lens == "" || claims == "" || strings.Contains(lens, "+"+claims) {
+		return lens
 	}
-	best, mat, live := res.Best()
-	if !live {
-		return a, nil, false
+	return lens + "+" + claims
+}
+
+// eventScore is the relevance of the article's evidence for one event, and the
+// words that explain which claim made it that event. The lens rated the article
+// by its first keyword; the claim moves the relevance by the difference in
+// materiality, at the lens's own 0.15 a level.
+func eventScore(a model.Article, kind model.EventKind, mat int, top assertion.Assertion, total int) (float64, string) {
+	rel := a.Score.Relevance
+	if mat != a.Score.Materiality {
+		rel = math.Min(math.Max(rel+0.15*float64(mat-a.Score.Materiality), 0), 1)
 	}
-	if best.Kind == model.EventOther && mat < minOtherMateriality {
-		return a, nil, false
+	if lens.Noise(kind) && rel > 0.35 {
+		rel = 0.35
 	}
-	roles := map[string]model.Role{}
-	for _, x := range res.Assertions {
-		if !x.Live() {
-			continue
-		}
-		for _, p := range x.Parties {
-			r := model.RoleMentioned
-			switch p.Role {
-			case assertion.Subject:
-				r = model.RoleSubject
-			case assertion.Counterparty:
-				r = model.RoleCounterparty
-			}
-			if roles[p.Ticker].Strength() < r.Strength() {
-				roles[p.Ticker] = r
-			}
-		}
+	rel = math.Round(rel*1000) / 1000
+	_, mwhy := top.Materiality()
+	why := fmt.Sprintf("claim %d of %d in the article: %s (%q); %s", top.Seq, total, kind, top.Match, mwhy)
+	if top.Status != assertion.Unknown && top.Status != "" {
+		why += "; status " + string(top.Status)
 	}
-	// The lens rated the first keyword; the claim that matters most moves the
-	// relevance by the difference, at the lens's own 0.15 a level.
-	if best.Kind != a.Score.Kind || mat != a.Score.Materiality {
-		rel := a.Score.Relevance + 0.15*float64(mat-a.Score.Materiality)
-		rel = math.Min(math.Max(rel, 0), 1)
-		if lens.Noise(best.Kind) && rel > 0.35 {
-			rel = 0.35
-		}
-		a.Score.Relevance = math.Round(rel*1000) / 1000
+	if top.Attribution != assertion.Unattributed {
+		why += "; attribution " + string(top.Attribution)
 	}
-	reasons := slices.Clone(a.Score.Reasons)
-	a.Score.Reasons = append(reasons, fmt.Sprintf("claim %d of %d: %s (%s)", best.Seq, len(res.Assertions), best.Kind, best.Match))
-	a.Score.Kind, a.Score.Materiality = best.Kind, mat
-	if a.Score.LensVersion != "" {
-		a.Score.LensVersion += "+" + res.Version
+	if top.Action != "" {
+		why += "; action " + top.Action
 	}
-	return a, roles, true
+	return rel, why
+}
+
+func hasActor(a assertion.Assertion) bool {
+	return slices.ContainsFunc(a.Parties, func(p assertion.Party) bool { return p.Role != assertion.Mentioned })
 }
 
 func isEvent(a model.Article) bool {
@@ -191,7 +320,7 @@ func (p *Pipeline) recordEvents(ctx context.Context, batch []model.Article) {
 		return
 	}
 	claims := p.claims(batch)
-	in := EventsFrom(batch, claims)
+	in := EventsFrom(batch, claims, p.homes(ctx, batch))
 	if len(in) == 0 {
 		p.recordClaims(ctx, batch, claims, nil)
 		return
@@ -202,7 +331,49 @@ func (p *Pipeline) recordEvents(ctx context.Context, batch []model.Article) {
 		return
 	}
 	p.recordClaims(ctx, batch, claims, prior)
-	p.recordOrigins(ctx, batch, claims)
+	p.recordOrigins(ctx, batch, in)
+}
+
+// homeStore is what finding the stories' own events needs of the database.
+type homeStore interface {
+	HomeKinds(ctx context.Context, eventIDs []string) (map[string]model.EventKind, error)
+}
+
+// homes says, for each story of the batch that already has an event under its
+// own ID, which kind that event is, so that the ID keeps its meaning.
+func (p *Pipeline) homes(ctx context.Context, batch []model.Article) map[string]model.EventKind {
+	st, ok := p.cfg.Store.(homeStore)
+	if !ok {
+		return nil
+	}
+	seen := map[string]bool{}
+	var ids []string
+	for _, a := range batch {
+		if id := EventID(a); !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
+		}
+	}
+	h, err := st.HomeKinds(ctx, ids)
+	if err != nil {
+		p.cfg.Logger.Warn("pipeline: read the stored events failed; their identity may be read again", "err", err)
+		return nil
+	}
+	return h
+}
+
+// Homes reads, for the stories of the articles, the kind of the event each
+// already has under its own ID.
+func Homes(ctx context.Context, st homeStore, articles []model.Article) (map[string]model.EventKind, error) {
+	seen := map[string]bool{}
+	var ids []string
+	for _, a := range articles {
+		if id := EventID(a); !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
+		}
+	}
+	return st.HomeKinds(ctx, ids)
 }
 
 // names gives the names a ticker is written by, from the entity list.
@@ -334,27 +505,27 @@ func Origins(articles []model.Article, primary func(sourceID string) bool) []ori
 	return out
 }
 
-// recordOrigins stores the origins of the articles of the events a batch
-// touched. An event's other articles, stored earlier, are read too, so that a
-// late copy is joined to the report it copies. A failure is logged and repaired
-// by `events rebuild`; it never loses news.
-func (p *Pipeline) recordOrigins(ctx context.Context, batch []model.Article, claims map[string]assertion.Result) {
+// recordOrigins stores the origins of the articles that are evidence of the
+// events a batch touched. The other articles of those events, stored earlier,
+// are read too, so that a late copy is joined to the report it copies. A failure
+// is logged and repaired by `events rebuild`; it never loses news.
+func (p *Pipeline) recordOrigins(ctx context.Context, batch []model.Article, events []store.EventInput) {
 	st, ok := p.cfg.Store.(originStore)
 	if !ok {
 		return
 	}
-	all := map[string]model.Article{}
-	evidence := func(a model.Article) bool { _, _, ok := eventReading(a, claims); return ok }
+	byID := map[string]model.Article{}
 	for _, a := range batch {
-		if evidence(a) {
-			all[a.ID] = a
-		}
+		byID[a.ID] = a
 	}
-	for _, a := range slices.Clone(batch) {
-		if !evidence(a) {
-			continue
+	all := map[string]model.Article{}
+	for _, e := range events {
+		for _, ev := range e.Evidence {
+			if a, ok := byID[ev.ArticleID]; ok {
+				all[a.ID] = a
+			}
 		}
-		hist, err := st.EventHistory(ctx, EventID(a))
+		hist, err := st.EventHistory(ctx, e.EventID)
 		if err != nil || len(hist) == 0 {
 			continue
 		}

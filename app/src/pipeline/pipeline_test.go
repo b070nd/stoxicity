@@ -404,8 +404,10 @@ func TestIngestNilClassifierChangesNothing(t *testing.T) {
 			if !slices.Equal(got.Topics, []string{"fetcher-topic"}) {
 				t.Errorf("Topics = %v, want only the fetcher's", got.Topics)
 			}
-			if got.Score.Sector != "" || got.Score.LensVersion != f.lens.Version() {
-				t.Errorf("Sector %q, LensVersion %q, want empty and %q", got.Score.Sector, got.Score.LensVersion, f.lens.Version())
+			// The classifier adds nothing; the claims moved the label from the lens's first
+			// keyword (a buyback) to the results the headline leads with, and say so in the version.
+			if got.Score.Sector != "" || got.Score.LensVersion != f.lens.Version()+"+assert-2" || got.Score.Kind != model.EventResults {
+				t.Errorf("Sector %q, LensVersion %q, kind %s, want empty, %q and results", got.Score.Sector, got.Score.LensVersion, got.Score.Kind, f.lens.Version()+"+assert-2")
 			}
 		})
 	}

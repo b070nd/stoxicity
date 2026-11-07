@@ -54,8 +54,8 @@ const candleWidth = 8
 // the day's range from low to high, the thin line is the wick, the thick part
 // the body from open to close, so a body at the right end is a day that closed
 // near its high and a body filling the bar a day that ran from low to high.
-// The style is green for a day that closed above its open, red below, dim
-// for a day that closed where it opened or whose candle is old.
+// The style is green for a day that closed above its open, red below, yellow
+// for a flat day, and dim for an old candle.
 func candleBar(q Quote, w int, now time.Time) (string, Style) {
 	if q.High <= 0 || q.Low <= 0 || q.High < q.Low || w < 3 {
 		return "", Plain
@@ -79,9 +79,10 @@ func candleBar(q Quote, w int, now time.Time) (string, Style) {
 			b.WriteString("█")
 		}
 	}
-	style := Dim
+	style := Warn
 	switch {
 	case q.stale(now):
+		style = Dim
 	case q.Close > q.Open:
 		style = Good
 	case q.Close < q.Open:
@@ -109,9 +110,10 @@ func changeText(q Quote, now time.Time) (string, Style) {
 	if !ok {
 		return "", Plain
 	}
-	style := Dim
+	style := Warn
 	switch {
 	case q.stale(now):
+		style = Dim
 	case ch > 0.00005:
 		style = Good
 	case ch < -0.00005:
@@ -220,7 +222,7 @@ func percentText(v float64) string { return fmt.Sprintf("%.1f%%", v*100) }
 // signedPercent is percentText with a sign.
 func signedPercent(v float64) string { return fmt.Sprintf("%+.1f%%", v*100) }
 
-// gainStyle is green for a positive figure, red for a negative one.
+// gainStyle is green for a positive figure, yellow for neutral, red for negative.
 func gainStyle(v float64) Style {
 	switch {
 	case v > 0.00005:
@@ -228,5 +230,5 @@ func gainStyle(v float64) Style {
 	case v < -0.00005:
 		return Bad
 	}
-	return Dim
+	return Warn
 }

@@ -43,7 +43,11 @@ type Mapping struct {
 	Ticker     string
 	// Type is the kind of the security now ("stock", "adr", ...), filled in when
 	// valuing from the universe; it is not part of the stored mapping.
-	Type       string
+	Type string
+	// Venue is the exchange the security is listed on now (the universe's word),
+	// filled in the same way; it tells in which currency the security is quoted
+	// when the price does not say.
+	Venue      string
 	Status     string
 	Method     string
 	Confidence float64

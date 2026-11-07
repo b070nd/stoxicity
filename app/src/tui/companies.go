@@ -20,9 +20,6 @@ const (
 	shortFacets = 12
 )
 
-// queryHint is what the catalogue says about its query language and keys.
-const queryHint = "/ narrows as you type: words match ticker, name and industry · exchange:nyse · industry:semi · domain:finance · type:preferred · list:picks · tag:moat · news:>0 · watched:yes · -word excludes · sort:name|news|type|domain|close|change|industry|exchange (-news reverses) · j jumps to a letter · home/end/pgup/pgdn move"
-
 // edgarURL is the SEC's page of a company, by CIK.
 func edgarURL(cik string) string {
 	return "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=" + url.QueryEscape(cik) + "&type=&dateb=&owner=include&count=40"
@@ -46,10 +43,7 @@ func webAddress(site string) string {
 // screen holds one row per match, however many; only the rows in view are
 // drawn.
 func buildCompanies(q string, d Data) Screen {
-	title := "Companies"
-	if q != "" {
-		title += ": " + q
-	}
+	title := "Stocks"
 	s := Screen{Title: title}
 	if d.Universe.Len() == 0 {
 		s.Notice = "No companies yet. Run `stoxicity universe update` to load the SEC ticker list."
@@ -75,32 +69,39 @@ func buildCompanies(q string, d Data) Screen {
 		return s
 	}
 	var b builder
-	note := fmt.Sprintf("%s of %s companies", thousands(len(hits)), thousands(d.Universe.Len()))
+	note := fmt.Sprintf("%s of %s securities", thousands(len(hits)), thousands(d.Universe.Len()))
 	note += " · " + orderOf(query)
-	b.styled(Dim, note+" · news counts cover "+d.Params.Describe()+" · ★ = on your watchlist")
-	if q == "" {
-		b.styled(Dim, queryHint)
+	b.styled(Dim, note+" · ★ watchlist · / search · f facets")
+	if q != "" && q != stocksQuery {
+		b.styled(Dim, "Query: "+q)
 	}
 	if !cols.Priced {
-		b.styled(Dim, "no prices yet: set STOXICITY_POLYGON_KEY or MASSIVE_API_KEY (a free key from massive.com, formerly polygon.io) and run `stoxicity universe quotes`, or leave `stoxicity run` going")
+		b.styled(Dim, "no prices yet · configure the provider and run stoxicity universe quotes")
 	} else {
-		b.styled(Dim, "DAY: the day's range, the thick part open to close (green up, red down) · prices of "+d.latestQuoteDay())
+		b.styled(Dim, "Daily candles · green up / yellow flat / red down · dim = stale · latest session "+d.latestQuoteDay())
+	}
+	if cols.Funded || cols.Insiders {
+		for _, line := range legendLines(cols) {
+			b.styled(Dim, line)
+		}
 	}
 	exchangeChips(&b, d)
-	f := universe.FacetsOf(hits, shortFacets)
-	long := universe.FacetsOf(hits, facetRows)
-	for _, line := range []struct {
-		name string
-		c    []universe.Count
-	}{{"kind", f.Kind}, {"industry", long.Industry}, {"lists", long.List}, {"tags", long.Tag}} {
-		if len(line.c) == 0 {
-			continue
+	if d.ShowFacets {
+		f := universe.FacetsOf(hits, shortFacets)
+		long := universe.FacetsOf(hits, facetRows)
+		for _, line := range []struct {
+			name string
+			c    []universe.Count
+		}{{"kind", f.Kind}, {"industry", long.Industry}, {"lists", long.List}, {"tags", long.Tag}} {
+			if len(line.c) == 0 {
+				continue
+			}
+			parts := make([]string, len(line.c))
+			for i, c := range line.c {
+				parts[i] = fmt.Sprintf("%s %s", c.Name, thousands(c.Count))
+			}
+			b.styled(Dim, line.name+": "+strings.Join(parts, " · "))
 		}
-		parts := make([]string, len(line.c))
-		for i, c := range line.c {
-			parts[i] = fmt.Sprintf("%s %s", c.Name, thousands(c.Count))
-		}
-		b.styled(Dim, line.name+": "+strings.Join(parts, " · "))
 	}
 	b.blank()
 	watched := map[string]bool{}
@@ -126,6 +127,9 @@ func buildCompanies(q string, d Data) Screen {
 		t.Items = append(t.Items, companyItem(h, watched[h.Profile.Ticker], d, cols))
 		keys[i] = h.Group(group)
 	}
+	if d.Width > 0 {
+		t = fitCompanyTable(t, d.Width, s.Sort)
+	}
 	drill := func(value string) *nav.Route {
 		if value == "" || strings.ContainsAny(value, `"*`) {
 			return nil
@@ -142,6 +146,7 @@ func buildCompanies(q string, d Data) Screen {
 // value last. A heading opens the list narrowed to its group (enter). Inside a group the items keep the order they came in. Without a
 // group it is the table as it is.
 func groupRows(t Table, keys []string, group string, sort Sort, drill func(value string) *nav.Route) []Row {
+	t = t.sized()
 	if group == "" {
 		return t.Rows(sort)
 	}
@@ -199,9 +204,8 @@ func groupName(group, value string) string {
 func companyTable(q universe.Query, cols companyCols) Table {
 	columns := []Column{
 		{Width: 1},
-		{Title: "TICKER", Key: "ticker", Width: 7},
-		{Title: "TYPE", Key: "type", Width: 9},
-		{Title: "DOMAIN", Key: "domain", Width: 14},
+		{Title: "TICKER", Key: "ticker", Width: 8},
+		{Title: "NAME", Key: "name", Width: 22, MaxWidth: 28},
 	}
 	if cols.Priced {
 		columns = append(columns,
@@ -222,10 +226,11 @@ func companyTable(q universe.Query, cols companyCols) Table {
 			Column{Title: "SELLS", Key: "sells", Width: 6, Right: true, Desc: true})
 	}
 	columns = append(columns,
-		Column{Title: "LISTED", Key: "exchange", Width: 6},
 		Column{Title: "NEWS", Key: "news", Width: 5, Right: true, Desc: true},
-		Column{Title: "TAGS", Width: 4},
-		Column{Title: "NAME", Key: "name"})
+		Column{Title: "TYPE", Key: "type", Width: 9, MaxWidth: 10},
+		Column{Title: "LISTED", Key: "exchange", Width: 10, MaxWidth: 14},
+		Column{Title: "DOMAIN", Key: "domain", Width: 14, MaxWidth: 18},
+		Column{Title: "TAGS", Width: 8, MaxWidth: 16})
 	t := Table{Columns: columns, Presorted: true}
 	key, desc := q.SortKey()
 	switch {
@@ -309,7 +314,7 @@ func companyItem(h universe.Hit, watched bool, d Data, cols companyCols) Item {
 		tags = append(tags, "#"+t)
 	}
 	typ, dom := p.Type(), p.Domain()
-	cells := []Cell{Str(star).Styled(Warn), Str(p.Ticker).Styled(Strong), Str(typ).Styled(typeStyle(typ)), Str(dom).Styled(domainStyle(dom))}
+	cells := []Cell{Str(star).Styled(Warn), Str(p.Ticker).Styled(Strong), Str(p.Name)}
 	if cols.Priced {
 		var bar, close, move Cell
 		if q, ok := quotes[p.Ticker]; ok {
@@ -318,17 +323,16 @@ func companyItem(h universe.Hit, watched bool, d Data, cols companyCols) Item {
 			close = Num(priceText(q.Close), q.Close).Styled(style)
 			mt, ms := changeText(q, now)
 			move = Num(mt, 0).Styled(ms)
+		} else {
+			bar, close, move = Str("—").Styled(Dim), Str("—").Styled(Dim), Str("—").Styled(Dim)
 		}
 		cells = append(cells, bar, close, move)
 	}
 	if cols.Funded {
 		num := func(key string) (float64, bool) { v, ok := d.Numbers[key][p.Ticker]; return v, ok }
-		var mcap, rev, growth, margin Cell
-		if v, ok := num("marketcap"); ok {
-			mcap = Num(moneyText(v), v).Styled(Info)
-		} else if d.Why["marketcap"][p.Ticker] != "" {
-			mcap = Str("n/a").Styled(Warn) // the stock page says why
-		}
+		missing := Str("—").Styled(Dim)
+		mcap, rev, growth, margin := missing, missing, missing, missing
+		mcap = capCell(d, p.Ticker)
 		if v, ok := num("revenue"); ok {
 			rev = Num(moneyText(v), v)
 		}
@@ -341,10 +345,11 @@ func companyItem(h universe.Hit, watched bool, d Data, cols companyCols) Item {
 		cells = append(cells, mcap, rev, growth, margin)
 	}
 	if cols.Insiders {
-		cells = append(cells, insiderCell(d, "buys", p.Ticker, Good), insiderCell(d, "sells", p.Ticker, Bad))
+		// Buying and selling are facts, not verdicts: two colours tell the columns apart.
+		cells = append(cells, insiderCell(d, "buys", p.Ticker, Info), insiderCell(d, "sells", p.Ticker, Accent))
 	}
-	cells = append(cells, Str(p.Exchange).Styled(exchangeStyle(p.Exchange)), Num(news, float64(h.News)).Styled(newsStyle(h.News)),
-		Str(strings.Join(tags, " ")).Styled(Accent), Str(p.Name))
+	cells = append(cells, Num(news, float64(h.News)).Styled(newsStyle(h.News)), Str(typ).Styled(typeStyle(typ)), Str(p.Exchange).Styled(exchangeStyle(p.Exchange)),
+		Str(dom).Styled(domainStyle(dom)), Str(strings.Join(tags, " ")).Styled(Accent))
 	return Item{Cells: cells, Row: Row{Go: route(nav.Stock, p.Ticker)}}
 }
 
@@ -406,12 +411,32 @@ func profileRows(b *builder, ticker string, d Data) (known bool) {
 				b.add(Row{Text: fmt.Sprintf("  %-12s %s", name, text(v)), Style: Plain})
 			} else if why := d.Why[key][p.Ticker]; why != "" {
 				// A value that cannot be calculated says why, in words, never as a blank.
-				b.add(Row{Text: fmt.Sprintf("  %-12s unavailable: %s", name, why), Style: Warn})
+				state := ""
+				if st := d.Standing[p.Ticker]; st.State != "" && st.State != "valued" && (key == "marketcap" || key == "classcap" || key == "issuercap") {
+					state = " (" + st.State + ")"
+				}
+				b.add(Row{Text: fmt.Sprintf("  %-12s unavailable%s: %s", name, state, why), Style: capStyle(state)})
 			}
 		}
 		figure("market cap", "marketcap", moneyText)
 		figure("class cap", "classcap", moneyText)
 		figure("issuer cap", "issuercap", moneyText)
+		if st, ok := d.Standing[p.Ticker]; ok && st.State != "" {
+			basis := "  cap basis    " + st.State
+			if st.CountDay != "" {
+				basis += " · share count of " + st.CountDay
+			}
+			if st.PriceDay != "" {
+				basis += " · last close of " + st.PriceDay
+			}
+			if st.Currency != "" {
+				basis += " · " + st.Currency
+			}
+			if st.Scope == "issuer" {
+				basis += " · market cap is the whole issuer's, shared by its classes; class cap is this class's own"
+			}
+			b.styled(Dim, basis)
+		}
 		figure("revenue", "revenue", moneyText)
 		figure("growth", "growth", signedPercent)
 		figure("net income", "income", moneyText)
@@ -558,4 +583,61 @@ func shortAgo(d time.Duration) string {
 		return fmt.Sprintf("%dh ago", int(d/time.Hour))
 	}
 	return fmt.Sprintf("%dd ago", int(d/(24*time.Hour)))
+}
+
+// capStyles colours the words that stand where a capitalisation figure is
+// missing. None is red or green: those colours mean the sign of a change in this
+// table, and a missing figure is not a negative one.
+var capStyles = map[string]Style{
+	"stale": Warn, "incomplete": Warn, "unresolved": Hot, "unsupported": Dim, "failed": Hot, "pending": Dim,
+}
+
+// capCell is the MCAP cell of a stock: the issuer's capitalisation when there is
+// one (prefixed "issuer" on a security that is one of several classes, so that a
+// class's row is not read as the class's own value), otherwise the word for why
+// not. The number and the word agree with sorting and filtering, which see no
+// number for a stock without a figure.
+func capCell(d Data, ticker string) Cell {
+	st, known := d.Standing[ticker]
+	if v, ok := d.Numbers["marketcap"][ticker]; ok {
+		text := moneyText(v)
+		if known && st.Scope == "issuer" {
+			text = "issuer " + text
+		}
+		return Num(text, v).Styled(Info)
+	}
+	if known && st.State != "" && st.State != "valued" {
+		return Str(st.State).Styled(capStyles[st.State])
+	}
+	if d.Why["marketcap"][ticker] != "" {
+		return Str("incomplete").Styled(Warn) // the stock page says why
+	}
+	return Str("—").Styled(Dim)
+}
+
+// legendLines say what the colours and words of the figure columns mean, so that
+// no colour has to be guessed.
+func legendLines(cols companyCols) []string {
+	var out []string
+	if cols.Funded {
+		out = append(out,
+			"MCAP is the issuer's whole capitalisation in US dollars (every class of stock, from the cover page counts and each class's own last close); \"issuer\" marks a class that shares it · cyan = a figure",
+			"A missing MCAP says why: stale (count or price too old) · incomplete (a class has no value yet) · unresolved (a class cannot be told apart) · unsupported (cannot be valued by this method) · pending (not read yet) · \"—\" no figure expected",
+			"GROWTH and MARGIN: green = positive, red = negative, yellow = zero. The colour is the sign, never a judgement of the stock or of a trade")
+	}
+	if cols.Insiders {
+		out = append(out, "BUYS and SELLS are insiders' open-market purchases and sales over the last year; cyan and magenta only tell the two columns apart")
+	}
+	return out
+}
+
+// capStyle is the style of a line saying a capitalisation is unavailable.
+func capStyle(state string) Style {
+	if state == "" {
+		return Warn
+	}
+	if s, ok := capStyles[strings.Trim(state, " ()")]; ok {
+		return s
+	}
+	return Warn
 }

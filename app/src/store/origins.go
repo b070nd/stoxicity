@@ -37,17 +37,23 @@ func (db *DB) PutOrigins(ctx context.Context, os []origin.Origin, at time.Time) 
 			return 0, errors.New("store: origins: origin without article, key or kind")
 		}
 		var cur origin.Origin
-		err := tx.QueryRowContext(ctx, `SELECT version, kind, origin_key, derived_from, copy_of, method FROM article_origin WHERE article_id = ? ORDER BY seq DESC LIMIT 1`, o.ArticleID).
-			Scan(&cur.Version, &cur.Kind, &cur.Key, &cur.DerivedFrom, &cur.CopyOf, &cur.Method)
-		if err == nil && cur.Version == o.Version && cur.Kind == o.Kind && cur.Key == o.Key && cur.DerivedFrom == o.DerivedFrom && cur.CopyOf == o.CopyOf && cur.Method == o.Method {
+		err := tx.QueryRowContext(ctx, `SELECT version, kind, origin_key, derived_from, copy_of, suspected_from, method FROM article_origin WHERE article_id = ? ORDER BY seq DESC LIMIT 1`, o.ArticleID).
+			Scan(&cur.Version, &cur.Kind, &cur.Key, &cur.DerivedFrom, &cur.CopyOf, &cur.SuspectedFrom, &cur.Method)
+		if err == nil && cur.Version == o.Version && cur.Kind == o.Kind && cur.Key == o.Key && cur.DerivedFrom == o.DerivedFrom && cur.CopyOf == o.CopyOf && cur.SuspectedFrom == o.SuspectedFrom && cur.Method == o.Method {
 			continue
 		}
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return 0, fmt.Errorf("store: origins: %w", err)
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO article_origin (article_id, version, publisher, kind, origin_key, derived_from, copy_of, method, confidence, detail, detected_ms)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, o.ArticleID, o.Version, o.Publisher, string(o.Kind), o.Key, o.DerivedFrom, o.CopyOf, string(o.Method), o.Confidence, o.Detail, ms(at)); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO article_origin (article_id, version, publisher, kind, origin_key, derived_from, copy_of, suspected_from, method, confidence, detail, detected_ms)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, o.ArticleID, o.Version, o.Publisher, string(o.Kind), o.Key, o.DerivedFrom, o.CopyOf, o.SuspectedFrom, string(o.Method), o.Confidence, o.Detail, ms(at)); err != nil {
 			return 0, fmt.Errorf("store: origins: %w", err)
+		}
+		for _, m := range o.Matches {
+			if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO origin_match (article_id, other_id, version, method, score, shared_runs, longest_run, passage, detected_ms)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, o.ArticleID, m.Other, o.Version, string(m.Method), m.Score, m.Shared, m.LongestRun, m.Passage, ms(at)); err != nil {
+				return 0, fmt.Errorf("store: origins: %w", err)
+			}
 		}
 		wrote++
 	}
@@ -78,7 +84,7 @@ func (db *DB) Origins(ctx context.Context, articleIDs []string, asOf time.Time) 
 		for _, id := range chunk {
 			args = append(args, id)
 		}
-		rows, err := h.r.QueryContext(ctx, `SELECT o.article_id, o.version, o.publisher, o.kind, o.origin_key, o.derived_from, o.copy_of, o.method, o.confidence, o.detail
+		rows, err := h.r.QueryContext(ctx, `SELECT o.article_id, o.version, o.publisher, o.kind, o.origin_key, o.derived_from, o.copy_of, o.suspected_from, o.method, o.confidence, o.detail
 			FROM article_origin o WHERE o.article_id IN (`+strings.TrimSuffix(strings.Repeat("?,", len(chunk)), ",")+`)
 			AND o.seq = (SELECT MAX(o2.seq) FROM article_origin o2 WHERE o2.article_id = o.article_id AND o2.detected_ms <= ?)`,
 			append(args, bound)...)
@@ -88,7 +94,7 @@ func (db *DB) Origins(ctx context.Context, articleIDs []string, asOf time.Time) 
 		for rows.Next() {
 			var o origin.Origin
 			var kind, method string
-			if err := rows.Scan(&o.ArticleID, &o.Version, &o.Publisher, &kind, &o.Key, &o.DerivedFrom, &o.CopyOf, &method, &o.Confidence, &o.Detail); err != nil {
+			if err := rows.Scan(&o.ArticleID, &o.Version, &o.Publisher, &kind, &o.Key, &o.DerivedFrom, &o.CopyOf, &o.SuspectedFrom, &method, &o.Confidence, &o.Detail); err != nil {
 				rows.Close()
 				return nil, fmt.Errorf("store: origins: %w", err)
 			}
@@ -220,6 +226,37 @@ func (db *DB) EpisodeDecisions(ctx context.Context, securityID string, asOf time
 		}
 		d.DecidedAt = fromMS(at)
 		out[[2]string{d.EventA, d.EventB}] = d
+	}
+	return out, rows.Err()
+}
+
+// OriginMatches returns the comparisons recorded for an article at or before
+// asOf (zero: now), oldest first: what was seen when it was found to be a copy
+// of, or suspected to derive from, another article.
+func (db *DB) OriginMatches(ctx context.Context, articleID string, asOf time.Time) ([]origin.Match, error) {
+	h, err := db.baseHandle()
+	if err != nil {
+		return nil, err
+	}
+	bound := int64(1) << 62
+	if !asOf.IsZero() {
+		bound = ms(asOf)
+	}
+	rows, err := h.r.QueryContext(ctx, `SELECT other_id, method, score, shared_runs, longest_run, passage FROM origin_match
+		WHERE article_id = ? AND detected_ms <= ? ORDER BY seq`, articleID, bound)
+	if err != nil {
+		return nil, fmt.Errorf("store: origin matches: %w", err)
+	}
+	defer rows.Close()
+	var out []origin.Match
+	for rows.Next() {
+		var m origin.Match
+		var method string
+		if err := rows.Scan(&m.Other, &method, &m.Score, &m.Shared, &m.LongestRun, &m.Passage); err != nil {
+			return nil, fmt.Errorf("store: origin matches: %w", err)
+		}
+		m.Method = origin.Method(method)
+		out = append(out, m)
 	}
 	return out, rows.Err()
 }

@@ -181,6 +181,9 @@ func evalCases(items []labelled) []eval.Case {
 
 // cmdEval measures the lens against the tenant's labels.
 func cmdEval(ctx context.Context, a *app, args []string) error {
+	if len(args) > 0 && args[0] == "claims" {
+		return cmdEvalClaims(a, args[1:])
+	}
 	fs := newFlags("eval")
 	days := fs.Int("days", defaultEvalDays, "use labels made in the last days")
 	threshold := fs.Float64("threshold", a.cfg.Lens.Threshold, "relevance at or above which the lens calls an article relevant (default: lens.threshold)")

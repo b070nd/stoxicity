@@ -27,7 +27,7 @@ func market(prices map[string]float64, splits ...marketdata.Split) Market {
 	m := Market{Prices: map[string]Price{}, Splits: map[string][]marketdata.Split{},
 		Coverage: marketdata.SplitCoverage{Since: "2025-01-01", Read: now}}
 	for t, p := range prices {
-		m.Prices[marketdata.NormTicker(t)] = Price{Ticker: t, Day: "2026-11-04", Close: p, Currency: QuoteCurrency, Raw: true}
+		m.Prices[marketdata.NormTicker(t)] = Price{Ticker: t, Day: "2026-11-04", Close: p, Currency: "USD", Raw: true}
 	}
 	for _, s := range splits {
 		m.Splits[marketdata.NormTicker(s.Ticker)] = append(m.Splits[marketdata.NormTicker(s.Ticker)], s)
@@ -200,7 +200,7 @@ func TestInputsThatCannotBeMatchedAreRejectedWithReasons(t *testing.T) {
 			p := m.Prices["REJ"]
 			p.Currency = ""
 			m.Prices["REJ"] = p
-		}, "no currency"},
+		}, "quote currency of REJ is unknown"},
 		{"stale price", func(_ *Market, _ *map[string]Mapping, n *time.Time) { *n = n.AddDate(0, 0, 20) }, "days old"},
 		{"split list does not reach back", func(m *Market, _ *map[string]Mapping, _ *time.Time) { m.Coverage.Since = "2026-10-30" }, "split list does not cover"},
 		{"split list is older than the price", func(m *Market, _ *map[string]Mapping, _ *time.Time) {
@@ -317,6 +317,109 @@ func TestClassName(t *testing.T) {
 	for in, want := range map[string]string{"": "all shares", gA: "CapitalClassA", moogB + ";x:Y=z:OtherMember": "CommonClassB / Other"} {
 		if got := ClassName(in); got != want {
 			t.Errorf("%q: %q, want %q", in, got, want)
+		}
+	}
+}
+
+// quoted values REJ-like single-class issuers whose price is stated in cur, listed on venue.
+func quoted(t *testing.T, cur, venue string, mut func(*Market)) ClassValue {
+	t.Helper()
+	p := pickOf(t, ob("c", "c-1", "", "", 100))
+	m := market(map[string]float64{"CUR": 5})
+	pr := m.Prices["CUR"]
+	pr.Currency = cur
+	m.Prices["CUR"] = pr
+	if mut != nil {
+		mut(&m)
+	}
+	return Compute(p, maps([]Mapping{{Ticker: "CUR", SecurityID: "s", Status: Mapped, Venue: venue}}), m, now).Classes[0]
+}
+
+func TestAnUnknownOrForeignQuoteCurrencyNeverBecomesADollarValue(t *testing.T) {
+	// Unknown: the price states nothing and the venue is not known.
+	if cv := quoted(t, "", "", nil); cv.OK || cv.Cap != 0 || !strings.Contains(cv.Reason, "unknown") {
+		t.Errorf("unknown currency was valued: %+v", cv)
+	}
+	// Known from the listing venue when the price does not say, and the basis is kept.
+	cv := quoted(t, "", "Nasdaq", nil)
+	if !cv.OK || cv.QuoteCurrency != "USD" || cv.Currency != "USD" || !strings.Contains(cv.CurrencyBasis, "listing venue") {
+		t.Errorf("a US venue quotes in USD: %+v", cv)
+	}
+	// The price source and the venue disagree: no guess.
+	if cv := quoted(t, "EUR", "Nasdaq", nil); cv.OK || !strings.Contains(cv.Reason, "states EUR") {
+		t.Errorf("conflicting currencies were valued: %+v", cv)
+	}
+	// Foreign: rejected without a rate, whatever the venue.
+	if cv := quoted(t, "EUR", "", nil); cv.OK || cv.Cap != 0 || !strings.Contains(cv.Reason, "no dated, sourced EUR to USD rate") {
+		t.Errorf("a EUR price became a USD value: %+v", cv)
+	}
+}
+
+func TestAForeignPriceIsConvertedOnlyWithADatedSourcedRate(t *testing.T) {
+	good := Rate{From: "EUR", To: "USD", Day: "2026-11-04", Rate: 1.1, Source: "ecb"}
+	with := func(r Rate) func(*Market) { return func(m *Market) { m.Rates = []Rate{r} } }
+	cv := quoted(t, "EUR", "", with(good))
+	if !cv.OK || cv.Currency != "USD" || cv.QuoteCurrency != "EUR" || cv.FX == nil || cv.FX.Source != "ecb" {
+		t.Fatalf("a dated, sourced rate converts: %+v", cv)
+	}
+	if want := 100 * 5 * 1.1; cv.Cap < want-1e-9 || cv.Cap > want+1e-9 {
+		t.Errorf("cap = %v, want %v", cv.Cap, want)
+	}
+	bad := map[string]Rate{
+		"no source":      {From: "EUR", To: "USD", Day: "2026-11-04", Rate: 1.1},
+		"no usable rate": {From: "EUR", To: "USD", Day: "2026-11-04", Rate: 0, Source: "ecb"},
+		"too old":        {From: "EUR", To: "USD", Day: "2026-10-20", Rate: 1.1, Source: "ecb"},
+		"unreadable day": {From: "EUR", To: "USD", Day: "last week", Rate: 1.1, Source: "ecb"},
+		"wrong pair":     {From: "GBP", To: "USD", Day: "2026-11-04", Rate: 1.3, Source: "ecb"},
+		"wrong way":      {From: "USD", To: "EUR", Day: "2026-11-04", Rate: 0.9, Source: "ecb"},
+	}
+	for name, r := range bad {
+		if cv := quoted(t, "EUR", "", with(r)); cv.OK || cv.Cap != 0 {
+			t.Errorf("%s: converted with %+v", name, r)
+		}
+	}
+	// The output currency is explicit: a USD price reported in EUR needs its own rate.
+	out := func(m *Market) { m.Output = "EUR" }
+	if cv := quoted(t, "USD", "", out); cv.OK {
+		t.Errorf("a USD price was reported in EUR without a rate: %+v", cv)
+	}
+}
+
+func TestHistoricalViewsExcludeWhatCameLater(t *testing.T) {
+	early := ob("h", "h-1", "", "", 100)
+	early.Filed, early.AsOf, early.Received = "2026-08-01", "2026-07-25", time.Date(2026, 8, 2, 8, 0, 0, 0, time.UTC)
+	late := ob("h", "h-2", "", "", 120)
+	late.Filed, late.AsOf, late.Received = "2026-10-30", "2026-10-24", time.Date(2026, 10, 31, 8, 0, 0, 0, time.UTC)
+	// The early filing was found only in November, by a backfill.
+	early.Received = time.Date(2026, 11, 2, 8, 0, 0, 0, time.UTC)
+	at := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	obs := []Obs{early, late}
+
+	if p, ok := SelectView(obs, View{}); !ok || p.Accession != "h-2" {
+		t.Errorf("current view = %v %v", p.Accession, ok)
+	}
+	if _, ok := SelectView(obs, View{Mode: ModeKnown, At: at}); ok {
+		t.Error("the installation did not hold the early filing in September: it was found in November")
+	}
+	if p, ok := SelectView(obs, View{Mode: ModeReconstructed, At: at}); !ok || p.Accession != "h-1" || p.Classes[0].Shares != 100 {
+		t.Errorf("reconstructed = %+v %v: the filing was public in August and the later one is excluded", p, ok)
+	}
+	if v := (View{Mode: ModeKnown, At: at}); !strings.Contains(v.Caveat(), "had recorded") || !strings.Contains((View{Mode: ModeReconstructed, At: at}).Caveat(), "not what the installation showed then") || (View{}).Caveat() != "" {
+		t.Error("the views must say what they are")
+	}
+	// Ages are measured at the view's time, not now.
+	if got := (View{Mode: ModeKnown, At: at}).Ref(now); !got.Equal(at) {
+		t.Errorf("ref = %v", got)
+	}
+}
+
+func TestQuoteCurrencyNeverAssumes(t *testing.T) {
+	for _, c := range []struct{ stated, venue, cur string }{
+		{"", "", ""}, {"", "Nowhere", ""}, {"", "NYSE", "USD"}, {"USD", "", "USD"}, {"EUR", "", "EUR"}, {"EUR", "NYSE", ""}, {"USD", "OTC", "USD"},
+	} {
+		cur, basis, problem := QuoteCurrency(c.stated, c.venue)
+		if cur != c.cur || (cur == "") != (problem != "") || (cur != "" && basis == "") {
+			t.Errorf("QuoteCurrency(%q, %q) = %q, %q, %q", c.stated, c.venue, cur, basis, problem)
 		}
 	}
 }

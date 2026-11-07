@@ -60,3 +60,28 @@ func TestEpisodeDecisionsAreAppendedAndReadAsOfATime(t *testing.T) {
 		t.Error("a pair out of order is refused")
 	}
 }
+
+func TestTheObservationsBehindASuspicionAreKeptAndReadAsOfATime(t *testing.T) {
+	db, _ := openTemp(t)
+	ctx := context.Background()
+	t0 := time.Date(2026, 11, 3, 10, 0, 0, 0, time.UTC)
+	o := origin.Origin{ArticleID: "a2", Publisher: "p.example", Kind: origin.KindReported, Key: "reported:p.example", Method: origin.MethodPassageOverlap,
+		SuspectedFrom: "wire:reuters", Version: origin.Version,
+		Matches: []origin.Match{{Other: "a1", Method: origin.MethodPassageOverlap, Score: 0.6, Shared: 14, LongestRun: 13, Passage: "the company said on tuesday it would buy"}}}
+	if n, err := db.PutOrigins(ctx, []origin.Origin{o}, t0); err != nil || n != 1 {
+		t.Fatalf("%d %v", n, err)
+	}
+	// Finding the same again neither adds a row nor duplicates the observation.
+	db.PutOrigins(ctx, []origin.Origin{o}, t0.Add(time.Hour))
+	ms, err := db.OriginMatches(ctx, "a2", time.Time{})
+	if err != nil || len(ms) != 1 || ms[0].Other != "a1" || ms[0].LongestRun != 13 || ms[0].Passage == "" || ms[0].Method != origin.MethodPassageOverlap {
+		t.Fatalf("matches = %+v, %v", ms, err)
+	}
+	got, _ := db.Origins(ctx, []string{"a2"}, time.Time{})
+	if got["a2"].SuspectedFrom != "wire:reuters" || got["a2"].Standing() != origin.StandingSuspected {
+		t.Errorf("a suspicion is stored as a suspicion: %+v", got["a2"])
+	}
+	if before, _ := db.OriginMatches(ctx, "a2", t0.Add(-time.Hour)); len(before) != 0 {
+		t.Errorf("an observation made later shows in an earlier reading: %+v", before)
+	}
+}

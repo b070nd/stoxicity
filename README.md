@@ -152,6 +152,15 @@ make build                  # ./build.sh: every package, and every program under
 
 Without a build, run from `app/`: `go run ./src/cmd/stoxicity doctor`.
 
+Back up before the first run of a new binary: the databases migrate when they are
+opened and there is no downgrade.
+
+```bash
+./backup.sh backup                     # data/ -> backups/<UTC time>/ (online SQLite backup, checked)
+./backup.sh verify backups/<time>      # checksums, integrity check, row counts
+./backup.sh restore backups/<time>     # with the program stopped; the replaced folder is kept aside
+```
+
 ```bash
 stoxicity fetch [source-id...]      # poll once, print new articles per source
 stoxicity run                       # poll until Ctrl-C, one line per poll; starts and stops the laya server

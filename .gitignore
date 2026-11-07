@@ -2,6 +2,7 @@
 /bin/
 /dist/
 /data/
+/backups/
 /app/data/
 
 # other tenants stay local; only the default tenant and the *.example watches are tracked

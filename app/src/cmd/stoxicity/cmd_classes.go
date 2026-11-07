@@ -6,18 +6,22 @@ import (
 	"strings"
 	"time"
 
+	"github.com/b070nd/stoxicity/app/src/marketdata"
 	"github.com/b070nd/stoxicity/app/src/valuation"
 )
 
 // fundamentalsClasses shows the share count of each class of a company's stock
 // as its newest report's cover page states it, how each class is mapped to a
-// security, and the value of each class and of the issuer. The cover page is
-// read first unless -stored; with -at only the counts and mappings known by
-// then are shown (prices are kept for the newest session only).
+// security, and the value of each class and of the issuer, with the inputs of
+// each value. The cover page is read first unless -stored. With -at the
+// valuation is of that time: by default as this installation had recorded it
+// ("known"), or with -basis reconstructed as the record supports it today; the
+// two are labelled and never mixed.
 func (a *app) fundamentalsClasses(ctx context.Context, args []string) error {
 	fs := newFlags("universe fundamentals classes")
 	offline := fs.Bool("stored", false, "do not ask the SEC, read what is stored")
-	at := fs.String("at", "", "the counts and mappings known at this time (RFC 3339 or YYYY-MM-DD), no values")
+	at := fs.String("at", "", "value as of this time (RFC 3339 or YYYY-MM-DD)")
+	basis := fs.String("basis", "known", "with -at: known (what this installation had recorded then) or reconstructed (what the record supports now)")
 	rest, err := parseMixed(fs, args)
 	if err != nil {
 		return err
@@ -29,10 +33,19 @@ func (a *app) fundamentalsClasses(ctx context.Context, args []string) error {
 	if !ok || p.CIK == "" {
 		return fmt.Errorf("%s has no SEC number in the company list", strings.ToUpper(rest[0]))
 	}
-	var known time.Time
+	var view valuation.View
 	if *at != "" {
-		if known, err = parseWhen(*at); err != nil {
+		known, err := parseWhen(*at)
+		if err != nil {
 			return err
+		}
+		switch *basis {
+		case "known":
+			view = valuation.View{Mode: valuation.ModeKnown, At: known}
+		case "reconstructed":
+			view = valuation.View{Mode: valuation.ModeReconstructed, At: known}
+		default:
+			return usageErrorf("-basis must be known or reconstructed")
 		}
 		*offline = true
 	}
@@ -69,36 +82,29 @@ func (a *app) fundamentalsClasses(ctx context.Context, args []string) error {
 			mine = append(mine, o)
 		}
 	}
-	pick, ok := valuation.Select(mine, known)
+	pick, ok := valuation.SelectView(mine, view)
 	if !ok {
-		return fmt.Errorf("no cover page share count is known for %s%s", p.Ticker, atText(known))
+		return fmt.Errorf("no cover page share count is known for %s%s", p.Ticker, atText(view))
 	}
-	maps, err := db.ClassMaps(ctx, known)
+	var mapAt time.Time
+	if view.Mode == valuation.ModeKnown {
+		mapAt = view.At
+	}
+	maps, err := db.ClassMaps(ctx, mapAt)
 	if err != nil {
 		return err
 	}
-	mp := map[string]valuation.Mapping{}
-	for d, m := range maps[p.CIK] {
-		mp[d] = m
+	mp := valuation.Annotate(maps[p.CIK], a.universe().All())
+	fmt.Fprintf(a.stdout, "%s: cover page of %s %s, filed %s%s\n", p.Ticker, pick.Form, pick.Accession, pick.Filed, atText(view))
+	if c := view.Caveat(); c != "" {
+		fmt.Fprintf(a.stdout, "  %s\n", c)
 	}
-	fmt.Fprintf(a.stdout, "%s: cover page of %s %s, filed %s%s\n", p.Ticker, pick.Form, pick.Accession, pick.Filed, atText(known))
 
-	var val valuation.Value
-	if known.IsZero() {
-		m, err := valuation.LoadMarket(ctx, db)
-		if err != nil {
-			return err
-		}
-		types := map[string]string{}
-		for _, q := range a.universe().All() {
-			types[strings.ToUpper(q.Ticker)] = q.Type()
-		}
-		for d, m := range mp {
-			m.Type = types[strings.ToUpper(m.Ticker)]
-			mp[d] = m
-		}
-		val = valuation.Compute(pick, mp, m, a.now())
+	m, err := valuation.LoadMarketView(ctx, db, view)
+	if err != nil {
+		return err
 	}
+	val := valuation.Compute(pick, mp, m, view.Ref(a.now()))
 	color := useColor(a.stdout)
 	t := cliTable{
 		Header: []string{"CLASS", "SYMBOL", "MAPPING", "COUNT DATE", "SHARES", "SPLIT", "PRICE", "SESSION", "CLASS VALUE"},
@@ -119,33 +125,38 @@ func (a *app) fundamentalsClasses(ctx context.Context, args []string) error {
 		if c.Revised {
 			note = " (revised)"
 		}
-		row := []cliCell{plain(c.Name()), styled(m.Ticker, cliStrong), styled(status, sstyle), plain(c.AsOf), plain(countText(c.Shares) + note), plain(""), plain(""), plain(""), styled("no value without today's price", cliDim)}
-		if known.IsZero() {
-			cv := val.Classes[i]
-			row[5], row[6], row[7] = plain(fmt.Sprintf("%g", cv.SplitFactor)), plain(fmt.Sprintf("%.2f", cv.Price.Close)), plain(cv.Price.Day)
-			if cv.Price.Close == 0 {
-				row[5], row[6], row[7] = plain(""), plain(""), plain("")
-			}
-			if cv.OK {
-				row[8] = styled(moneyText(cv.Cap), cliGreen)
-			} else {
-				row[8] = styled("unavailable", cliRed)
-			}
+		cv := val.Classes[i]
+		row := []cliCell{plain(c.Name()), styled(m.Ticker, cliStrong), styled(status, sstyle), plain(c.AsOf), plain(countText(c.Shares) + note), plain(""), plain(""), plain(""), styled("unavailable", cliRed)}
+		if cv.Price.Close != 0 {
+			row[5], row[6], row[7] = plain(fmt.Sprintf("%g", cv.SplitFactor)), plain(priceText(cv)), plain(cv.Price.Day)
+		}
+		if cv.OK {
+			row[8] = styled(moneyText(cv.Cap)+" "+cv.Currency, cliGreen)
 		}
 		t.Rows = append(t.Rows, row)
 	}
 	t.write(a.stdout, color)
-	if known.IsZero() {
-		for _, cv := range val.Classes {
-			if !cv.OK {
-				fmt.Fprintf(a.stdout, "  %s: %s\n", cv.Name(), cv.Reason)
-			}
-		}
-		if val.IssuerOK {
-			fmt.Fprintf(a.stdout, "issuer capitalisation (every class): %s\n", moneyText(val.Issuer))
+	valued := 0
+	for _, cv := range val.Classes {
+		if cv.OK {
+			valued++
 		} else {
-			fmt.Fprintf(a.stdout, "issuer capitalisation: unavailable (%s)\n", val.IssuerReason)
+			fmt.Fprintf(a.stdout, "  %s: %s\n", cv.Name(), cv.Reason)
 		}
+	}
+	if val.IssuerOK {
+		fmt.Fprintf(a.stdout, "issuer capitalisation (every class): %s %s\n", moneyText(val.Issuer), val.Currency)
+	} else {
+		fmt.Fprintf(a.stdout, "issuer capitalisation: unavailable (%s)\n", val.IssuerReason)
+	}
+	fmt.Fprintf(a.stdout, "completeness: %d of %d classes valued", valued, len(val.Classes))
+	if len(pick.Dropped) > 0 {
+		fmt.Fprintf(a.stdout, ", %d class(es) the report before stated are missing", len(pick.Dropped))
+	}
+	fmt.Fprintln(a.stdout)
+	fmt.Fprintln(a.stdout, "inputs:")
+	for _, cv := range val.Classes {
+		a.classInputs(cv, val.Coverage)
 	}
 	for _, c := range pick.Classes {
 		if c.Revised {
@@ -158,19 +169,67 @@ func (a *app) fundamentalsClasses(ctx context.Context, args []string) error {
 	for _, d := range pick.Dropped {
 		fmt.Fprintf(a.stdout, "  %s was stated by the report before and is not stated by this one\n", valuation.ClassName(d))
 	}
-	for _, c := range pick.Classes {
-		if m := mp[c.Dimensions]; m.Status != "" && m.Basis != "" {
-			fmt.Fprintf(a.stdout, "  mapping of %s: %s\n", c.Name(), m.Basis)
-		}
-	}
 	return nil
 }
 
-func atText(known time.Time) string {
-	if known.IsZero() {
+// priceText writes a class's price with the currency it is quoted in.
+func priceText(cv valuation.ClassValue) string {
+	if cv.QuoteCurrency == "" {
+		return fmt.Sprintf("%.2f (currency unknown)", cv.Price.Close)
+	}
+	return fmt.Sprintf("%.2f %s", cv.Price.Close, cv.QuoteCurrency)
+}
+
+// classInputs lists what one class's value rests on: the count and its filing,
+// the mapping, the price session with its currency and when it was stored, the
+// splits, and the rate if one converted the price.
+func (a *app) classInputs(cv valuation.ClassValue, cov marketdata.SplitCoverage) {
+	w := a.stdout
+	fmt.Fprintf(w, "  %s\n", cv.Name())
+	fmt.Fprintf(w, "    count: %s shares on %s, %s %s filed %s, stored %s\n", countText(cv.Shares), cv.AsOf, cv.Form, cv.Accession, cv.Filed, whenText(cv.Received))
+	if cv.Mapping.Status == "" {
+		fmt.Fprintln(w, "    mapping: none")
+	} else {
+		fmt.Fprintf(w, "    mapping: %s %s by %s on %s: %s\n", cv.Mapping.Status, cv.Mapping.Ticker, cv.Mapping.Method, whenText(cv.Mapping.MappedAt), cv.Mapping.Basis)
+	}
+	if cv.Price.Close != 0 {
+		fmt.Fprintf(w, "    price: %.2f on %s, raw %t, stored %s\n", cv.Price.Close, cv.Price.Day, cv.Price.Raw, whenText(cv.Price.Fetched))
+		if cv.QuoteCurrency != "" {
+			fmt.Fprintf(w, "    currency: %s (%s)\n", cv.QuoteCurrency, cv.CurrencyBasis)
+		} else {
+			fmt.Fprintln(w, "    currency: unknown")
+		}
+		if cov.Since != "" {
+			fmt.Fprintf(w, "    splits: %d between the count and the price (factor %g); the split list covers %s on, read %s\n", len(cv.Splits), cv.SplitFactor, cov.Since, whenText(cov.Read))
+		} else {
+			fmt.Fprintln(w, "    splits: the split list has not been read")
+		}
+		for _, s := range cv.Splits {
+			fmt.Fprintf(w, "      %s %g for %g\n", s.Day, s.To, s.From)
+		}
+		if cv.FX != nil {
+			fmt.Fprintf(w, "    rate: %s to %s %g on %s from %s\n", cv.FX.From, cv.FX.To, cv.FX.Rate, cv.FX.Day, cv.FX.Source)
+		}
+	} else {
+		fmt.Fprintln(w, "    price: none stored for the view")
+	}
+}
+
+func whenText(t time.Time) string {
+	if t.IsZero() {
+		return "(time not recorded)"
+	}
+	return t.UTC().Format("2006-01-02 15:04Z")
+}
+
+func atText(v valuation.View) string {
+	if !v.Historical() {
 		return ""
 	}
-	return " as known at " + known.UTC().Format(time.RFC3339)
+	if v.Mode == valuation.ModeKnown {
+		return " as known at " + v.At.UTC().Format(time.RFC3339)
+	}
+	return " reconstructed for " + v.At.UTC().Format(time.RFC3339)
 }
 
 // moneyText writes an amount of dollars with thousands separators.

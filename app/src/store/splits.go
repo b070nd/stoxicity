@@ -49,6 +49,9 @@ func (db *DB) PutSplits(ctx context.Context, splits []marketdata.Split, since ti
 		since.Format(time.DateOnly), ms(at)); err != nil {
 		return fmt.Errorf("store: splits: %w", err)
 	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO split_read (since_day, read_ms) VALUES (?, ?)`, since.Format(time.DateOnly), ms(at)); err != nil {
+		return fmt.Errorf("store: splits: %w", err)
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("store: splits: %w", err)
 	}
@@ -95,4 +98,54 @@ func (db *DB) Splits(ctx context.Context) ([]marketdata.Split, error) {
 		out = append(out, s)
 	}
 	return out, rows.Err()
+}
+
+// SplitsAsOf returns the splits this system had stored by the time (zero: all),
+// oldest first.
+func (db *DB) SplitsAsOf(ctx context.Context, known time.Time) ([]marketdata.Split, error) {
+	h, err := db.baseHandle()
+	if err != nil {
+		return nil, err
+	}
+	bound := int64(1) << 62
+	if !known.IsZero() {
+		bound = ms(known)
+	}
+	rows, err := h.r.QueryContext(ctx, `SELECT ticker, exec_day, split_from, split_to FROM split WHERE first_seen_ms <= ? ORDER BY exec_day, ticker`, bound)
+	if err != nil {
+		return nil, fmt.Errorf("store: splits: %w", err)
+	}
+	defer rows.Close()
+	var out []marketdata.Split
+	for rows.Next() {
+		var s marketdata.Split
+		if err := rows.Scan(&s.Ticker, &s.Day, &s.From, &s.To); err != nil {
+			return nil, fmt.Errorf("store: splits: %w", err)
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// SplitCoverageAsOf returns what the readings made by the time (zero: all)
+// covered: the earliest day any of them started from and the newest reading. It
+// is the zero value when none had been made.
+func (db *DB) SplitCoverageAsOf(ctx context.Context, known time.Time) (marketdata.SplitCoverage, error) {
+	h, err := db.baseHandle()
+	if err != nil {
+		return marketdata.SplitCoverage{}, err
+	}
+	bound := int64(1) << 62
+	if !known.IsZero() {
+		bound = ms(known)
+	}
+	var since *string
+	var read *int64
+	if err := h.r.QueryRowContext(ctx, `SELECT MIN(since_day), MAX(read_ms) FROM split_read WHERE read_ms <= ?`, bound).Scan(&since, &read); err != nil {
+		return marketdata.SplitCoverage{}, fmt.Errorf("store: splits: %w", err)
+	}
+	if since == nil || read == nil {
+		return marketdata.SplitCoverage{}, nil
+	}
+	return marketdata.SplitCoverage{Since: *since, Read: fromMS(*read)}, nil
 }

@@ -12,6 +12,12 @@ type Day struct {
 	Early bool
 	// Why names the early close.
 	Why string
+	// Close is the clock time the regular session ends on an early day; empty
+	// means the venue's usual early close.
+	Close string
+	// Override is the dated, sourced change to the recurring rules that decided
+	// the day, nil when the recurring rules did.
+	Override *Override
 }
 
 // Holiday is a named day the market is closed.
@@ -22,7 +28,10 @@ type Holiday struct {
 
 // DayOf is the calendar entry for the date of t in the market's zone. It models
 // the US market calendar: weekends, the ten holidays, and the three early closes.
-func (i Info) DayOf(t time.Time) Day {
+func (i Info) DayOf(t time.Time) Day { return Calendar{}.Day(i, t) }
+
+// recurring is the day by the recurring rules alone.
+func (i Info) recurring(t time.Time) Day {
 	d := t.In(i.Location())
 	if d.Weekday() == time.Saturday || d.Weekday() == time.Sunday {
 		return Day{Closed: "weekend"}

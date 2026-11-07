@@ -214,3 +214,94 @@ func TestBuildGraphLinksEventsEvidenceAndPublishers(t *testing.T) {
 		t.Error("dot or json")
 	}
 }
+
+// sigText is sig with the texts given to the copy detector too.
+func sigText(id, kind, title string, at time.Time, arts ...struct {
+	ID, Domain, Text string
+	At               time.Duration
+}) store.SignalEvent {
+	e := store.SignalEvent{SecurityID: "sec_a", Ticker: "ACME", EventID: id, Kind: kind, Title: title, PublicAt: at, Materiality: 3, Origins: map[string]origin.Origin{}}
+	var ins []origin.Input
+	var os []origin.Origin
+	for _, x := range arts {
+		in := origin.Input{ArticleID: x.ID, Domain: x.Domain, Title: title, Summary: x.Text, Published: at.Add(x.At)}
+		e.Evidence = append(e.Evidence, store.SignalEvidence{ArticleID: x.ID, SourceID: "paper", Domain: x.Domain, Title: title, Published: in.Published})
+		ins = append(ins, in)
+		os = append(os, origin.Detect(in))
+	}
+	for _, o := range origin.Link(ins, os) {
+		e.Origins[o.ArticleID] = o
+	}
+	return e
+}
+
+type txt = struct {
+	ID, Domain, Text string
+	At               time.Duration
+}
+
+const base = "Acme Corp agreed on Monday to acquire Bolt Industries in a cash and stock deal valued at about four billion dollars, the companies said, adding that the transaction is expected to close in the second half of next year subject to regulatory approval and a vote of Bolt shareholders."
+
+func TestRewrittenCopiesOfUnknownOriginCannotBeCorroboration(t *testing.T) {
+	// Five sites, five wordings of one report, none attributes it. Distinct domains are not independent reporting.
+	unknown := sigText("e1", "acquisition", "Acme to buy Bolt", t0,
+		txt{"u1", "a.example", base, 0},
+		txt{"u2", "b.example", "Acme Corp is buying Bolt Industries. " + base[40:], time.Hour},
+		txt{"u3", "c.example", base + " Shares of Bolt rose.", 2 * time.Hour},
+		txt{"u4", "d.example", "Deal: " + base, 3 * time.Hour},
+		txt{"u5", "e.example", "Bolt Industries will be acquired by Acme Corp for about four billion dollars in cash and stock, per the companies.", 4 * time.Hour})
+	if v := assess(unknown); v.State != StateUnresolved || v.Corroborated {
+		t.Errorf("unknown origins: %s (%s)", v.State, v.Reason)
+	}
+	// The same with a byline on each rewrite: a byline claims reporting, it does not establish it.
+	by := sigText("e2", "acquisition", "Acme to buy Bolt", t0,
+		txt{"b1", "a.example", "By Sam Writer\n" + base, 0},
+		txt{"b2", "b.example", "By Pat Reporter\nAcme Corp is buying Bolt Industries. " + base[40:], time.Hour},
+		txt{"b3", "c.example", "By Lee Third\n" + base + " Shares of Bolt rose.", 2 * time.Hour})
+	v := assess(by)
+	if v.State != StateUnresolved || v.Corroborated {
+		t.Errorf("bylined rewrites: %s (%s)", v.State, v.Reason)
+	}
+	if !strings.Contains(v.Details[0].Reason, "byline") && !strings.Contains(v.Details[0].Reason, "suspected") {
+		t.Errorf("the reason must say why: %s", v.Details[0].Reason)
+	}
+	// Even bylined articles whose wording differs entirely are only claims of reporting.
+	diff := sigText("e3", "acquisition", "Acme to buy Bolt", t0,
+		txt{"d1", "a.example", "By Sam Writer\n" + base, 0},
+		txt{"d2", "b.example", "By Pat Reporter\nTraders had expected the move for months after a string of approaches, and the announcement on Monday sent Bolt shares sharply higher in New York as arbitrage funds took positions.", time.Hour})
+	if v := assess(diff); v.State == StateCorroborated {
+		t.Errorf("two bylines are not corroboration: %s (%s)", v.State, v.Reason)
+	}
+}
+
+func TestOnlyAnAttributedWireReportCountsBesideAFilingAndSuspectedCopiesDoNot(t *testing.T) {
+	filing := sig("e1", "acquisition", "Acme to buy Bolt", t0, 5, a("0001-26-9", "sec.gov", "8-K - Acme", "", t0, "8-K"))
+	// A rewrite of the filing's news with its own byline does not corroborate the filing.
+	rewrite := sigText("e2", "acquisition", "Acme to buy Bolt", t0, txt{"r1", "a.example", "By Sam Writer\n" + base, time.Hour})
+	if v := assess(filing, rewrite); v.State == StateCorroborated {
+		t.Errorf("a filing with a bylined rewrite: %s (%s)", v.State, v.Reason)
+	}
+	// A wire story and a suspected edited copy of it: one independent origin, the copy adds none.
+	wire := "NEW YORK (Reuters) - " + base
+	edited := sigText("e3", "acquisition", "Acme to buy Bolt", t0,
+		txt{"w1", "a.example", wire, 0},
+		txt{"w2", "b.example", "By Pat Reporter\n" + base[:200] + " Bolt shares jumped in early trading after the news.", time.Hour})
+	if v := assess(edited); v.State == StateCorroborated {
+		t.Errorf("an edited copy of a wire story is not a second origin: %s (%s)", v.State, v.Reason)
+	}
+	// The wire story plus a real second agency: corroborated.
+	two := sigText("e4", "acquisition", "Acme to buy Bolt", t0,
+		txt{"w1", "a.example", wire, 0},
+		txt{"g1", "b.example", "(Bloomberg) - Bolt Industries drew a four billion dollar offer from Acme, according to a person familiar with the terms who asked not to be named.", time.Hour})
+	if v := assess(two); v.State != StateCorroborated {
+		t.Errorf("two agencies: %s (%s)", v.State, v.Reason)
+	}
+}
+
+func TestAnArticleWithoutAStoredOriginIsNeverIndependent(t *testing.T) {
+	e := sig("e1", "acquisition", "Acme to buy Bolt", t0, 5, a("w1", "a.example", "Acme to buy Bolt", reutersText, t0, ""), a("b1", "b.example", "Acme bid for Bolt", bloombergText, t0.Add(time.Hour), ""))
+	delete(e.Origins, "b1")
+	if v := assess(e); v.State == StateCorroborated {
+		t.Errorf("an origin that was never stored must not complete a corroboration: %s (%s)", v.State, v.Reason)
+	}
+}

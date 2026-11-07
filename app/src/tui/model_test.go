@@ -16,6 +16,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/b070nd/stoxicity/app/src/company"
+	"github.com/b070nd/stoxicity/app/src/exchange"
 	"github.com/b070nd/stoxicity/app/src/filter"
 	"github.com/b070nd/stoxicity/app/src/labels"
 	"github.com/b070nd/stoxicity/app/src/model"
@@ -47,6 +48,7 @@ type fake struct {
 	univ     *universe.Universe
 	quotes   map[string]Quote
 	numbers  map[string]map[string]float64
+	standing map[string]CapStanding
 	insiders map[string][]model.InsiderTrade
 	queue    []labels.Pick
 	progress labels.Progress
@@ -109,6 +111,12 @@ func (f *fake) Numbers() map[string]map[string]float64 {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.numbers
+}
+
+func (f *fake) Standings() map[string]CapStanding {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.standing
 }
 
 func (f *fake) Quotes() map[string]Quote {
@@ -333,6 +341,12 @@ func keyMsg(k string) tea.KeyPressMsg {
 		return tea.KeyPressMsg{Code: tea.KeyTab}
 	case "shift+tab":
 		return tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift}
+	case "ctrl+tab":
+		return tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModCtrl}
+	case "ctrl+shift+tab":
+		return tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModCtrl | tea.ModShift}
+	case "f6":
+		return tea.KeyPressMsg{Code: tea.KeyF6}
 	case "down":
 		return tea.KeyPressMsg{Code: tea.KeyDown}
 	case "up":
@@ -375,26 +389,28 @@ func (h *harness) mustContain(want ...string) {
 	}
 }
 
-func TestStartsOnHomeAndShowsTheDigest(t *testing.T) {
+func TestStartsOnNewsAndShowsTheFeed(t *testing.T) {
 	h := newHarness(t)
-	h.mustContain("All news", "Tech", "Buffett core", "Home", "Nvidia beats estimates", "Stocks ›", "Domains ›", "Timeline")
+	h.mustContain("News", "Watch: All", "[x] Relevant only", "Nvidia beats estimates", "Latest news", "Activity timeline")
 	if h.crumbs() != "Home" {
 		t.Errorf("crumbs = %q", h.crumbs())
 	}
 }
 
-func TestWatchBarShowsUnreadOfOtherWatches(t *testing.T) {
+func TestWatchesAreSeparateFromSectionNavigation(t *testing.T) {
 	h := newHarness(t)
-	h.mustContain("1 Tech (2)", "2 Buffett core")
+	h.mustContain("2 unread", "Watch: All")
+	h.press("w")
+	h.mustContain("Tech", "Buffett core")
 }
 
-func TestTabSwitchesWatchAndKeepsTheScreen(t *testing.T) {
+func TestControlTabSwitchesWatchAndKeepsTheScreen(t *testing.T) {
 	h := newHarness(t)
 	h.openStocks()
 	if h.crumbs() != "Home > Stocks" {
 		t.Fatalf("crumbs = %q", h.crumbs())
 	}
-	h.press("tab")
+	h.press("ctrl+tab")
 	if h.m.stack.Watch() != "tech" {
 		t.Fatalf("watch = %q", h.m.stack.Watch())
 	}
@@ -408,7 +424,7 @@ func TestTabSwitchesWatchAndKeepsTheScreen(t *testing.T) {
 	if strings.Contains(v, " KO ") || !strings.Contains(v, "NVDA") {
 		t.Errorf("stocks of the tech watch should list NVDA and not KO:\n%s", v)
 	}
-	h.press("shift+tab")
+	h.press("ctrl+shift+tab")
 	if h.m.stack.Watch() != "" {
 		t.Errorf("shift+tab did not return to all news: %q", h.m.stack.Watch())
 	}
@@ -806,7 +822,7 @@ func TestTooSmallTerminal(t *testing.T) {
 	h.m.Update(tea.WindowSizeMsg{Width: 20, Height: 5})
 	h.mustContain("too small")
 	h.m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
-	h.mustContain("Home")
+	h.mustContain("News")
 }
 
 func TestEveryLineFitsTheWidth(t *testing.T) {
@@ -967,7 +983,7 @@ func pagesParams() pages.Params {
 func TestCompaniesScreenListsEveryCompanyWithCountsAndFacets(t *testing.T) {
 	h := newHarness(t)
 	h.press("c")
-	h.mustContain("Companies", "4 of 4 companies", "Nasdaq 3", "NVDA", "Nvidia Corp", "Coca-Cola", "★", "GOOGL", "NEWS")
+	h.mustContain("Stocks", "4 of 4 securities", "Nasdaq 3", "NVDA", "Nvidia Corp", "Coca-Cola", "★", "GOOGL", "NEWS")
 	if got := h.crumbs(); !strings.HasSuffix(got, "Companies") {
 		t.Errorf("crumbs = %q", got)
 	}
@@ -988,13 +1004,13 @@ func TestCompaniesNarrowAsYouTypeAndEnterKeepsTheQuery(t *testing.T) {
 	if got := h.m.stack.Current(); got.Kind != nav.Companies || got.Arg != "exchange:nyse" {
 		t.Errorf("route = %v", got)
 	}
-	h.mustContain("1 of 4 companies")
+	h.mustContain("1 of 4 securities")
 	// Esc leaves the committed query alone.
 	h.press("/", "backspace", "esc")
 	if h.m.stack.Current().Arg != "exchange:nyse" {
 		t.Errorf("esc changed the route")
 	}
-	h.mustContain("1 of 4 companies")
+	h.mustContain("1 of 4 securities")
 }
 
 func TestCompaniesBadQueryStaysInTheBarWithTheError(t *testing.T) {
@@ -1109,10 +1125,11 @@ func TestListPromptCreatesAListAndCompaniesCanBeFilteredByIt(t *testing.T) {
 	h.press("l")
 	h.typeText("picks")
 	h.press("enter")
+	h.press("f")
 	h.mustContain("NVDA lists +picks", "lists: picks 1")
 	h.m.goTo(nav.Route{Kind: nav.Companies, Arg: "list:picks"})
 	h.run(h.m.loadCmd(false))
-	h.mustContain("1 of 4 companies")
+	h.mustContain("1 of 4 securities")
 }
 
 func TestTagPromptNeedsAStockUnderTheCursor(t *testing.T) {
@@ -1154,7 +1171,7 @@ func TestCatalogueListsEveryCompanyNotAShortlist(t *testing.T) {
 	h := newHarness(t)
 	h.bigCatalogue(1500)
 	h.press("c")
-	h.mustContain("1,500 of 1,500 companies", "by ticker", "TICKER", "T0000", "company 1 of 1,500")
+	h.mustContain("1,500 of 1,500 securities", "by ticker", "TICKER", "T0000", "company 1 of 1,500")
 	if h.m.companies != 1500 || h.m.vp.Len() != 1501 {
 		t.Fatalf("%d companies in %d rows to stop on, want all 1500 under one heading", h.m.companies, h.m.vp.Len())
 	}
@@ -1285,7 +1302,7 @@ func TestCompaniesSortWithTheColumnKeysAndTheQueryWinsWhenTyped(t *testing.T) {
 	h := newHarness(t)
 	h.press("c")
 	h.mustContain("TICKER▲")
-	h.press("<") // wraps round to the last column, name
+	h.press(">") // name follows ticker
 	h.mustContain("NAME▲")
 	if got := h.m.scr.Sort; got.Key != "name" {
 		t.Fatalf("sort = %+v", got)
@@ -1404,10 +1421,7 @@ func TestKeyBarOffersOnlyTheKeysThatWorkHere(t *testing.T) {
 func TestKeyBarInAnOpenArticle(t *testing.T) {
 	h := newHarness(t)
 	h.m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
-	h.press("down", "down", "down")
-	for i := 0; i < 12 && h.m.selected() == nil; i++ {
-		h.press("down")
-	}
+	h.selectArticle("Nvidia beats estimates")
 	h.press("enter")
 	if h.m.detail == nil {
 		t.Fatal("no article opened")
@@ -1457,7 +1471,7 @@ func TestAKeyThatDoesNothingHereSaysWhy(t *testing.T) {
 
 func TestMetersSummariseSourcesNewsAndUnread(t *testing.T) {
 	h := newHarness(t)
-	line := ansi.Strip(strings.Split(h.view(), "\n")[1])
+	line := ansi.Strip(strings.Split(h.view(), "\n")[2])
 	for _, want := range []string{"sources 1 ok 1 failing", "news 4 articles, 3 relevant", "2 unread"} {
 		if !strings.Contains(line, want) {
 			t.Errorf("meter line %q lacks %q", line, want)
@@ -1467,13 +1481,13 @@ func TestMetersSummariseSourcesNewsAndUnread(t *testing.T) {
 		ID: "later", Enabled: true, Level: status.Green, State: status.Idle, Until: now.Add(90 * time.Second),
 	})
 	h.press("r")
-	line = ansi.Strip(strings.Split(h.view(), "\n")[1])
+	line = ansi.Strip(strings.Split(h.view(), "\n")[2])
 	if !strings.Contains(line, "sources 2 ok 1 failing") || !strings.Contains(line, "next fetch later in 1:30") {
 		t.Errorf("after a refresh the meters follow the sources: %q", line)
 	}
 	h.be.sources[2].Until = now.Add(-5 * time.Minute)
 	h.press("r")
-	if line = ansi.Strip(strings.Split(h.view(), "\n")[1]); !strings.Contains(line, "later overdue 5:00") {
+	if line = ansi.Strip(strings.Split(h.view(), "\n")[2]); !strings.Contains(line, "later overdue 5:00") {
 		t.Errorf("a source past its time says so: %q", line)
 	}
 }
@@ -1494,8 +1508,8 @@ func TestRefreshHighlightsWhatCameInOrChanged(t *testing.T) {
 		t.Error("bad did not change")
 	}
 	h.mustContain("2 new or changed")
-	if !strings.Contains(h.view(), "\x1b[1;92m") && !strings.Contains(h.view(), "\x1b[1;38;5;10m") {
-		t.Errorf("fresh rows are drawn in bright bold green:\n%q", h.view())
+	if !strings.Contains(h.view(), "\x1b[1m") && !strings.Contains(h.view(), "\x1b[1;") {
+		t.Errorf("fresh rows are bold without changing financial colors:\n%q", h.view())
 	}
 	// Sorting moves rows but changes no text: nothing becomes fresh.
 	clear(h.m.fresh)
@@ -1529,7 +1543,7 @@ func TestFreshRowsFadeWithTime(t *testing.T) {
 func TestSKeyListsEveryStockWithTheOnesInTheNewsFirst(t *testing.T) {
 	h := newHarness(t)
 	h.press("s")
-	h.mustContain("Companies: sort:news group:none", "4 of 4 companies")
+	h.mustContain("Stocks", "4 of 4 securities")
 	if row, _ := h.m.row(); row.Go == nil || row.Go.Arg != "NVDA" {
 		t.Errorf("the stock with most news comes first, got %+v", row)
 	}
@@ -1581,7 +1595,7 @@ func TestAGroupHeadingOpensItsGroup(t *testing.T) {
 	h.mustContain("enter opens the group")
 	h.press("down", "down", "down", "down") // GOOG GOOGL NVDA, then the NYSE heading
 	h.press("enter")
-	h.mustContain(`exchange:"NYSE"`, "1 of 4 companies", "KO")
+	h.mustContain(`exchange:"NYSE"`, "1 of 4 securities", "KO")
 	if h.m.scr.Group != "none" || h.m.vp.Len() != 1 {
 		t.Errorf("a group opens flat with its stocks: group %q, %d rows", h.m.scr.Group, h.m.vp.Len())
 	}
@@ -1590,27 +1604,27 @@ func TestAGroupHeadingOpensItsGroup(t *testing.T) {
 	}
 }
 
-func TestScreensStandAfterTheWatchesAndTheOneYouAreInIsLit(t *testing.T) {
+func TestSectionNavigationIsSeparateAndTheCurrentSectionIsLit(t *testing.T) {
 	h := newHarness(t)
 	order := func(tabs ...string) {
 		t.Helper()
 		bar := strings.Split(ansi.Strip(h.view()), "\n")[0]
-		last := strings.Index(bar, "Buffett core")
+		last := -1
 		for _, tab := range tabs {
 			at := strings.Index(bar, tab)
 			if at < 0 || at < last {
-				t.Fatalf("tab %q is not after the watches in %q", tab, bar)
+				t.Fatalf("tab %q is out of order in %q", tab, bar)
 			}
 			last = at
 		}
 	}
-	order("Home", "Stocks", "Companies", "Topics", "Domains", "Exchanges", "Sources", "Watches")
+	order("News", "Stocks", "Topics", "Domains", "Exchanges", "Sources", "Watches")
 	// The key of each tab is underlined inside its word, so the labels are the
 	// words alone, however wide the bar.
 	h.m.Update(tea.WindowSizeMsg{Width: 200, Height: 40})
-	order("Home", "Stocks", "Companies", "Topics", "Domains", "Exchanges", "Sources", "Watches")
+	order("News", "Stocks", "Topics", "Domains", "Exchanges", "Sources", "Watches")
 	h.m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
-	for key, want := range map[string]string{"t": "Topics", "e": "Exchanges", "s": "Stocks", "c": "Companies", "o": "Sources", "h": "Home"} {
+	for key, want := range map[string]string{"t": "Topics", "e": "Exchanges", "s": "Stocks", "c": "Stocks", "o": "Sources", "h": "News"} {
 		h.press(key)
 		if got := h.m.litTab(); got != want {
 			t.Errorf("after %s the lit tab is %q, want %q", key, got, want)
@@ -1636,7 +1650,7 @@ func TestExchangeSelectorNarrowsEveryScreen(t *testing.T) {
 	if h.m.exchange != "Nasdaq" {
 		t.Fatalf("first X chose %q, want the exchange with most companies", h.m.exchange)
 	}
-	h.mustContain("exchange Nasdaq", "Home · ", "Nvidia beats estimates")
+	h.mustContain("exchange Nasdaq", "News · ", "Nvidia beats estimates")
 	if strings.Contains(h.view(), "Coca-Cola raises dividend") {
 		t.Error("Home still shows news about a NYSE stock")
 	}
@@ -1784,4 +1798,24 @@ func TestLatestNewsOfASiblingTickerIsIncluded(t *testing.T) {
 	h.be.arts = []model.Article{art("g", "Alphabet class A news", "example.com", 3*24*time.Hour, 0.9, 3, []string{"GOOGL"}, nil)}
 	h.run(h.m.goTo(nav.Route{Kind: nav.Stock, Arg: "GOOG"}))
 	h.mustContain("Alphabet class A news")
+}
+
+func TestTheHoursPageShowsAnOverrideAndNeverClaimsVerifiedTrading(t *testing.T) {
+	info, _ := exchange.Lookup("Nasdaq")
+	ny, _ := time.LoadLocation("America/New_York")
+	now := time.Date(2026, 11, 10, 11, 0, 0, 0, ny)
+	cal := exchange.Calendar{Version: "t-1", Overrides: []exchange.Override{{Venue: "Nasdaq", Date: "2026-11-10", Kind: exchange.OverrideClosed,
+		Reason: "invented closure", Source: "test://notice", Recorded: now.Add(-48 * time.Hour)}}}
+	var b builder
+	hoursRows(&b, info, Data{Now: now, Calendar: cal, Params: pages.Params{Zone: time.UTC}})
+	var got []string
+	for _, r := range b.rows {
+		got = append(got, r.Text)
+	}
+	text := strings.Join(got, "\n")
+	for _, want := range []string{"scheduled closed (invented closure)", "test://notice", "schedule only", "calendar t-1", "closed: invented closure · override: test://notice"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the hours page lacks %q:\n%s", want, text)
+		}
+	}
 }

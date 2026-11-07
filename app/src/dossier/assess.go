@@ -21,7 +21,9 @@ const (
 	// StateNone: no event.
 	StateNone State = "none"
 	// StateUnresolved: the evidence does not establish independence. One
-	// independent origin, articles of unknown origin, or only derivative articles.
+	// independent origin, articles of unknown origin, articles that only claim
+	// reporting of their own or are suspected to derive from another, or only
+	// derivative articles.
 	StateUnresolved State = "unresolved"
 	// StatePrimary: a primary document (a filing) or the issuer's own release
 	// reports it. That is primary evidence of what the issuer claims; it is not
@@ -56,8 +58,10 @@ type EpisodeVerdict struct {
 	Independent []string
 	// Derived articles rest on a document or on another report; Unknown ones
 	// carry nothing that says where they came from; Unassessed ones have no
-	// origin stored yet and are treated as unknown.
-	Derived, Unknown, Unassessed int
+	// origin stored yet and are treated as unknown. Claimed ones claim reporting
+	// of their own (a byline) and nothing else; Suspected ones share a substantial
+	// passage with an earlier article. None of these four counts as independent.
+	Derived, Unknown, Unassessed, Claimed, Suspected int
 	// Reports are the distinct origins in the episode, copies counted once: the
 	// denominator of the concentration.
 	Reports   int
@@ -196,13 +200,21 @@ func judge(ep episode.Episode, byID map[string]store.SignalEvent, isPrimary func
 				r.Lines = append(r.Lines, fmt.Sprintf("%s (%s): %s", cmp.Or(x.Domain, o.Publisher), x.ArticleID, describe(o)))
 			}
 			reports[o.Key] = true
-			switch {
-			case o.Own():
+			st := o.Standing()
+			if !ok && st != origin.StandingOwn {
+				st = origin.StandingUnknown // an origin that was never stored is never trusted as independent
+			}
+			switch st {
+			case origin.StandingOwn:
 				r.Own = true
-			case o.Independent():
+			case origin.StandingAttributed:
 				independent[o.Key] = true
-			case o.Kind == origin.KindUnknown:
+			case origin.StandingUnknown:
 				r.Unknown++
+			case origin.StandingClaimed:
+				r.Claimed++
+			case origin.StandingSuspected:
+				r.Suspected++
 			default:
 				r.Derived++
 			}
@@ -228,17 +240,44 @@ func judge(ep episode.Episode, byID map[string]store.SignalEvent, isPrimary func
 		r.Reason = "primary evidence only: the issuer's own document or release; coverage resting on it is not independent confirmation"
 	default:
 		r.State = StateUnresolved
+		var why []string
+		if r.Unknown > 0 {
+			why = append(why, fmt.Sprintf("%d article(s) carry no attribution", r.Unknown))
+		}
+		if r.Claimed > 0 {
+			why = append(why, fmt.Sprintf("%d claim reporting of their own (a byline) that nothing verifies", r.Claimed))
+		}
+		if r.Suspected > 0 {
+			why = append(why, fmt.Sprintf("%d share a substantial passage with an earlier article and are suspected derivatives", r.Suspected))
+		}
 		switch {
+		case i == 1 && len(why) > 0:
+			r.Reason = "one independent origin (" + r.Independent[0] + "), a second is needed; " + strings.Join(why, "; ")
 		case i == 1:
 			r.Reason = "one independent origin (" + r.Independent[0] + "), a second is needed"
-		case r.Unknown > 0 || r.Unassessed > 0:
-			r.Reason = fmt.Sprintf("independence not established: %d article(s) carry no attribution", r.Unknown+r.Unassessed)
+		case len(why) > 0:
+			r.Reason = "independence not established: " + strings.Join(why, "; ")
 		default:
 			r.Reason = "only derivative articles: nothing in them is a report of their own"
 		}
 	}
-	if r.Derived > 0 && r.State != StateUnresolved {
-		r.Reason += fmt.Sprintf("; %d derivative article(s) not counted", r.Derived)
+	if r.State != StateUnresolved {
+		var extra []string
+		if r.Derived > 0 {
+			extra = append(extra, fmt.Sprintf("%d derivative", r.Derived))
+		}
+		if r.Claimed > 0 {
+			extra = append(extra, fmt.Sprintf("%d with an unverified byline", r.Claimed))
+		}
+		if r.Suspected > 0 {
+			extra = append(extra, fmt.Sprintf("%d suspected derivative", r.Suspected))
+		}
+		if r.Unknown+r.Unassessed > 0 {
+			extra = append(extra, fmt.Sprintf("%d of unknown origin", r.Unknown+r.Unassessed))
+		}
+		if len(extra) > 0 {
+			r.Reason += "; not counted as independent: " + strings.Join(extra, ", ")
+		}
 	}
 	return r
 }
@@ -251,6 +290,10 @@ func describe(o origin.Origin) string {
 	if o.CopyOf != "" {
 		s += ", copy of " + o.CopyOf
 	}
+	if o.SuspectedFrom != "" {
+		s += ", suspected to derive from " + o.SuspectedFrom + " (unproven)"
+	}
+	s += ", standing " + string(o.Standing())
 	return s
 }
 

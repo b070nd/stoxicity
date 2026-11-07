@@ -25,6 +25,12 @@ type Candle struct {
 	// Candles made before they were kept raw are adjusted by the source for the
 	// splits it knew when they were fetched, which is not recorded.
 	Raw bool
+	// Currency is the currency the source states for the prices; empty when it
+	// does not say. Nothing fills it in by assumption.
+	Currency string
+	// FetchedAt is when this system stored the candle; zero when it was stored
+	// before that was recorded.
+	FetchedAt time.Time
 }
 
 // Valid reports whether the candle is one a chart can draw: positive prices
