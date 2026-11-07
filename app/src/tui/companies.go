@@ -21,7 +21,7 @@ const (
 )
 
 // queryHint is what the catalogue says about its query language and keys.
-const queryHint = "/ narrows as you type: words match ticker, name and industry · exchange:nyse · industry:semi · list:picks · tag:moat · kind:etf · news:>0 · watched:yes · -word excludes · sort:name|news|industry|exchange|kind (-news reverses) · j jumps to a letter · home/end/pgup/pgdn move"
+const queryHint = "/ narrows as you type: words match ticker, name and industry · exchange:nyse · industry:semi · domain:finance · type:preferred · list:picks · tag:moat · news:>0 · watched:yes · -word excludes · sort:name|news|type|domain|close|change|industry|exchange (-news reverses) · j jumps to a letter · home/end/pgup/pgdn move"
 
 // edgarURL is the SEC's page of a company, by CIK.
 func edgarURL(cik string) string {
@@ -60,12 +60,13 @@ func buildCompanies(q string, d Data) Screen {
 		s.Notice = err.Error()
 		return s
 	}
-	t := companyTable(query)
+	priced := len(d.Quotes) > 0
+	t := companyTable(query, priced)
 	s.Table, s.Sort = t.shape(), t.Effective(d.Sort)
 	if s.Sort.Key != "" {
 		query = query.WithSort(s.Sort.Key, s.Sort.Desc != (s.Sort.Key == "news"))
 	}
-	hits := d.Universe.Find(query, universe.FactsFrom(d.Articles, d.Params.Threshold, d.Watchlist), 0)
+	hits := d.Universe.Find(query, d.companyFacts(), 0)
 	if d.Exchange != "" {
 		hits = slices.DeleteFunc(hits, func(h universe.Hit) bool { return !h.Profile.OnExchange(d.Exchange) })
 	}
@@ -79,6 +80,11 @@ func buildCompanies(q string, d Data) Screen {
 	b.styled(Dim, note+" · news counts cover "+d.Params.Describe()+" · ★ = on your watchlist")
 	if q == "" {
 		b.styled(Dim, queryHint)
+	}
+	if !priced {
+		b.styled(Dim, "no prices yet: set STOXICITY_POLYGON_KEY (a free key from polygon.io) and run `stoxicity universe quotes`, or leave `stoxicity run` going")
+	} else {
+		b.styled(Dim, "DAY: the day's range, the thick part open to close (green up, red down) · prices of "+d.latestQuoteDay())
 	}
 	exchangeChips(&b, d)
 	f := universe.FacetsOf(hits, shortFacets)
@@ -117,7 +123,7 @@ func buildCompanies(q string, d Data) Screen {
 	}
 	keys := make([]string, len(hits))
 	for i, h := range hits {
-		t.Items = append(t.Items, companyItem(h, watched[h.Profile.Ticker]))
+		t.Items = append(t.Items, companyItem(h, watched[h.Profile.Ticker], d.Quotes, priced, d.Now))
 		keys[i] = h.Group(group)
 	}
 	drill := func(value string) *nav.Route {
@@ -190,20 +196,26 @@ func groupName(group, value string) string {
 // ranked search), so the table only labels the header: its default is what the
 // query asks for. News is listed busiest first when ascending, which is how
 // the query language says it, so the header shows the opposite arrow.
-func companyTable(q universe.Query) Table {
-	t := Table{
-		Columns: []Column{
-			{Width: 1},
-			{Title: "TICKER", Key: "ticker", Width: 7},
-			{Title: "NAME", Key: "name", Width: 30},
-			{Title: "LISTED", Key: "exchange", Width: 7},
-			{Title: "KIND", Key: "kind", Width: 5},
-			{Title: "INDUSTRY", Key: "industry", Width: 24},
-			{Title: "NEWS", Key: "news", Width: 5, Right: true, Desc: true},
-			{Title: "TAGS"},
-		},
-		Presorted: true,
+func companyTable(q universe.Query, priced bool) Table {
+	cols := []Column{
+		{Width: 1},
+		{Title: "TICKER", Key: "ticker", Width: 7},
+		{Title: "NAME", Key: "name", Width: 26},
+		{Title: "TYPE", Key: "type", Width: 9},
+		{Title: "DOMAIN", Key: "domain", Width: 14},
 	}
+	if priced {
+		cols = append(cols,
+			Column{Title: "DAY", Width: candleWidth},
+			Column{Title: "CLOSE", Key: "close", Width: 8, Right: true, Desc: true},
+			Column{Title: "CHG", Key: "change", Width: 7, Right: true, Desc: true})
+	}
+	cols = append(cols,
+		Column{Title: "LISTED", Key: "exchange", Width: 6},
+		Column{Title: "NEWS", Key: "news", Width: 5, Right: true, Desc: true},
+		Column{Title: "INDUSTRY", Key: "industry", Width: 22},
+		Column{Title: "TAGS"})
+	t := Table{Columns: cols, Presorted: true}
 	key, desc := q.SortKey()
 	switch {
 	case key != "":
@@ -238,7 +250,30 @@ func thousands(n int) string {
 	return s
 }
 
-func companyItem(h universe.Hit, watched bool) Item {
+// companyFacts are the facts a company query can ask about: the news of the
+// window, the watchlist and the newest prices.
+func (d Data) companyFacts() universe.Facts {
+	f := universe.FactsFrom(d.Articles, d.Params.Threshold, d.Watchlist)
+	f.Close, f.Change = make(map[string]float64, len(d.Quotes)), make(map[string]float64, len(d.Quotes))
+	for tk, q := range d.Quotes {
+		f.Close[tk] = q.Close
+		if ch, ok := q.Change(); ok {
+			f.Change[tk] = ch
+		}
+	}
+	return f
+}
+
+// latestQuoteDay is the newest trading day any candle is for.
+func (d Data) latestQuoteDay() string {
+	newest := ""
+	for _, q := range d.Quotes {
+		newest = max(newest, q.Day)
+	}
+	return newest
+}
+
+func companyItem(h universe.Hit, watched bool, quotes map[string]Quote, priced bool, now time.Time) Item {
 	p := h.Profile
 	star := " "
 	if watched {
@@ -252,11 +287,21 @@ func companyItem(h universe.Hit, watched bool) Item {
 	for _, t := range p.Tags {
 		tags = append(tags, "#"+t)
 	}
-	return Item{
-		Cells: []Cell{Str(star), Str(p.Ticker), Str(p.Name), Str(p.Exchange), Str(p.Kind), Str(p.Industry),
-			Num(news, float64(h.News)), Str(strings.Join(tags, " "))},
-		Row: Row{Go: route(nav.Stock, p.Ticker)},
+	typ, dom := p.Type(), p.Domain()
+	cells := []Cell{Str(star), Str(p.Ticker), Str(p.Name), Str(typ).Styled(typeStyle(typ)), Str(dom).Styled(domainStyle(dom))}
+	if priced {
+		var bar, close, move Cell
+		if q, ok := quotes[p.Ticker]; ok {
+			text, style := candleBar(q, candleWidth, now)
+			bar = Str(text).Styled(style)
+			close = Num(priceText(q.Close), q.Close).Styled(style)
+			mt, ms := changeText(q, now)
+			move = Num(mt, 0).Styled(ms)
+		}
+		cells = append(cells, bar, close, move)
 	}
+	cells = append(cells, Str(p.Exchange), Num(news, float64(h.News)), Str(p.Industry), Str(strings.Join(tags, " ")))
+	return Item{Cells: cells, Row: Row{Go: route(nav.Stock, p.Ticker)}}
 }
 
 // profileRows adds the identity block of a stock: what is known about the
@@ -296,6 +341,20 @@ func profileRows(b *builder, ticker string, d Data) (known bool) {
 		kind += " · status " + p.Status
 	}
 	field("kind", kind)
+	if typ := p.Type(); typ != "" && typ != p.Kind {
+		field("type", typ)
+	}
+	if q, ok := d.Quotes[p.Ticker]; ok {
+		text, style := changeText(q, d.Now)
+		line := fmt.Sprintf("  %-10s %s on %s", "last close", priceText(q.Close), q.Day)
+		if text != "" {
+			line += " (" + text + ")"
+		}
+		b.add(Row{Text: line, Style: map[bool]Style{true: Dim, false: style}[q.stale(d.Now)]})
+		if bar, bs := candleBar(q, candleWidth, d.Now); bar != "" {
+			b.add(Row{Text: fmt.Sprintf("  %-10s %s  low %s · open %s · close %s · high %s", "day", bar, priceText(q.Low), priceText(q.Open), priceText(q.Close), priceText(q.High)), Style: bs})
+		}
+	}
 	switch {
 	case p.SIC != "" && p.Industry != "":
 		field("industry", p.Industry+" (SIC "+p.SIC+")")
@@ -303,17 +362,21 @@ func profileRows(b *builder, ticker string, d Data) (known bool) {
 		field("industry", p.Industry)
 	}
 	field("sector", p.Sector)
+	field("based in", p.HQ)
+	field("phone", p.Phone)
 	field("state", p.State)
 	field("fiscal year", p.FiscalYear)
 	field("category", p.Category)
 	field("entity", p.EntityType)
 	field("ISIN", p.ISIN)
 	field("CIK", p.CIK)
+	field("EIN", p.EIN)
+	field("LEI", p.LEI)
 	if len(p.Aliases) > 0 {
 		field("aka", strings.Join(pages.Head(p.Aliases, 4), " · "))
 	}
 	if p.Industry == "" && p.CIK != "" {
-		b.styled(Dim, "  industry and fiscal year are not loaded: run `stoxicity universe enrich "+p.Ticker+"`")
+		b.styled(Dim, "  the SEC record is not loaded: run `stoxicity universe enrich "+p.Ticker+"`")
 	}
 	if p.Source == universe.SourceListing {
 		b.styled(Dim, "  listed by the exchanges only: the SEC list has no record of it, so no CIK, filings or industry")
@@ -338,7 +401,7 @@ func profileRows(b *builder, ticker string, d Data) (known bool) {
 	if len(p.Lists) > 0 {
 		b.text("  lists   " + strings.Join(p.Lists, ", "))
 	} else {
-		b.styled(Dim, "  lists   none (L adds the stock to a list)")
+		b.styled(Dim, "  lists   none (l adds the stock to a list)")
 	}
 	if len(p.Tags) > 0 {
 		tags := make([]string, len(p.Tags))

@@ -30,6 +30,7 @@ import (
 
 	"github.com/b070nd/stoxicity/app/src/company"
 	"github.com/b070nd/stoxicity/app/src/httpx"
+	"github.com/b070nd/stoxicity/app/src/marketdata"
 	"github.com/b070nd/stoxicity/app/src/model"
 	"github.com/b070nd/stoxicity/app/src/stockfeeds"
 	"github.com/b070nd/stoxicity/app/src/store"
@@ -42,7 +43,7 @@ type Settings struct {
 	// Dir is the folder of downloaded files (data/company).
 	Dir string
 
-	MasterURL, NasdaqURL, OtherURL, SubmissionsURL string
+	MasterURL, NasdaqURL, OtherURL, SubmissionsURL, SitesURL string
 	// MaxAge is how old the ticker lists may get before they are asked again.
 	MaxAge time.Duration
 	// Listing says whether the Nasdaq directory is wanted.
@@ -50,9 +51,15 @@ type Settings struct {
 	// PerCycle is how many company records one cycle fetches at most (the SEC
 	// allows far more; this is the pace, not the limit). Zero fetches none.
 	PerCycle int
+	// SitesPerCycle is how many tickers one cycle looks up the official website
+	// of (in Wikidata, forty to a request). Zero looks up none.
+	SitesPerCycle int
 	// IndustryMaxAge is how old a company record may get; zero means
 	// company.DefaultIndustryAge.
 	IndustryMaxAge time.Duration
+	// QuotesPerCycle is how many stocks (for a source of whole market days, how
+	// many days) one cycle brings the daily candles of up to date. Zero none.
+	QuotesPerCycle int
 	// FeedSearch is how many company websites one cycle reads to find the
 	// company's own news feed. Zero reads none; the SEC filing record of every
 	// stock is written down either way when Refresher.Feeds is set.
@@ -74,6 +81,8 @@ type Refresher struct {
 	// down the SEC filing record of every stock with a CIK and searches the
 	// websites of Settings.FeedSearch companies for theirs.
 	Feeds *stockfeeds.Keeper
+	// Quotes, when set, keeps the daily candles of stocks.
+	Quotes *marketdata.Keeper
 	// Logf receives one line per notable thing; may be nil.
 	Logf func(format string, args ...any)
 }
@@ -82,6 +91,10 @@ type Refresher struct {
 type Report struct {
 	Tickers, Listing, Companies store.RefDiff
 	Enriched                    company.EnrichResult
+	// Sites is what the look-up of official websites did.
+	Sites company.SiteResult
+	// Quotes is what the refresh of daily candles did.
+	Quotes marketdata.Report
 	// FeedsSeeded is how many SEC filing records of stocks are new; Feeds is
 	// what the search of company websites did.
 	FeedsSeeded int
@@ -143,6 +156,14 @@ func (r *Refresher) Cycle(ctx context.Context, force bool) Report {
 		}
 	}
 
+	if r.Set.SitesPerCycle > 0 && ctx.Err() == nil {
+		res, err := r.enrichSites(ctx, r.Set.SitesPerCycle)
+		rep.Sites = res
+		if err != nil && ctx.Err() == nil {
+			problem(store.SourceWebsite, err)
+		}
+	}
+
 	// Sync even when a fetch failed or was interrupted: whatever reached the
 	// cache files belongs in the database.
 	sctx := context.WithoutCancel(ctx)
@@ -150,6 +171,16 @@ func (r *Refresher) Cycle(ctx context.Context, force bool) Report {
 	if err != nil {
 		rep.Problems = append(rep.Problems, err)
 	}
+	// The candles come after the sync: on a first cycle the tickers they are for
+	// are in the database only now.
+	if r.Quotes != nil && r.Set.QuotesPerCycle > 0 && ctx.Err() == nil {
+		qrep, err := r.refreshQuotes(ctx)
+		rep.Quotes = qrep
+		if err != nil && ctx.Err() == nil {
+			problem("quotes", err)
+		}
+	}
+
 	// After the sync, which clears the error of a source whose content is
 	// confirmed: a failed refresh is still the latest word about it.
 	for _, source := range slices.Sorted(maps.Keys(failed)) {
@@ -236,6 +267,95 @@ func (r *Refresher) enrich(ctx context.Context, budget int) (company.EnrichResul
 	return total, nil
 }
 
+// refreshQuotes brings the candles of the listed stocks and ETFs up to date.
+func (r *Refresher) refreshQuotes(ctx context.Context) (marketdata.Report, error) {
+	tickers, err := QuoteTickers(ctx, r.Ref)
+	if err != nil {
+		return marketdata.Report{}, err
+	}
+	var first []string
+	if r.Interesting != nil {
+		first = r.Interesting(ctx)
+	}
+	return r.Quotes.Refresh(ctx, tickers, first, r.Set.QuotesPerCycle)
+}
+
+// QuoteTickers are the tickers worth a candle: every SEC ticker and every
+// security of the Nasdaq directory except test symbols.
+func QuoteTickers(ctx context.Context, ref store.Reference) ([]string, error) {
+	ts, err := ref.RefTickers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	ls, err := ref.RefListings(ctx)
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	var out []string
+	add := func(t string) {
+		if t = universe.Ticker(t); t != "" && !seen[t] {
+			seen[t] = true
+			out = append(out, t)
+		}
+	}
+	for _, t := range ts {
+		add(t.Ticker)
+	}
+	for _, l := range ls {
+		if !l.Test {
+			add(l.Symbol)
+		}
+	}
+	return marketdata.Tidy(out), nil
+}
+
+// enrichSites looks up the websites of up to budget tickers: those of
+// interesting tickers first, then the rest, each group in ticker order.
+func (r *Refresher) enrichSites(ctx context.Context, budget int) (company.SiteResult, error) {
+	master, err := company.Load(r.Set.Dir)
+	if err != nil || master.Empty() {
+		return company.SiteResult{}, err
+	}
+	names := map[string]string{}
+	var all []company.SiteTarget
+	for _, e := range master.Entities {
+		t := universe.Ticker(e.Ticker)
+		if _, dup := names[t]; !dup {
+			names[t] = e.Name
+			all = append(all, company.SiteTarget{Ticker: t, Name: e.Name})
+		}
+	}
+	var first []company.SiteTarget
+	if r.Interesting != nil {
+		for _, t := range r.Interesting(ctx) {
+			t = universe.Ticker(t)
+			if name, ok := names[t]; ok {
+				first = append(first, company.SiteTarget{Ticker: t, Name: name})
+			}
+		}
+	}
+	opts := company.SiteOptions{URL: r.Set.SitesURL, Now: r.Now}
+	var total company.SiteResult
+	for _, group := range [][]company.SiteTarget{first, all} {
+		left := budget - total.Found - total.Missing
+		if left <= 0 {
+			break
+		}
+		opts.Max = left
+		res, err := company.EnrichWebsites(ctx, r.Client, r.Set.Dir, group, opts)
+		total.Found += res.Found
+		total.Missing += res.Missing
+		total.Skipped += res.Skipped
+		total.Failed = append(total.Failed, res.Failed...)
+		total.Left = res.Left
+		if err != nil {
+			return total, err
+		}
+	}
+	return total, nil
+}
+
 // Sync puts what is in the cache files into the database. It is the only
 // place the files are read for the database, and it is safe to call at any
 // time: unchanged content writes nothing.
@@ -273,6 +393,15 @@ func (r *Refresher) Sync(ctx context.Context) (tickers, listing, companies store
 		companies, ierr = r.Ref.PutCompanies(ctx, CompanyRows(ind), at)
 		if ierr != nil {
 			errs = append(errs, ierr)
+		}
+	}
+	sites, serr := company.LoadWebsites(r.Set.Dir)
+	switch {
+	case serr != nil:
+		errs = append(errs, serr)
+	case len(sites) > 0:
+		if _, serr = r.Ref.PutWebsites(ctx, WebsiteRows(sites), at); serr != nil {
+			errs = append(errs, serr)
 		}
 	}
 	return tickers, listing, companies, errors.Join(errs...)
@@ -325,7 +454,19 @@ func CompanyRows(c company.IndustryCache) []store.RefCompany {
 		i := c[cik]
 		rows = append(rows, store.RefCompany{CIK: i.CIK, Name: i.Name, SIC: i.SIC, Description: i.Description,
 			EntityType: i.EntityType, Category: i.Category, State: i.State, FiscalYear: i.FiscalYear,
-			Website: i.Website, Former: slices.Clone(i.Former), Missing: i.Missing, FetchedAt: i.FetchedAt})
+			Website: i.Website, Former: slices.Clone(i.Former), Exchanges: slices.Clone(i.Exchanges), City: i.City,
+			Region: i.Region, Phone: i.Phone, EIN: i.EIN, LEI: i.LEI, Investor: i.Investor,
+			Missing: i.Missing, FetchedAt: i.FetchedAt})
+	}
+	return rows
+}
+
+// WebsiteRows are the rows of the website cache.
+func WebsiteRows(c company.WebsiteCache) []store.RefWebsite {
+	rows := make([]store.RefWebsite, 0, len(c))
+	for _, t := range c.Tickers() {
+		w := c[t]
+		rows = append(rows, store.RefWebsite{Ticker: t, URL: w.URL, Label: w.Label, FetchedAt: w.FetchedAt})
 	}
 	return rows
 }
@@ -359,7 +500,19 @@ func Inputs(ctx context.Context, ref store.Reference) (universe.Inputs, error) {
 	for _, c := range cs {
 		in.Industry[c.CIK] = company.Industry{CIK: c.CIK, Name: c.Name, SIC: c.SIC, Description: c.Description,
 			EntityType: c.EntityType, Category: c.Category, State: c.State, FiscalYear: c.FiscalYear,
-			Website: c.Website, Former: slices.Clone(c.Former), Missing: c.Missing, FetchedAt: c.FetchedAt}
+			Website: c.Website, Former: slices.Clone(c.Former), Exchanges: slices.Clone(c.Exchanges), City: c.City,
+			Region: c.Region, Phone: c.Phone, EIN: c.EIN, LEI: c.LEI, Investor: c.Investor,
+			Missing: c.Missing, FetchedAt: c.FetchedAt}
+	}
+	ws, err := ref.RefWebsites(ctx)
+	if err != nil {
+		return in, err
+	}
+	in.Websites = make(map[string]string, len(ws))
+	for _, w := range ws {
+		if w.URL != "" {
+			in.Websites[w.Ticker] = w.URL
+		}
 	}
 	return in, nil
 }

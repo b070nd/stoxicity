@@ -31,6 +31,19 @@ const (
 	Cloud3
 	Cloud4
 	Cloud5
+	Info   // cyan: funds
+	Accent // magenta: the securities that are not shares
+	Blue
+	Hue1 // Hue1..Hue10 colour the ten SIC divisions
+	Hue2
+	Hue3
+	Hue4
+	Hue5
+	Hue6
+	Hue7
+	Hue8
+	Hue9
+	Hue10
 )
 
 // Row is one line of a screen. A row is selectable when it carries an article
@@ -50,6 +63,16 @@ type Row struct {
 	// cursor stops on, but a zone you step up into from the first row and move
 	// along with the left and right arrows.
 	Chips []Chip
+	// Spans colour parts of the line, cell by cell (a table whose columns each
+	// have a colour of their own). The cursor row ignores them.
+	Spans []Span
+}
+
+// Span is a stretch of a row's text drawn in a style of its own: the cells
+// [From, To) counted in runes from the start of the text.
+type Span struct {
+	From, To int
+	Style    Style
 }
 
 // Chip is one entry of a line of chips. Picking it makes Value the exchange
@@ -134,6 +157,9 @@ type Data struct {
 	// Group is the grouping the user chose for the catalogue; empty leaves it to
 	// the query and then to the default, by exchange.
 	Group string
+	// Quotes are the newest daily candles by ticker; empty when none have been
+	// fetched (no key for the source, or not yet).
+	Quotes map[string]Quote
 }
 
 func (d Data) name(t string) string {

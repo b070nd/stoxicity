@@ -117,7 +117,7 @@ func defaults() Config {
 			Device:          "cpu",
 			Offline:         true,
 		},
-		Company: Company{Enabled: true, MaxAge: "168h", Listing: true, RefreshEvery: "6h", EnrichPerCycle: 200, FeedSearchPerCycle: 60},
+		Company: Company{Enabled: true, MaxAge: "168h", Listing: true, RefreshEvery: "6h", EnrichPerCycle: 200, SitesPerCycle: 400, Quotes: "polygon", QuotesPerCycle: 10, FeedSearchPerCycle: 60},
 		Tenancy: Tenancy{Dir: "tenants", Default: "default"},
 	}
 }
@@ -130,6 +130,7 @@ func applyEnv(cfg *Config) {
 	override("STOXICITY_TIMEZONE", &cfg.Timezone)
 	override("STOXICITY_DATA_DIR", &cfg.DataDir)
 	override("STOXICITY_CONTACT", &cfg.Fetch.Contact)
+	override("STOXICITY_POLYGON_KEY", &cfg.Company.PolygonKey)
 	override("STOXICITY_LAYA_URL", &cfg.Laya.URL)
 	override("STOXICITY_LAYA_COMMAND", &cfg.Laya.Command)
 	override("STOXICITY_TENANT", &cfg.Tenancy.Default)
@@ -190,6 +191,15 @@ func validate(cfg Config) error {
 		errs = append(errs, fmt.Errorf("config: company.enrich_per_cycle must be between 0 and 5000, got %d", cfg.Company.EnrichPerCycle))
 	}
 
+	if !slices.Contains([]string{"polygon", "off"}, cfg.Company.Quotes) {
+		errs = append(errs, fmt.Errorf("config: company.quotes must be polygon or off, got %q", cfg.Company.Quotes))
+	}
+	if cfg.Company.QuotesPerCycle < 0 || cfg.Company.QuotesPerCycle > 5000 {
+		errs = append(errs, fmt.Errorf("config: company.quotes_per_cycle must be between 0 and 5000, got %d", cfg.Company.QuotesPerCycle))
+	}
+	if cfg.Company.SitesPerCycle < 0 || cfg.Company.SitesPerCycle > 5000 {
+		errs = append(errs, fmt.Errorf("config: company.sites_per_cycle must be between 0 and 5000, got %d", cfg.Company.SitesPerCycle))
+	}
 	if cfg.Company.FeedSearchPerCycle < 0 || cfg.Company.FeedSearchPerCycle > 2000 {
 		errs = append(errs, fmt.Errorf("config: company.feed_search_per_cycle must be between 0 and 2000, got %d", cfg.Company.FeedSearchPerCycle))
 	}

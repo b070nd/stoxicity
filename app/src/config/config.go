@@ -112,6 +112,10 @@ type Company struct {
 	NasdaqURL      string `yaml:"nasdaq_url"`
 	OtherURL       string `yaml:"other_url"`
 	SubmissionsURL string `yaml:"submissions_url"`
+	// SitesURL replaces the address of Wikidata's query service, where the
+	// official website of each stock comes from (the SEC leaves its own field
+	// empty). Empty means Wikidata.
+	SitesURL string `yaml:"sites_url"`
 
 	// RefreshEvery is how often "stoxicity run" refreshes the reference
 	// database in the background: it asks the sources that are due (company.
@@ -123,6 +127,20 @@ type Company struct {
 	// the rest in CIK order, so the whole list fills in over a few days. Zero
 	// fetches none.
 	EnrichPerCycle int `yaml:"enrich_per_cycle"`
+	// Quotes is where daily candles come from: "polygon" (a key of your own in
+	// STOXICITY_POLYGON_KEY; the whole market a day at a time) or "off". Without
+	// a key nothing is asked. QuotesPerCycle is how many market days one
+	// background cycle brings up to date (the free plan allows five requests a
+	// minute); QuotesURL replaces the provider's address, for a test.
+	Quotes         string `yaml:"quotes"`
+	QuotesPerCycle int    `yaml:"quotes_per_cycle"`
+	QuotesURL      string `yaml:"quotes_url"`
+	// PolygonKey is read from STOXICITY_POLYGON_KEY, never from a file that is
+	// checked in.
+	PolygonKey string `yaml:"-"`
+	// SitesPerCycle is how many tickers one background cycle looks up the
+	// official website of, forty to a request. Zero looks up none.
+	SitesPerCycle int `yaml:"sites_per_cycle"`
 	// FeedSearchPerCycle is how many company websites one background cycle
 	// reads to find the company's own news feed (the SEC filing record of each
 	// stock needs no search). The ones you follow come first. A website is read

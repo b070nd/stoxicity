@@ -36,10 +36,13 @@ type Reference interface {
 	ReplaceListing(ctx context.Context, src RefSource, rows []RefListing, at time.Time) (RefDiff, error)
 	// PutCompanies inserts or replaces company records by CIK.
 	PutCompanies(ctx context.Context, rows []RefCompany, at time.Time) (RefDiff, error)
+	// PutWebsites inserts or replaces the official websites by ticker.
+	PutWebsites(ctx context.Context, rows []RefWebsite, at time.Time) (RefDiff, error)
 
 	RefTickers(ctx context.Context) ([]RefTicker, error)                               // by ticker
 	RefListings(ctx context.Context) ([]RefListing, error)                             // by symbol
 	RefCompanies(ctx context.Context) ([]RefCompany, error)                            // by CIK
+	RefWebsites(ctx context.Context) ([]RefWebsite, error)                             // by ticker
 	RefSnapshots(ctx context.Context, source string, limit int) ([]RefSnapshot, error) // newest first
 	RefChanges(ctx context.Context, since time.Time, limit int) ([]RefChange, error)   // newest first
 }
@@ -50,6 +53,7 @@ const (
 	SourceNasdaq  = "nasdaq-listed"
 	SourceOther   = "nasdaq-other"
 	SourceCompany = "sec-company"
+	SourceWebsite = "wikidata-sites"
 )
 
 // RefSource is what is known about where a table's content came from.
@@ -77,8 +81,36 @@ type RefListing struct {
 type RefCompany struct {
 	CIK, Name, SIC, Description, EntityType, Category, State, FiscalYear, Website string
 	Former                                                                        []string
-	Missing                                                                       bool
-	FetchedAt                                                                     time.Time
+	// Exchanges are the markets the SEC says the stock trades on. City and
+	// Region are the business address; EIN and LEI identify the company;
+	// Investor is its investor-relations website.
+	Exchanges                               []string
+	City, Region, Phone, EIN, LEI, Investor string
+	Missing                                 bool
+	FetchedAt                               time.Time
+}
+
+// RefWebsite is the official website of one ticker; URL is empty when it was
+// looked for and not found.
+type RefWebsite struct {
+	Ticker, URL, Label string
+	FetchedAt          time.Time
+}
+
+// companyExtra is the part of a company record kept as JSON in one column.
+type companyExtra struct {
+	Exchanges []string `json:"exchanges,omitempty"`
+	City      string   `json:"city,omitempty"`
+	Region    string   `json:"region,omitempty"`
+	Phone     string   `json:"phone,omitempty"`
+	EIN       string   `json:"ein,omitempty"`
+	LEI       string   `json:"lei,omitempty"`
+	Investor  string   `json:"investor,omitempty"`
+}
+
+func (c RefCompany) extra() string {
+	raw, _ := json.Marshal(companyExtra{c.Exchanges, c.City, c.Region, c.Phone, c.EIN, c.LEI, c.Investor})
+	return string(raw)
 }
 
 // RefDiff says what a Replace or Put did.
@@ -126,7 +158,7 @@ func (l RefListing) fields() []string {
 }
 func (c RefCompany) fields() []string {
 	return []string{c.CIK, c.Name, c.SIC, c.Description, c.EntityType, c.Category, c.State, c.FiscalYear,
-		c.Website, strings.Join(c.Former, "\x1e"), strconv.FormatBool(c.Missing)}
+		c.Website, strings.Join(c.Former, "\x1e"), strconv.FormatBool(c.Missing), c.extra()}
 }
 
 // RefSource implements Reference.
@@ -409,7 +441,7 @@ func loadListings(ctx context.Context, q querier) ([]RefListing, error) {
 
 func loadCompanies(ctx context.Context, q querier) ([]RefCompany, error) {
 	rows, err := q.QueryContext(ctx, `SELECT cik, name, sic, description, entity_type, category, state, fiscal_year,
-		website, former, missing, fetched_ms FROM ref_company ORDER BY cik`)
+		website, former, missing, fetched_ms, extra FROM ref_company ORDER BY cik`)
 	if err != nil {
 		return nil, fmt.Errorf("store: reference companies: %w", err)
 	}
@@ -417,12 +449,17 @@ func loadCompanies(ctx context.Context, q querier) ([]RefCompany, error) {
 	var out []RefCompany
 	for rows.Next() {
 		var c RefCompany
-		var former string
+		var former, extra string
 		var fetched int64
 		if err := rows.Scan(&c.CIK, &c.Name, &c.SIC, &c.Description, &c.EntityType, &c.Category, &c.State,
-			&c.FiscalYear, &c.Website, &former, &c.Missing, &fetched); err != nil {
+			&c.FiscalYear, &c.Website, &former, &c.Missing, &fetched, &extra); err != nil {
 			return nil, fmt.Errorf("store: reference companies: %w", err)
 		}
+		var x companyExtra
+		if err := json.Unmarshal([]byte(extra), &x); err != nil {
+			return nil, fmt.Errorf("store: reference companies: extra data of %s: %w", c.CIK, err)
+		}
+		c.Exchanges, c.City, c.Region, c.Phone, c.EIN, c.LEI, c.Investor = x.Exchanges, x.City, x.Region, x.Phone, x.EIN, x.LEI, x.Investor
 		if err := json.Unmarshal([]byte(former), &c.Former); err != nil {
 			return nil, fmt.Errorf("store: reference companies: former names of %s: %w", c.CIK, err)
 		}
@@ -481,10 +518,10 @@ func (db *DB) PutCompanies(ctx context.Context, rows []RefCompany, at time.Time)
 			fetched = ms(r.FetchedAt)
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO ref_company
-			(cik, name, sic, description, entity_type, category, state, fiscal_year, website, former, missing, fetched_ms)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			(cik, name, sic, description, entity_type, category, state, fiscal_year, website, former, missing, fetched_ms, extra)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			r.CIK, r.Name, r.SIC, r.Description, r.EntityType, r.Category, r.State, r.FiscalYear, r.Website,
-			string(former), r.Missing, fetched); err != nil {
+			string(former), r.Missing, fetched, r.extra()); err != nil {
 			return RefDiff{}, fmt.Errorf("store: companies: %w", err)
 		}
 	}
@@ -585,4 +622,100 @@ func (db *DB) RefChanges(ctx context.Context, since time.Time, limit int) ([]Ref
 		out = append(out, c)
 	}
 	return out, rows.Err()
+}
+
+func (w RefWebsite) fields() []string { return []string{w.Ticker, w.URL, w.Label} }
+
+func loadWebsites(ctx context.Context, q querier) ([]RefWebsite, error) {
+	rows, err := q.QueryContext(ctx, `SELECT ticker, url, label, fetched_ms FROM ref_website ORDER BY ticker`)
+	if err != nil {
+		return nil, fmt.Errorf("store: reference websites: %w", err)
+	}
+	defer rows.Close()
+	var out []RefWebsite
+	for rows.Next() {
+		var w RefWebsite
+		var fetched int64
+		if err := rows.Scan(&w.Ticker, &w.URL, &w.Label, &fetched); err != nil {
+			return nil, fmt.Errorf("store: reference websites: %w", err)
+		}
+		if fetched != 0 {
+			w.FetchedAt = fromMS(fetched)
+		}
+		out = append(out, w)
+	}
+	return out, rows.Err()
+}
+
+// RefWebsites implements Reference.
+func (db *DB) RefWebsites(ctx context.Context) ([]RefWebsite, error) {
+	h, err := db.baseHandle()
+	if err != nil {
+		return nil, err
+	}
+	return loadWebsites(ctx, h.r)
+}
+
+// PutWebsites implements Reference, as PutCompanies does: the fetch time is
+// kept apart from the content, so asking again and getting the same answer is
+// not a change.
+func (db *DB) PutWebsites(ctx context.Context, rows []RefWebsite, at time.Time) (RefDiff, error) {
+	h, err := db.baseHandle()
+	if err != nil {
+		return RefDiff{}, err
+	}
+	if len(rows) == 0 {
+		return RefDiff{Same: true}, nil
+	}
+	rows = slices.Clone(rows)
+	slices.SortFunc(rows, func(a, b RefWebsite) int { return strings.Compare(a.Ticker, b.Ticker) })
+	tx, err := h.w.BeginTx(ctx, nil)
+	if err != nil {
+		return RefDiff{}, fmt.Errorf("store: websites: %w", err)
+	}
+	defer tx.Rollback()
+	old, err := loadWebsites(ctx, tx)
+	if err != nil {
+		return RefDiff{}, err
+	}
+	oldBy := make(map[string]RefWebsite, len(old))
+	for _, o := range old {
+		oldBy[o.Ticker] = o
+	}
+	var diff RefDiff
+	var changes []RefChange
+	for _, r := range rows {
+		o, had := oldBy[r.Ticker]
+		if had && slices.Equal(o.fields(), r.fields()) && o.FetchedAt.Equal(r.FetchedAt) {
+			continue
+		}
+		switch {
+		case !had:
+			diff.Added++
+			changes = append(changes, RefChange{Kind: "added", Key: r.Ticker, Detail: describe(r.fields())})
+		case !slices.Equal(o.fields(), r.fields()):
+			diff.Changed++
+			changes = append(changes, RefChange{Kind: "changed", Key: r.Ticker, Detail: describeChange(o.fields(), r.fields())})
+		}
+		var fetched int64
+		if !r.FetchedAt.IsZero() {
+			fetched = ms(r.FetchedAt)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO ref_website (ticker, url, label, fetched_ms) VALUES (?, ?, ?, ?)`,
+			r.Ticker, r.URL, r.Label, fetched); err != nil {
+			return RefDiff{}, fmt.Errorf("store: websites: %w", err)
+		}
+	}
+	diff.Same = diff.Added == 0 && diff.Changed == 0
+	if !diff.Same {
+		all, err := loadWebsites(ctx, tx)
+		if err != nil {
+			return RefDiff{}, err
+		}
+		diff.Hash = hashRows(all, RefWebsite.fields)
+		if err := recordChange(ctx, tx, RefSource{Name: SourceWebsite}, diff.Hash, len(all), at, len(old) > 0, changes); err != nil {
+			return RefDiff{}, err
+		}
+	}
+	return diff, tx.Commit()
 }

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/b070nd/stoxicity/app/src/httpx"
+	"github.com/b070nd/stoxicity/app/src/marketdata"
 	"github.com/b070nd/stoxicity/app/src/store"
 )
 
@@ -293,5 +294,52 @@ func TestRunRepeatsUntilTheContextEnds(t *testing.T) {
 	}
 	if len(waits) < 3 {
 		t.Errorf("%d cycles", len(waits))
+	}
+}
+
+// everyDay is a source of market days that has the same candle for ACME and a
+// bad one for GLOB on every day it is asked for.
+type everyDay struct {
+	mu   sync.Mutex
+	days []string
+}
+
+func (*everyDay) Name() string { return "script" }
+func (e *everyDay) Day(_ context.Context, day time.Time) ([]marketdata.Candle, error) {
+	e.mu.Lock()
+	e.days = append(e.days, day.Format(time.DateOnly))
+	e.mu.Unlock()
+	d := day.Format(time.DateOnly)
+	return []marketdata.Candle{
+		{Ticker: "ACME", Day: d, Open: 10, High: 12, Low: 9, Close: 11, Volume: 100},
+		{Ticker: "ETFX", Day: d, Open: 5, High: 6, Low: 5, Close: 6, Volume: 10},
+	}, nil
+}
+
+func TestCycleKeepsTheCandlesOfTheListedStocksWithinItsBudget(t *testing.T) {
+	f := newFixture(t, masterA)
+	src := &everyDay{}
+	f.r.Quotes = &marketdata.Keeper{Store: f.db, Source: src, Now: func() time.Time { return f.now }}
+	f.r.Set.QuotesPerCycle = 2
+	rep := f.r.Cycle(context.Background(), false)
+	if err := rep.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if rep.Quotes.Asked != 2 || len(src.days) != 2 {
+		t.Fatalf("asked %d days (%v), want the budget of 2: %s", rep.Quotes.Asked, src.days, rep.Quotes)
+	}
+	got, err := f.db.LatestCandles(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got["ACME"]) != 2 || got["ACME"][0].Close != 11 || len(got["ETFX"]) != 2 {
+		t.Errorf("candles %+v, report %s", got, rep.Quotes)
+	}
+	// With the budget at zero the step is skipped and nothing is asked.
+	f.r.Set.QuotesPerCycle = 0
+	n := len(src.days)
+	f.r.Cycle(context.Background(), false)
+	if len(src.days) != n {
+		t.Errorf("asked %d more days with the step off", len(src.days)-n)
 	}
 }

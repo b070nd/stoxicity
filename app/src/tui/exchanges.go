@@ -187,7 +187,8 @@ func buildExchange(name string, d Data) Screen {
 		b.blank()
 		b.heading(fmt.Sprintf("Stocks · %s listed", thousands(len(profiles))), nil)
 		q, _ := universe.ParseQuery("sort:news")
-		t := companyTable(q)
+		priced := len(d.Quotes) > 0
+		t := companyTable(q, priced)
 		s.Table, s.Sort = t.shape(), t.Effective(d.Sort)
 		if s.Sort.Key != "" {
 			q = q.WithSort(s.Sort.Key, s.Sort.Desc != (s.Sort.Key == "news"))
@@ -196,9 +197,9 @@ func buildExchange(name string, d Data) Screen {
 		for _, w := range d.Watchlist {
 			watched[universe.Ticker(w)] = true
 		}
-		for _, h := range d.Universe.Find(q, universe.FactsFrom(d.Articles, d.Params.Threshold, d.Watchlist), 0) {
+		for _, h := range d.Universe.Find(q, d.companyFacts(), 0) {
 			if h.Profile.OnExchange(name) {
-				t.Items = append(t.Items, companyItem(h, watched[h.Profile.Ticker]))
+				t.Items = append(t.Items, companyItem(h, watched[h.Profile.Ticker], d.Quotes, priced, d.Now))
 			}
 		}
 		b.rows = append(b.rows, t.Rows(s.Sort)...)

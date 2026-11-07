@@ -65,6 +65,10 @@ type Workspace struct {
 	checked time.Time // when the stamp was last compared
 	byID    map[string]watch.Watch
 	baseDir string
+
+	// The newest candles, read again once they are older than quotesEvery.
+	quotes   map[string]tui.Quote
+	quotesAt time.Time
 }
 
 var _ tui.Backend = (*Workspace)(nil)
@@ -219,6 +223,39 @@ func (w *Workspace) rebuildLocked() {
 	if u, _ := refdata.Build(ctx, w.db, w.src.LayerPath, w.src.Sectors, w.src.Known); u != nil {
 		w.univ, w.stamp = u, st
 	}
+}
+
+// quotesEvery is how often Quotes reads the candles again; a refresh of
+// "stoxicity run" writes them in the background.
+const quotesEvery = 30 * time.Second
+
+// Quotes are the newest daily candle of every stock that has one, with the
+// close before it. Empty when no price source has stored anything.
+func (w *Workspace) Quotes() map[string]tui.Quote {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if now := w.now(); w.quotes != nil && now.Sub(w.quotesAt) < quotesEvery {
+		return w.quotes
+	}
+	w.quotesAt = w.now()
+	latest, err := w.db.LatestCandles(context.Background())
+	if err != nil {
+		w.quotes = map[string]tui.Quote{}
+		return w.quotes
+	}
+	out := make(map[string]tui.Quote, len(latest))
+	for t, c := range latest {
+		if len(c) == 0 {
+			continue
+		}
+		q := tui.Quote{Day: c[0].Day, Open: c[0].Open, High: c[0].High, Low: c[0].Low, Close: c[0].Close}
+		if len(c) > 1 {
+			q.Prev = c[1].Close
+		}
+		out[t] = q
+	}
+	w.quotes = out
+	return out
 }
 
 // StockFeeds lists the feeds recorded for a ticker, the SEC record first.

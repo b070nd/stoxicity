@@ -37,6 +37,7 @@ read. The loader is described in `app/src/envfile/envfile.go`.
 | `STOXICITY_GMAIL_REFRESH_TOKEN` | `.env.local` | **yes** | Optional. `stoxicity gmail auth` stores the token in `data/gmail/refresh_token` (owner-only); this variable overrides the file |
 | `STOXICITY_MAIL_FROM`, `_TO` | `.env.local` | personal | Sender (your Gmail address) and recipient |
 | `STOXICITY_WEBHOOK_URL` | `.env.local` | **yes** | Webhook channel: the https address notifications are posted to (the URL carries the secret) |
+| `STOXICITY_POLYGON_KEY` | `.env.local` | **yes** | Polygon API key for daily candles (`company.quotes`); unset: no prices |
 | `STOXICITY_LAYA_API_KEY` | `.env.local` | **yes** | laya-serve key, sent as a Bearer token; must equal the sidecar's `LAYA_API_KEY` |
 
 A licensed source adds one variable of its own and names it with `auth_env:`.
@@ -137,10 +138,28 @@ company:
   nasdaq_url: ""  # nasdaqlisted.txt; empty means Nasdaq Trader
   other_url: ""   # otherlisted.txt
   submissions_url: "" # the SEC record of one company; %s is the ten-digit CIK
+  sites_url: ""       # Wikidata's query service, where each stock's official website comes from
   refresh_every: 6h   # how often `run` refreshes the reference database; off = never
   enrich_per_cycle: 200 # companies whose industry etc. are fetched in one refresh (0 to 5000)
+  sites_per_cycle: 400  # tickers whose official website is looked up in one refresh (0 to 5000)
   feed_search_per_cycle: 60 # company websites read for their news feed in one refresh (0 to 2000)
+  quotes: polygon     # where daily candles come from: polygon (needs STOXICITY_POLYGON_KEY) or off
+  quotes_per_cycle: 10 # market days brought up to date in one refresh (0 to 5000)
+  quotes_url: ""      # the source's address, for a test
 ```
+
+`quotes` fills the DAY, CLOSE and CHG columns of the stock lists and the "last
+close" of a stock's page. The only source is [Polygon](https://polygon.io)'s
+grouped daily bars: one request brings every US stock for one day, so the
+whole market stays current within the free plan's five requests a minute. The
+key is yours (a free account is enough) and goes in `.env.local` as
+`STOXICITY_POLYGON_KEY`; without it nothing is asked and the columns are left
+out. The first refresh goes back seven market days, then each refresh asks for
+the days since the newest it holds; weekends are skipped, and a weekday the
+source answers with nothing (a holiday) is remembered. Free sites that publish
+price files for browsers (Stooq, for one, now makes the browser solve a puzzle)
+are not used: the program does not try to get around such a check.
+`stoxicity universe quotes [-max N] [TICKER...]` does the same by hand.
 
 `feed_search_per_cycle` is how many company websites one refresh reads to find the
 company's own news feed (see [fetchers.md](fetchers.md#12-the-feeds-of-every-stock));

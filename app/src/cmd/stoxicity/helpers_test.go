@@ -62,7 +62,7 @@ GLOB|Globex Holdings Inc Common Stock|N|GLOB|N|100|N|GLOB
 File Creation Time: 1105202603:02||||||
 `
 
-const acmeRecord = `{"cik":"0001000001","entityType":"operating","sic":"7372","sicDescription":"Services-Prepackaged Software","name":"Acme Corp","fiscalYearEnd":"1231","stateOfIncorporation":"DE","category":"Large accelerated filer","formerNames":[{"name":"ACME HOLDINGS"}]}`
+const acmeRecord = `{"cik":"0001000001","entityType":"operating","sic":"7372","sicDescription":"Services-Prepackaged Software","name":"Acme Corp","fiscalYearEnd":"1231","stateOfIncorporation":"DE","category":"Large accelerated filer","exchanges":["Nasdaq"],"phone":"555-0100","ein":"123456789","addresses":{"business":{"city":"SPRINGFIELD","stateOrCountryDescription":"IL"}},"formerNames":[{"name":"ACME HOLDINGS"}]}`
 
 // testEnv is a configuration folder in a temporary directory and a feed server.
 type testEnv struct {
@@ -94,7 +94,17 @@ func newTestEnv(t *testing.T) *testEnv {
 	mux.HandleFunc("/nasdaqlisted.txt", func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, nasdaqFile) })
 	mux.HandleFunc("/otherlisted.txt", func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, otherFile) })
 	mux.HandleFunc("/sub/CIK0001000001.json", func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, acmeRecord) })
-	srv := httptest.NewTLSServer(mux)
+	// Polygon's grouped daily bars: the same two stocks on every day asked for, one
+	// of them with a candle the program must refuse.
+	mux.HandleFunc("/polygon/", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"results":[{"T":"ACME","o":10,"h":12,"l":9.5,"c":11.5,"v":1000},{"T":"GLOB","o":20,"h":19,"l":21,"c":20,"v":5},{"T":"NOTLISTED","o":1,"h":2,"l":1,"c":2,"v":1}]}`)
+	})
+	// Wikidata's answer: Acme has a site; the other company of the ticker does not match.
+	var srv *httptest.Server
+	mux.HandleFunc("/sparql", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"results":{"bindings":[{"t":{"value":"ACME"},"label":{"value":"Acme Corporation"},"site":{"value":%q},"rank":{"value":"http://wikiba.se/ontology#NormalRank"}}]}}`, srv.URL+"/acme/")
+	})
+	srv = httptest.NewTLSServer(mux)
 	t.Cleanup(srv.Close)
 	client, err := httpx.New(httpx.Config{
 		UserAgent:    "stoxicity-test/0 (tester@example.com)",
@@ -117,7 +127,7 @@ func newTestEnv(t *testing.T) *testEnv {
 			t.Fatal(err)
 		}
 	}
-	write("config.yaml", "since: 2026-11-01\ndata_dir: ./data\nwatchlist: [ACME]\ncompany:\n  url: "+srv.URL+"/company_tickers.json\n  nasdaq_url: "+srv.URL+"/nasdaqlisted.txt\n  other_url: "+srv.URL+"/otherlisted.txt\n  submissions_url: "+srv.URL+"/sub/CIK%s.json\n")
+	write("config.yaml", "since: 2026-11-01\ndata_dir: ./data\nwatchlist: [ACME]\ncompany:\n  url: "+srv.URL+"/company_tickers.json\n  nasdaq_url: "+srv.URL+"/nasdaqlisted.txt\n  other_url: "+srv.URL+"/otherlisted.txt\n  submissions_url: "+srv.URL+"/sub/CIK%s.json\n  sites_url: "+srv.URL+"/sparql\n")
 	write("sources.yaml", fmt.Sprintf(`sources:
   - id: news-feed
     name: Synthetic news

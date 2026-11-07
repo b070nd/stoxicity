@@ -43,8 +43,9 @@ type fake struct {
 	sources  []status.Source
 	verdicts map[string]labels.Verdict
 
-	layer universe.Layer
-	univ  *universe.Universe
+	layer  universe.Layer
+	univ   *universe.Universe
+	quotes map[string]Quote
 
 	articleCalls []string // the watch of each Articles call
 	searchCalls  []string
@@ -90,6 +91,12 @@ func (f *fake) Universe() *universe.Universe {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.univ
+}
+
+func (f *fake) Quotes() map[string]Quote {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.quotes
 }
 
 func (f *fake) Following(t string) []string {

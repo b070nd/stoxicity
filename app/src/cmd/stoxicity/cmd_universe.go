@@ -27,7 +27,7 @@ const (
 	defaultEnrichMax = 300
 )
 
-const universeUsage = "expected: status | update [-force] | changes [-days N] [-limit N] | enrich [-all] [-max N] [TICKER...] | feeds [-search N] | find [-limit N] [-days N] [-format table|tsv|json] QUERY... | show TICKER | tag TICKER [-]TAG... | list [ID] | list add|remove ID TICKER..."
+const universeUsage = "expected: status | update [-force] | changes [-days N] [-limit N] | enrich [-all] [-max N] [-force] [-sites=false] [-feeds N] [TICKER...] | feeds [-search N] | quotes [-max N] [TICKER...] | find [-limit N] [-days N] [-format table|tsv|json] QUERY... | show TICKER | tag TICKER [-]TAG... | list [ID] | list add|remove ID TICKER..."
 
 // cmdUniverse is the reference list of stocks: every company the program
 // knows, searched, tagged and grouped.
@@ -49,6 +49,8 @@ func cmdUniverse(ctx context.Context, a *app, args []string) error {
 		return a.universeEnrich(ctx, args[1:])
 	case "feeds":
 		return a.universeFeeds(ctx, args[1:])
+	case "quotes":
+		return a.universeQuotes(ctx, args[1:])
 	case "find":
 		return a.universeFind(ctx, args[1:])
 	case "show":
@@ -113,6 +115,9 @@ func (a *app) universeStatus() error {
 	tickers, _ := db.RefTickers(ctx)
 	fmt.Fprintf(a.stdout, "industry    %d of %d companies have an SEC record (the background refresh of \"run\" and \"stoxicity universe enrich\" add more)\n",
 		withData, len(distinctCIKs(tickers)))
+	for _, l := range a.coverage(ctx, db) {
+		fmt.Fprintln(a.stdout, strings.Replace(l, "coverage      ", "coverage    ", 1))
+	}
 	fmt.Fprintf(a.stdout, "lists       %d, tags %d (tenant %s)\n", len(u.Lists()), len(u.Tags()), a.tenantID)
 	fmt.Fprintf(a.stdout, "universe    %d profiles, fingerprint %s\n", u.Len(), shortHash(u.Fingerprint()))
 	since := a.now().AddDate(0, 0, -7)
@@ -226,74 +231,6 @@ func describe(r company.Result) string {
 		return fmt.Sprintf("new copy stored, %d entries", r.Records)
 	}
 	return fmt.Sprintf("unchanged, %d entries", r.Records)
-}
-
-// universeEnrich fetches the SEC record of the companies you care about.
-func (a *app) universeEnrich(ctx context.Context, args []string) error {
-	fs := newFlags("universe enrich")
-	all := fs.Bool("all", false, "every company in the list (about 10,000 requests at 2 a second: over an hour)")
-	maxReq := fs.Int("max", defaultEnrichMax, "most requests to make; 0 means no limit")
-	force := fs.Bool("force", false, "ask again even for records that are young")
-	tickers, err := parseMixed(fs, args)
-	if err != nil {
-		return err
-	}
-	u := a.universe()
-	if a.companies().Empty() {
-		return fmt.Errorf("no company list yet: run \"stoxicity universe update\"")
-	}
-	var ciks []string
-	add := func(t string) {
-		if p, ok := u.Get(t); ok && p.CIK != "" {
-			ciks = append(ciks, p.CIK)
-		}
-	}
-	switch {
-	case len(tickers) > 0:
-		for _, t := range tickers {
-			if _, ok := u.Get(t); !ok {
-				return fmt.Errorf("%s is not in the company list", t)
-			}
-			add(t)
-		}
-	case *all:
-		for _, p := range u.All() {
-			add(p.Ticker)
-		}
-	default:
-		db, err := a.store()
-		if err != nil {
-			return err
-		}
-		for _, t := range interestingTickers(ctx, db, a.knownTickers(), a.layerPath(), a.cfg.Lens.Threshold, a.now()) {
-			add(t)
-		}
-	}
-	if len(ciks) == 0 {
-		fmt.Fprintln(a.stdout, "nothing to look up: follow some stocks (watchlist, lists, tags) or name tickers")
-		return nil
-	}
-	client, err := a.httpClient()
-	if err != nil {
-		return err
-	}
-	opts := company.EnrichOptions{URL: a.cfg.Company.SubmissionsURL, Force: *force, Max: *maxReq, Now: a.now}
-	opts.Progress = func(done, total int) {
-		if done%25 == 0 || done == total {
-			fmt.Fprintf(a.stderr, "enrich: %d of %d\n", done, total)
-		}
-	}
-	res, err := company.Enrich(ctx, client, a.companyDir(), ciks, opts)
-	a.syncReference(context.WithoutCancel(ctx))
-	fmt.Fprintf(a.stdout, "stored %d records; %d were young enough, %d are unknown to the SEC", res.Fetched, res.Skipped, res.Missing)
-	if res.Left > 0 {
-		fmt.Fprintf(a.stdout, ", %d left (raise -max)", res.Left)
-	}
-	fmt.Fprintln(a.stdout)
-	for _, f := range res.Failed {
-		fmt.Fprintf(a.stdout, "failed: %s\n", f)
-	}
-	return err
 }
 
 // interestingTickers are the tickers worth an industry record: those you
@@ -471,7 +408,12 @@ func (a *app) universeShow(ctx context.Context, args []string) error {
 	row("incorporated", p.State)
 	row("fiscal year end", p.FiscalYear)
 	row("filer category", p.Category)
+	row("headquarters", p.HQ)
+	row("phone", p.Phone)
 	row("website", p.Website)
+	row("investors", p.Investor)
+	row("EIN", p.EIN)
+	row("LEI", p.LEI)
 	row("ISIN", p.ISIN)
 	row("sector", p.Sector)
 	row("same company", strings.Join(p.Siblings, ", "))
@@ -493,8 +435,15 @@ func (a *app) universeShow(ctx context.Context, args []string) error {
 	if n := a.facts(ctx, defaultNewsDays).News[p.Ticker]; n > 0 {
 		row("news", fmt.Sprintf("%d relevant articles in %d days (stoxicity stock %s)", n, defaultNewsDays, p.Ticker))
 	}
-	if p.SIC == "" && p.CIK != "" {
-		row("hint", "no industry yet: stoxicity universe enrich "+p.Ticker)
+	if db, err := a.store(); err == nil {
+		if feeds, err := db.StockFeedsOf(ctx, p.Ticker); err == nil {
+			for _, f := range feeds {
+				row("feed ("+f.Kind+")", f.URL)
+			}
+		}
+	}
+	if p.SIC == "" && p.CIK != "" || p.Website == "" && p.Kind == universe.KindStock {
+		row("hint", "not filled in yet: stoxicity universe enrich "+p.Ticker)
 	}
 	return tw.Flush()
 }

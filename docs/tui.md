@@ -171,6 +171,20 @@ not explain is shown as it is. `s` opens the same list flat, news first.
 Headings are rows too: `enter` on "Exchange NYSE · 2,894" opens the list narrowed
 to that exchange (`exchange:"NYSE"`), flat. The catalogue starts on its first
 stock, and the status line counts stocks only.
+
+The table is colour-coded. **TYPE** is read from the exchanges' name for the
+security and the shape of its ticker: stock, preferred, warrant, unit, right,
+adr, etf or test (a reading, not a fact; `type:warrant` filters on it).
+**DOMAIN** is the SEC's industry division (Manufacturing, Finance & RE,
+Services, Infrastructure, Retail, Mining ...), one colour each; the finer
+INDUSTRY sits further right. **DAY** is the day's candle drawn as a bar: the
+whole bar is the range from low to high, the thick part is open to close, so a
+body at the right end closed near its high; green closed above its open, red
+below, dim when the candle is old (more than five days) or the day closed flat.
+**CLOSE** and **CHG** (the move from the day before) take the same colour.
+`sort:close`, `sort:change`, `sort:type` and `sort:domain` order by them (a
+stock with no candle is last whichever way round); the columns appear once
+prices exist (see `company.quotes` in [configuration.md](configuration.md)).
 `enter` on a company opens its profile, which also exists for stocks with no news
 in the window.
 

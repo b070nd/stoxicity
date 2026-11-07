@@ -36,7 +36,13 @@ type Cell struct {
 	Text string
 	Num  float64
 	Str  string
+	// Style draws the cell's text in a colour of its own; Plain leaves it to
+	// the row.
+	Style Style
 }
+
+// Styled is c drawn in the style.
+func (c Cell) Styled(s Style) Cell { c.Style = s; return c }
 
 // Str is a cell of text that sorts as text.
 func Str(s string) Cell { return Cell{Text: s, Str: strings.ToLower(s)} }
@@ -121,7 +127,7 @@ func (t Table) body(s Sort) []Row {
 	rows := make([]Row, len(items))
 	for i, it := range items {
 		rows[i] = it.Row
-		rows[i].Text = t.line(it.Cells)
+		rows[i].Text, rows[i].Spans = t.line(it.Cells)
 	}
 	return rows
 }
@@ -139,14 +145,21 @@ func compare(a, b Cell) int {
 	return 0
 }
 
-func (t Table) line(cells []Cell) string {
+func (t Table) line(cells []Cell) (string, []Span) {
 	texts := make([]string, len(t.Columns))
 	for i := range t.Columns {
 		if i < len(cells) {
 			texts[i] = cells[i].Text
 		}
 	}
-	return t.join(texts)
+	text, at := t.layout(texts)
+	var spans []Span
+	for i := range t.Columns {
+		if i < len(cells) && cells[i].Style != Plain && at[i][1] > at[i][0] {
+			spans = append(spans, Span{From: at[i][0], To: at[i][1], Style: cells[i].Style})
+		}
+	}
+	return text, spans
 }
 
 func (t Table) header(s Sort) string {
@@ -178,24 +191,48 @@ func (c Column) width() int {
 
 // join pads the texts to their columns and puts a space between them.
 func (t Table) join(texts []string) string {
+	s, _ := t.layout(texts)
+	return s
+}
+
+// layout is join, and where in the line (in runes, as [from, to)) each
+// column's text lies, padding left out; the text of a cell that is empty has
+// an empty stretch.
+func (t Table) layout(texts []string) (string, [][2]int) {
 	var b strings.Builder
+	at := make([][2]int, len(t.Columns))
+	n := 0 // runes written
 	for i, c := range t.Columns {
 		text := oneLine(texts[i])
+		lead, trail := 0, 0
 		if w := c.width(); w > 0 {
 			text = clip(text, w)
-			pad := strings.Repeat(" ", max(w-utf8.RuneCountInString(text), 0))
+			pad := max(w-utf8.RuneCountInString(text), 0)
 			if c.Right {
-				text = pad + text
+				lead = pad
 			} else if i < len(t.Columns)-1 {
-				text += pad
+				trail = pad
 			}
 		}
 		if i > 0 {
 			b.WriteByte(' ')
+			n++
 		}
+		b.WriteString(strings.Repeat(" ", lead))
+		n += lead
+		w := utf8.RuneCountInString(text)
+		at[i] = [2]int{n, n + w}
 		b.WriteString(text)
+		n += w
+		b.WriteString(strings.Repeat(" ", trail))
+		n += trail
 	}
-	return strings.TrimRight(b.String(), " ")
+	line := strings.TrimRight(b.String(), " ")
+	end := utf8.RuneCountInString(line)
+	for i := range at {
+		at[i][0], at[i][1] = min(at[i][0], end), min(at[i][1], end)
+	}
+	return line, at
 }
 
 // Choose is the sort that follows cur when the user steps dir columns along

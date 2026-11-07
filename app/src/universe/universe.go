@@ -65,11 +65,20 @@ type Profile struct {
 	SIC, Industry, State, FiscalYear, Category, Website, EntityType string
 	Sector                                                          string // from the sector rules of the configuration
 	ISIN                                                            string
+	// HQ is the business address ("Miramar, FL"); Phone, EIN (employer ID) and
+	// LEI (legal entity ID) are from the SEC record, Investor the
+	// investor-relations website where the SEC has one.
+	HQ, Phone, EIN, LEI, Investor string
 
 	Tags     []string
 	Lists    []string // IDs of the lists the stock is in
 	Siblings []string // other tickers of the same company
 	Source   string
+
+	// typ is Type(), worked out once when the universe is built: a list of
+	// twelve thousand asks for it on every keystroke.
+	typ   string
+	typed bool
 }
 
 // Inputs are the sources of a Universe.
@@ -78,6 +87,9 @@ type Inputs struct {
 	Listing  company.Listing
 	Industry company.IndustryCache
 	Layer    Layer
+	// Websites are official websites by ticker (Wikidata's), for the companies
+	// whose SEC record names none.
+	Websites map[string]string
 	// Sectors maps a ticker to a sector name (the configuration's sector
 	// rules).
 	Sectors map[string]string
@@ -120,9 +132,12 @@ func New(in Inputs) *Universe {
 		if raw := company.CleanTags(e.Name); raw != p.Name {
 			p.Aliases = append(p.Aliases, raw)
 		}
+		var rec company.Industry // the SEC record, when there is one
 		if ind, ok := in.Industry[e.CIK]; ok && !ind.Missing {
 			p.SIC, p.Industry, p.State, p.FiscalYear = ind.SIC, ind.Description, ind.State, ind.FiscalYear
 			p.Category, p.Website, p.EntityType = ind.Category, ind.Website, ind.EntityType
+			p.HQ, p.Phone, p.EIN, p.LEI, p.Investor = hq(ind.City, ind.Region), ind.Phone, ind.EIN, ind.LEI, ind.Investor
+			rec = ind
 			for _, f := range ind.Former {
 				p.Aliases = append(p.Aliases, company.CleanTags(f))
 			}
@@ -140,6 +155,15 @@ func New(in Inputs) *Universe {
 			default:
 				p.Kind = KindStock
 			}
+		}
+		// A company the exchanges' lists lack (most of the over-the-counter ones)
+		// still says where its stock trades, and an operating company with shares
+		// is a stock.
+		if p.Exchange == "" && len(rec.Exchanges) > 0 {
+			p.Exchange = rec.Exchanges[0]
+		}
+		if p.Kind == "" && rec.EntityType == "operating" {
+			p.Kind = KindStock
 		}
 		if e.CIK != "" {
 			byCIK[e.CIK] = append(byCIK[e.CIK], p.Ticker)
@@ -190,6 +214,9 @@ func New(in Inputs) *Universe {
 	for i := range u.profiles {
 		p := &u.profiles[i]
 		u.index[p.Ticker] = i
+		if p.Website == "" {
+			p.Website = in.Websites[p.Ticker]
+		}
 		// Aliases come from several sources in the order those list them; sorted
 		// and without repeats they do not depend on it.
 		slices.Sort(p.Aliases)
@@ -197,6 +224,7 @@ func New(in Inputs) *Universe {
 		if len(p.Aliases) == 0 {
 			p.Aliases = nil
 		}
+		p.typ, p.typed = p.work(), true
 	}
 
 	// Membership, siblings and sectors are filled once the order is final.
@@ -402,10 +430,35 @@ func Load(s Sources) (*Universe, error) {
 	if in.Industry, err = company.LoadIndustry(s.CompanyDir); err != nil {
 		errs = append(errs, err)
 	}
+	if sites, err := company.LoadWebsites(s.CompanyDir); err != nil {
+		errs = append(errs, err)
+	} else {
+		in.Websites = make(map[string]string, len(sites))
+		for t, w := range sites {
+			if w.URL != "" {
+				in.Websites[t] = w.URL
+			}
+		}
+	}
 	if s.LayerPath != "" {
 		if in.Layer, err = LoadLayer(s.LayerPath); err != nil {
 			errs = append(errs, err)
 		}
 	}
 	return New(in), errors.Join(errs...)
+}
+
+// hq writes the business address as "Miramar, FL": the SEC writes the city in
+// capitals.
+func hq(city, region string) string {
+	words := strings.Fields(strings.ToLower(city))
+	for i, w := range words {
+		r := []rune(w)
+		words[i] = strings.ToUpper(string(r[:1])) + string(r[1:])
+	}
+	parts := []string{strings.Join(words, " ")}
+	if region != "" {
+		parts = append(parts, region)
+	}
+	return strings.Join(slices.DeleteFunc(parts, func(s string) bool { return s == "" }), ", ")
 }

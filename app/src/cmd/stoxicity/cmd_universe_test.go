@@ -145,20 +145,22 @@ func TestUniverseEnrichStoresIndustryAndShowPrintsIt(t *testing.T) {
 
 	r := e.run(t, "universe", "show", "acme")
 	r.wantCode(t, exitOK)
-	r.wantOut(t, "Acme Corp", "0001000001", "Nasdaq", "no industry yet", "stoxicity universe enrich ACME", "browse-edgar")
+	r.wantOut(t, "Acme Corp", "0001000001", "Nasdaq", "not filled in yet", "stoxicity universe enrich ACME", "browse-edgar")
 
 	r = e.run(t, "universe", "enrich", "ACME")
 	r.wantCode(t, exitOK)
-	r.wantOut(t, "stored 1 records")
+	r.wantOut(t, "SEC records   stored 1", "websites      found 1", "feeds         2 new SEC filing records", "coverage")
+	// The profile it ends with is the filled-in one.
+	r.wantOut(t, "headquarters", "Springfield, IL", "555-0100", "123456789", "/acme/", "feed (sec)")
 
 	r = e.run(t, "universe", "show", "acme")
-	r.wantOut(t, "Services-Prepackaged Software (SIC 7372)", "DE", "1231", "ACME HOLDINGS")
+	r.wantOut(t, "Services-Prepackaged Software (SIC 7372)", "DE", "1231", "ACME HOLDINGS", "Springfield, IL", "/acme/")
 
 	r = e.run(t, "universe", "find", "industry:software")
 	r.wantOut(t, "ACME")
 
 	r = e.run(t, "universe", "enrich", "ACME")
-	r.wantOut(t, "1 were young enough")
+	r.wantOut(t, "1 young enough")
 
 	r = e.run(t, "universe", "enrich", "NOPE")
 	if r.code == exitOK {

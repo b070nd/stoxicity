@@ -164,3 +164,47 @@ func TestRefConfirmKeepsTheValidatorsOfTheLastGoodAnswer(t *testing.T) {
 		t.Errorf("source after a success = %+v", src)
 	}
 }
+
+func TestCompanyKeepsItsExchangeAddressAndIdentifiers(t *testing.T) {
+	db, _ := openTemp(t)
+	ctx := context.Background()
+	c := RefCompany{CIK: "0001021917", Name: "Awaysis Capital, Inc.", Exchanges: []string{"OTC"}, City: "MIRAMAR", Region: "FL",
+		Phone: "954-931-9244", EIN: "270514566", FetchedAt: at(0)}
+	if d, err := db.PutCompanies(ctx, []RefCompany{c}, at(0)); err != nil || d.Added != 1 {
+		t.Fatalf("%+v %v", d, err)
+	}
+	got, _ := db.RefCompanies(ctx)
+	if len(got) != 1 || got[0].Exchanges[0] != "OTC" || got[0].City != "MIRAMAR" || got[0].Region != "FL" ||
+		got[0].Phone != "954-931-9244" || got[0].EIN != "270514566" {
+		t.Errorf("stored = %+v", got)
+	}
+	c.Exchanges = nil // the exchange was dropped: a change
+	if d, _ := db.PutCompanies(ctx, []RefCompany{c}, at(1)); d.Changed != 1 {
+		t.Errorf("a changed exchange: %+v", d)
+	}
+}
+
+func TestPutWebsitesIsIdempotentAndRemembersWhatWasNotFound(t *testing.T) {
+	db, _ := openTemp(t)
+	ctx := context.Background()
+	rows := []RefWebsite{{Ticker: "KO", URL: "https://www.coca-colacompany.com/", Label: "The Coca-Cola Company", FetchedAt: at(0)},
+		{Ticker: "AWCA", FetchedAt: at(0)}}
+	if d, err := db.PutWebsites(ctx, rows, at(0)); err != nil || d.Added != 2 {
+		t.Fatalf("%+v %v", d, err)
+	}
+	if d, _ := db.PutWebsites(ctx, rows, at(1)); !d.Same {
+		t.Errorf("the same again: %+v", d)
+	}
+	rows[1].FetchedAt = at(50) // asked again, still nothing
+	if d, _ := db.PutWebsites(ctx, rows, at(50)); !d.Same {
+		t.Errorf("a new fetch time alone is no change: %+v", d)
+	}
+	rows[1].URL = "https://awaysis.com/"
+	if d, _ := db.PutWebsites(ctx, rows, at(51)); d.Changed != 1 {
+		t.Errorf("a site found at last: %+v", d)
+	}
+	got, _ := db.RefWebsites(ctx)
+	if len(got) != 2 || got[0].Ticker != "AWCA" || got[0].URL != "https://awaysis.com/" || got[1].Ticker != "KO" {
+		t.Errorf("stored = %+v", got)
+	}
+}

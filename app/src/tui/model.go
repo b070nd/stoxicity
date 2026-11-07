@@ -334,7 +334,7 @@ func (m *Model) rebuild() {
 		Params: p, Watchlist: m.be.Watchlist(), Topics: m.be.TopicNames(),
 		Name: m.be.CompanyName, Verdicts: m.verdicts, Sources: m.sources,
 		Watches: m.watches, WatchID: m.stack.Watch(), Now: m.be.Now(), Truncated: m.truncated,
-		Universe: m.be.Universe(), Following: m.be.Following, Feeds: m.be.StockFeeds,
+		Universe: m.be.Universe(), Following: m.be.Following, Feeds: m.be.StockFeeds, Quotes: m.be.Quotes(),
 	}
 	d.Exchange, d.Chosen = m.scopeOf(r), m.exchange
 	if needsShared(r.Kind) {

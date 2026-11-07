@@ -55,6 +55,10 @@ type Backend interface {
 	// StockFeeds lists the feeds recorded for a ticker (not those of the other
 	// tickers of its company), the SEC record first.
 	StockFeeds(ticker string) []FeedInfo
+	// Quotes are the newest daily candle of every stock that has one, by
+	// ticker, with the close before it. The map is read-only; it is empty when
+	// no price source is set up.
+	Quotes() map[string]Quote
 
 	Watches(ctx context.Context) ([]WatchInfo, error)
 	// Articles are the visible articles published in [from, to). With a watch

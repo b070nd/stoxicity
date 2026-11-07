@@ -38,6 +38,10 @@ var (
 	}
 )
 
+// hues are the colours of the ten SIC divisions: the terminal's own palette,
+// the bright ones where the plain ones would repeat.
+var hues = [10]string{"2", "3", "1", "4", "6", "5", "10", "11", "12", "13"}
+
 func (s Style) lip() lipgloss.Style {
 	switch s {
 	case Heading:
@@ -52,6 +56,14 @@ func (s Style) lip() lipgloss.Style {
 		return styleWarn
 	case Cloud1, Cloud2, Cloud3, Cloud4, Cloud5:
 		return cloud[s-Cloud1]
+	case Info:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
+	case Accent:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("5"))
+	case Blue:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("4"))
+	case Hue1, Hue2, Hue3, Hue4, Hue5, Hue6, Hue7, Hue8, Hue9, Hue10:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(hues[s-Hue1]))
 	}
 	return lipgloss.NewStyle()
 }
@@ -290,6 +302,10 @@ func (m *Model) bodyLines() []string {
 		if m.isFresh(row) {
 			style = styleFresh
 		}
+		if len(row.Spans) > 0 && text == row.Text {
+			out = append(out, spanned(style, " "+mark, text, row.Spans))
+			continue
+		}
 		out = append(out, style.Render(" "+mark+text))
 	}
 	return out
@@ -508,4 +524,28 @@ func labelWord(v labels.Verdict) string {
 		return "dropped"
 	}
 	return "none"
+}
+
+// spanned draws text in the row's style with the spans in styles of their own;
+// lead is the two cells before the text (the mark column).
+func spanned(base lipgloss.Style, lead, text string, spans []Span) string {
+	runes := []rune(text)
+	var b strings.Builder
+	b.WriteString(base.Render(lead))
+	at := 0
+	for _, sp := range spans {
+		from, to := min(max(sp.From, at), len(runes)), min(max(sp.To, 0), len(runes))
+		if to <= from {
+			continue
+		}
+		if from > at {
+			b.WriteString(base.Render(string(runes[at:from])))
+		}
+		b.WriteString(sp.Style.lip().Render(string(runes[from:to])))
+		at = to
+	}
+	if at < len(runes) {
+		b.WriteString(base.Render(string(runes[at:])))
+	}
+	return b.String()
 }

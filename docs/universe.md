@@ -8,13 +8,14 @@ from.
 
 ## Where it comes from
 
-Four sources, each optional, joined by ticker:
+Five sources, each optional, joined by ticker:
 
 | Source | Gives | Fetched by |
 |--------|-------|------------|
 | SEC `company_tickers_exchange.json` | ticker, name, CIK, exchange (Nasdaq, NYSE, OTC, CBOE, TXSE) | `stoxicity universe update` (and `fetch`/`run` when the cache is older than `company.max_age`) |
 | Nasdaq Trader `nasdaqlisted.txt`, `otherlisted.txt` | ETF or stock, test symbol, market tier, financial status, the listing venue | the same command, when `company.listing` is on |
-| SEC `submissions/CIK##########.json` | industry (SIC code and words), state of incorporation, fiscal year end, filer category, website, former names | `stoxicity universe enrich` |
+| SEC `submissions/CIK##########.json` | industry (SIC code and words), the exchange its stock trades on (the only one for most over-the-counter companies), business address and phone, EIN and LEI, state of incorporation, fiscal year end, filer category, former names | `stoxicity universe enrich` |
+| Wikidata (open data, CC0), through its query service | the official website of the ticker's company, matched on the company's name so that a ticker another company uses elsewhere lends nothing (the SEC leaves its own website field empty) | `stoxicity universe enrich` (`company.sites_url` replaces the address) |
 | your layer, `tenants/<tenant>/stocks.yaml` | lists, tags, and companies the SEC lacks (non-US listings) | you, or `universe tag` / `universe list` / the interface |
 
 The first three are cached under `data/company/`. The interface never fetches;
@@ -23,8 +24,30 @@ company (default at most 300 per run, paced by the shared HTTP client, which sta
 below the SEC's limit), stops cleanly when the SEC throttles, and can be run
 again to continue; records younger than 30 days are skipped. Without arguments
 it covers the stocks you follow, those in your lists or with tags, and those in
-relevant news in the last 30 days; `-all` goes through every company, and
-`TICKER...` names the ones you want.
+relevant news in the last 30 days and then everything else, up to the limit;
+`-all` goes through every company without a limit (the SEC records of about 10,000
+companies take some twenty minutes at four requests in flight), and `TICKER...`
+names the ones you want.
+
+`enrich` is the one call that fills a stock in, in three steps, each resumable:
+
+1. **the SEC record** (what the table says), stored again whatever its age when
+   the program has learnt to keep more of it since;
+2. **the official website** from Wikidata, forty tickers to a request (ten times
+   the SEC budget of `-max` in tickers), skipped for ETFs and test symbols; an
+   answer stands for 90 days, a "not on Wikidata" for 30 (`-sites=false` skips
+   the step);
+3. **the feeds**: the SEC filing record of every stock, and the news feed the
+   website announces for up to `-feeds` stocks (default 50; 0 reads none).
+
+It ends with a coverage line, the same one `universe status` prints: of the
+stocks, how many have an SEC record, an address, an exchange and a website, and
+how many have a filing feed and a news feed. With up to three tickers named it
+then prints their profiles, so `stoxicity universe enrich AWCA` shows what was
+found: for Awaysis Capital the exchange (OTC), the kind (stock), the address
+(Miramar, FL), the phone and EIN, with the SEC's typos and `<br>` tags tidied.
+A company with an SEC record that no exchange list names is a stock when the SEC
+calls it an operating company, and its exchange is the SEC's own word.
 
 The Nasdaq directory is for personal, non-commercial use under its terms: the
 program keeps a single local copy and never passes it on. Turn it off with
@@ -72,7 +95,8 @@ filled from them the first time it is needed.
 
 - **Self-refreshing.** `stoxicity run` refreshes in the background every
   `company.refresh_every` (6h; `off` disables): the ticker list, the Nasdaq
-  files, then the industry data of up to `company.enrich_per_cycle` companies
+  files, then the industry data of up to `company.enrich_per_cycle` companies and the
+  websites of up to `company.sites_per_cycle` tickers
   (those you follow, list or tag first, then the rest in CIK order, so it covers
   everything over a few cycles), then the sync, then the feeds of each stock
   (the SEC filing record of every stock with a CIK, and the websites of up to
@@ -152,6 +176,11 @@ name:nvidia              name, aliases and former names (company: is the same)
 cik:320193
 exchange:nyse            the SEC's exchange, or Nasdaq's venue ("NYSE Arca")
 kind:etf                 stock, etf or test
+type:preferred           stock, preferred, warrant, unit, right, adr, etf, test
+                         (read from the name and the ticker, finer than kind:)
+domain:finance           the SIC division: agriculture, mining, construction,
+                         manufacturing, infrastructure, wholesale, retail,
+                         finance & re, services, public admin
 industry:software        words of the SIC description
 sic:3571  sic:73*
 state:de                 state of incorporation
@@ -162,7 +191,8 @@ list:compounders         member of one of your lists
 tag:moat                 carries your tag
 watched:yes              on your watchlist or in a watch
 news:>=3  news:yes       relevant articles in the window
-sort:name  sort:-news    the order: ticker, name, news, industry, exchange, kind
+sort:name  sort:-news    the order: ticker, name, news, industry, exchange, kind,
+                         type, domain, close, change (close and change need prices)
 group:exchange|kind|industry|none
                          how the catalogue arranges the list under headings; the
                          default is by exchange. Not a filter.
@@ -172,6 +202,18 @@ Terms are ANDed; `|` or `OR` makes a choice; there are no parentheses. Free text
 ranks by how well it matches (ticker exactly, ticker prefix, start of a name, a
 word in the name, a former name, the industry), then by news in the window, then
 by ticker.
+
+## Prices
+
+The lists show each stock's newest daily candle: open, high, low, close and the
+move of the close from the day before. They come from Polygon's grouped daily
+bars (`company.quotes`, key in `STOXICITY_POLYGON_KEY`), stored in the
+reference database (`candle`, with `candle_check` remembering market days that
+had none). `stoxicity run` keeps them current in the background after each
+sync; `stoxicity universe quotes` does it by hand, and `universe status` and
+`universe enrich` print the share of stocks that have one ("price 94%"). Only
+candles a chart can draw are kept (positive prices, low under high, open and
+close between them), and only for tickers the list knows.
 
 ## Filtering articles by company
 

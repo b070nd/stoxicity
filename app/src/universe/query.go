@@ -37,8 +37,11 @@ import (
 //	news:>=3  news:yes       relevant articles in the window the screen covers
 //	group:exchange|kind|industry|none
 //	                         how a screen arranges the list in groups. Not a filter.
+//	type:preferred           stock, preferred, warrant, unit, right, adr, etf, test
+//	domain:finance           the SIC division: manufacturing, retail, services...
 //	sort:name  sort:-news    the order (ticker, name, news, industry, exchange,
-//	                         kind); a leading - reverses it. Not a filter.
+//	                         kind, type, domain, close, change); a leading -
+//	                         reverses it. Not a filter.
 //
 // Free text ranks by how well it matches: a ticker, then the start of a name,
 // then a word inside it, then a former name, then the industry. A query without
@@ -76,7 +79,7 @@ func (h Hit) Group(key string) string {
 }
 
 // sortKeys are the orders sort: knows.
-var sortKeys = []string{"ticker", "name", "news", "industry", "exchange", "kind"}
+var sortKeys = []string{"ticker", "name", "news", "industry", "exchange", "kind", "type", "domain", "close", "change"}
 
 // SortKey is the order the query asks for with sort:, without the minus, and
 // whether it is reversed; empty when it asks for none.
@@ -112,8 +115,8 @@ const (
 
 // queryOps is the list of operators, for the error message.
 var queryOps = []string{
-	"cik", "company", "exchange", "group", "industry", "kind", "list", "market", "name",
-	"news", "sector", "sic", "sort", "state", "status", "tag", "ticker", "watched",
+	"change", "cik", "close", "company", "domain", "exchange", "group", "industry", "kind", "list", "market",
+	"name", "news", "sector", "sic", "sort", "state", "status", "tag", "ticker", "type", "watched",
 }
 
 type cmpKind int
@@ -141,6 +144,9 @@ type lit struct {
 type Facts struct {
 	News    map[string]int
 	Watched map[string]bool
+	// Close and Change are the last close and its move from the day before (a
+	// fraction: 0.012 is +1.2%), by ticker; only for the stocks that have candles.
+	Close, Change map[string]float64
 }
 
 // ParseQuery reads a query. The error, if any, is a *QueryError.
@@ -296,7 +302,11 @@ func opLit(name, value string, pos, valPos int) (lit, error) {
 		if !slices.Contains([]string{KindStock, KindETF, KindTest}, val) {
 			return lit{}, &QueryError{Pos: valPos, Msg: fmt.Sprintf("unknown kind %q; use stock, etf or test", val)}
 		}
-	case "name", "company", "industry", "market":
+	case "type":
+		if !slices.Contains(Types(), val) {
+			return lit{}, &QueryError{Pos: valPos, Msg: fmt.Sprintf("unknown type %q; use %s", val, strings.Join(Types(), ", "))}
+		}
+	case "name", "company", "industry", "market", "domain":
 		if len(l.words) == 0 {
 			return lit{}, &QueryError{Pos: valPos, Msg: fmt.Sprintf("operator %s needs letters or digits", name)}
 		}
@@ -409,6 +419,10 @@ func (l lit) eval(p *Profile, f Facts) (bool, int) {
 		return eqOrPrefix(p.Exchange, l.raw) || eqOrPrefix(p.Venue, l.raw), 0
 	case "kind":
 		return p.Kind == l.raw, 0
+	case "type":
+		return p.Type() == l.raw, 0
+	case "domain":
+		return seq(splitWords(p.Domain()), l.words) >= 0, 0
 	case "industry":
 		return seq(splitWords(p.Industry), l.words) >= 0, 0
 	case "sic":
@@ -538,6 +552,10 @@ type Hit struct {
 	Profile *Profile
 	Score   int
 	News    int
+	// Close and Change are the last close and its move from the day before (a
+	// fraction); Priced says there is a candle at all.
+	Close, Change float64
+	Priced        bool
 }
 
 // Find returns the profiles that match. Free text ranks them best first, then
@@ -553,12 +571,18 @@ func (u *Universe) Find(q Query, f Facts, limit int) []Hit {
 		p := &u.profiles[i]
 		if ok, s := q.eval(p, f); ok {
 			ranked = ranked || s > 0
-			hits = append(hits, Hit{Profile: p, Score: s, News: f.News[p.Ticker]})
+			h := Hit{Profile: p, Score: s, News: f.News[p.Ticker]}
+			h.Close, h.Priced = f.Close[p.Ticker]
+			h.Change = f.Change[p.Ticker]
+			hits = append(hits, h)
 		}
 	}
 	sort.SliceStable(hits, func(i, j int) bool {
 		a, b := hits[i], hits[j]
 		if q.sortBy != "" {
+			if (q.sortBy == "close" || q.sortBy == "change") && a.Priced != b.Priced {
+				return a.Priced // a stock with no candle is last, either way round
+			}
 			if c := compareBy(q.sortBy, a, b); c != 0 {
 				return (c < 0) != q.desc
 			}
@@ -594,8 +618,26 @@ func compareBy(key string, a, b Hit) int {
 		return strings.Compare(a.Profile.Exchange, b.Profile.Exchange)
 	case "kind":
 		return strings.Compare(a.Profile.Kind, b.Profile.Kind)
+	case "type":
+		return emptyLast(a.Profile.Type(), b.Profile.Type())
+	case "domain":
+		return emptyLast(a.Profile.Domain(), b.Profile.Domain())
+	case "close":
+		return cmpFloat(a.Close, b.Close)
+	case "change":
+		return cmpFloat(a.Change, b.Change)
 	}
 	return strings.Compare(a.Profile.Ticker, b.Profile.Ticker)
+}
+
+func cmpFloat(x, y float64) int {
+	switch {
+	case x < y:
+		return -1
+	case x > y:
+		return 1
+	}
+	return 0
 }
 
 // emptyLast compares two strings, an empty one after every other.

@@ -28,6 +28,7 @@ import (
 	"github.com/b070nd/stoxicity/app/src/ledger"
 	"github.com/b070nd/stoxicity/app/src/lens"
 	"github.com/b070nd/stoxicity/app/src/lens/laya"
+	"github.com/b070nd/stoxicity/app/src/marketdata"
 	"github.com/b070nd/stoxicity/app/src/model"
 	"github.com/b070nd/stoxicity/app/src/pipeline"
 	"github.com/b070nd/stoxicity/app/src/refdata"
@@ -746,11 +747,12 @@ func (a *app) referenceKeeper(db *store.DB, client httpx.Client) *refdata.Refres
 		Ref: db, Client: client, Now: a.now,
 		Set: refdata.Settings{
 			Dir: a.companyDir(), MasterURL: c.URL, NasdaqURL: c.NasdaqURL, OtherURL: c.OtherURL,
-			SubmissionsURL: c.SubmissionsURL, MaxAge: a.cfg.CompanyMaxAge(), Listing: c.Listing,
-			PerCycle: c.EnrichPerCycle, FeedSearch: c.FeedSearchPerCycle,
+			SubmissionsURL: c.SubmissionsURL, SitesURL: c.SitesURL, MaxAge: a.cfg.CompanyMaxAge(), Listing: c.Listing,
+			PerCycle: c.EnrichPerCycle, SitesPerCycle: c.SitesPerCycle, QuotesPerCycle: c.QuotesPerCycle, FeedSearch: c.FeedSearchPerCycle,
 		},
-		Feeds: &stockfeeds.Keeper{Store: db, Client: client, Now: a.now},
-		Logf:  func(format string, args ...any) { fmt.Fprintf(a.stdout, format+"\n", args...) },
+		Feeds:  &stockfeeds.Keeper{Store: db, Client: client, Now: a.now},
+		Quotes: a.quoteKeeper(db, client),
+		Logf:   func(format string, args ...any) { fmt.Fprintf(a.stdout, format+"\n", args...) },
 	}
 	// What the background cycle needs from the app is taken here, on the
 	// command's own goroutine: the settings and the tickers the watches name.
@@ -872,4 +874,14 @@ func parseSince(s string) (time.Duration, error) {
 		return 0, fmt.Errorf("%q is not a duration such as 24h or 7d", s)
 	}
 	return d, nil
+}
+
+// quoteKeeper is the keeper of daily candles for the configured source; nil
+// when quotes are off, the source has no key, or there is no client to ask with.
+func (a *app) quoteKeeper(db *store.DB, client httpx.Client) *marketdata.Keeper {
+	c := a.cfg.Company
+	if client == nil || c.Quotes != "polygon" || c.PolygonKey == "" {
+		return nil
+	}
+	return &marketdata.Keeper{Store: db, Source: marketdata.Polygon{Client: client, Key: c.PolygonKey, URL: c.QuotesURL}, Now: a.now}
 }

@@ -57,7 +57,8 @@ type Stock struct {
 }
 
 // Stocks joins the SEC ticker list with the company records: each ticker with
-// its CIK and the website its company gave.
+// its CIK and its website: the one the SEC record gives, else the one Wikidata
+// knows for the ticker.
 func Stocks(ctx context.Context, ref store.Reference) ([]Stock, error) {
 	tickers, err := ref.RefTickers(ctx)
 	if err != nil {
@@ -73,10 +74,24 @@ func Stocks(ctx context.Context, ref store.Reference) ([]Stock, error) {
 			site[padCIK(c.CIK)] = c.Website
 		}
 	}
+	sites, err := ref.RefWebsites(ctx)
+	if err != nil {
+		return nil, err
+	}
+	known := make(map[string]string, len(sites))
+	for _, w := range sites {
+		if w.URL != "" {
+			known[w.Ticker] = w.URL
+		}
+	}
 	out := make([]Stock, 0, len(tickers))
 	for _, t := range tickers {
 		cik := padCIK(t.CIK)
-		out = append(out, Stock{Ticker: t.Ticker, CIK: cik, Website: site[cik]})
+		web := site[cik]
+		if web == "" {
+			web = known[t.Ticker]
+		}
+		out = append(out, Stock{Ticker: t.Ticker, CIK: cik, Website: web})
 	}
 	return out, nil
 }
