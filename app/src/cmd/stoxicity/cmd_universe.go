@@ -20,6 +20,7 @@ import (
 	"github.com/b070nd/stoxicity/app/src/stockfeeds"
 	"github.com/b070nd/stoxicity/app/src/store"
 	"github.com/b070nd/stoxicity/app/src/universe"
+	"github.com/b070nd/stoxicity/app/src/valuation"
 )
 
 const (
@@ -317,16 +318,17 @@ func (a *app) universeFind(ctx context.Context, args []string) error {
 		fmt.Fprintln(a.stdout, "no company matches")
 		return nil
 	}
-	tw := tabwriter.NewWriter(a.stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "TICKER\tNAME\tEXCHANGE\tKIND\tINDUSTRY\tNEWS\tLISTS\tTAGS")
+	t := cliTable{Header: []string{"TICKER", "EXCHANGE", "KIND", "INDUSTRY", "NEWS", "LISTS", "TAGS", "NAME"}, Right: []bool{false, false, false, false, true}}
 	for _, h := range shown {
 		p := h.Profile
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\n", p.Ticker, truncate(p.Name, 34), dash(p.Exchange), dash(p.Kind),
-			dash(truncate(p.Industry, 28)), h.News, dash(strings.Join(p.Lists, ",")), dash(strings.Join(p.Tags, ",")))
+		news := styled(fmt.Sprint(h.News), cliDim)
+		if h.News > 0 {
+			news = styled(fmt.Sprint(h.News), cliGreen)
+		}
+		t.Rows = append(t.Rows, []cliCell{styled(p.Ticker, cliStrong), plain(dash(p.Exchange)), styled(dash(p.Kind), kindLight(p.Kind)),
+			plain(dash(p.Industry)), news, plain(dash(strings.Join(p.Lists, ","))), plain(dash(strings.Join(p.Tags, ","))), plain(p.Name)})
 	}
-	if err := tw.Flush(); err != nil {
-		return err
-	}
+	t.write(a.stdout, useColor(a.stdout))
 	if len(hits) > len(shown) {
 		fmt.Fprintf(a.stdout, "%d of %d shown; narrow the query, raise -limit or use -limit 0 for all\n", len(shown), len(hits))
 	}
@@ -337,13 +339,13 @@ func (a *app) universeFind(ctx context.Context, args []string) error {
 // every field complete (no truncation), for a spreadsheet or a script.
 func writeHitsTSV(w io.Writer, hits []universe.Hit, f universe.Facts) error {
 	cell := func(s string) string { return strings.NewReplacer("\t", " ", "\n", " ", "\r", " ").Replace(s) }
-	fmt.Fprintln(w, "ticker\tname\tcik\texchange\tvenue\tkind\tmarket\tstatus\tsic\tindustry\tsector\tstate\tfiscal_year\twebsite\tnews\tlists\ttags\tclose\tchange\tmarketcap\trevenue\tincome\tgrowth\tmargin\troe\tbuys\tsells")
+	fmt.Fprintln(w, "ticker\tname\tcik\texchange\tvenue\tkind\tmarket\tstatus\tsic\tindustry\tsector\tstate\tfiscal_year\twebsite\tnews\tlists\ttags\tclose\tchange\tmarketcap\tclasscap\tissuercap\trevenue\tincome\tgrowth\tmargin\troe\tbuys\tsells")
 	for _, h := range hits {
 		p := h.Profile
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s",
 			p.Ticker, cell(p.Name), p.CIK, p.Exchange, p.Venue, p.Kind, p.Market, p.Status, p.SIC, cell(p.Industry), cell(p.Sector),
 			p.State, p.FiscalYear, cell(p.Website), h.News, strings.Join(p.Lists, ","), strings.Join(p.Tags, ","))
-		for _, op := range []string{"close", "change", "marketcap", "revenue", "income", "growth", "margin", "roe", "buys", "sells"} {
+		for _, op := range []string{"close", "change", "marketcap", "classcap", "issuercap", "revenue", "income", "growth", "margin", "roe", "buys", "sells"} {
 			if v, ok := figure(f, op, p.Ticker); ok {
 				fmt.Fprintf(w, "\t%s", strconv.FormatFloat(v, 'g', 8, 64))
 			} else {
@@ -438,7 +440,18 @@ func (a *app) addFigures(ctx context.Context, f *universe.Facts) {
 		}
 	}
 	if facts, err := db.Fundamentals(ctx); err == nil {
-		f.Num = fundamentals.Figures(fundamentals.Summarize(facts), a.universe().All(), f.Close)
+		f.Num = fundamentals.Figures(fundamentals.Summarize(facts), a.universe().All())
+	}
+	// Market values are class aware: see package valuation.
+	if set, err := valuation.Build(ctx, db, a.universe().All(), time.Time{}, a.now()); err == nil {
+		nums, why := set.Figures(a.universe().All())
+		if f.Num == nil {
+			f.Num = map[string]map[string]float64{}
+		}
+		for name, byTicker := range nums {
+			f.Num[name] = byTicker
+		}
+		f.Why = why
 	}
 	if trades, err := db.InsiderTrades(ctx, a.now().AddDate(0, 0, -insider.FigureDays).Format(time.DateOnly), "", 0); err == nil {
 		if f.Num == nil {
@@ -506,8 +519,18 @@ func (a *app) universeShow(ctx context.Context, args []string) error {
 	if p.CIK != "" {
 		row("EDGAR", "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK="+p.CIK)
 	}
-	if n := a.facts(ctx, defaultNewsDays).News[p.Ticker]; n > 0 {
+	facts := a.facts(ctx, defaultNewsDays)
+	if n := facts.News[p.Ticker]; n > 0 {
 		row("news", fmt.Sprintf("%d relevant articles in %d days (stoxicity stock %s)", n, defaultNewsDays, p.Ticker))
+	}
+	if p.CIK != "" && (p.Type() == universe.TypeStock || p.Type() == universe.TypeADR) {
+		for _, f := range []struct{ name, key string }{{"market cap", "marketcap"}, {"class cap", "classcap"}, {"issuer cap", "issuercap"}} {
+			if v, ok := facts.Num[f.key][p.Ticker]; ok {
+				row(f.name, moneyText(v)+" USD")
+			} else if why := facts.Why[f.key][p.Ticker]; why != "" {
+				row(f.name, "unavailable: "+why)
+			}
+		}
 	}
 	if db, err := a.store(); err == nil {
 		if feeds, err := db.StockFeedsOf(ctx, p.Ticker); err == nil {

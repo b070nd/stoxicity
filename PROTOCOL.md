@@ -584,7 +584,7 @@ fixtures, and no crash-injection drill was performed.
 | 6 | Evaluation depends on a lossy wake-up event | **Fixed** | `stoxicity run` evaluates all watches at start and on every delivery tick, as well as on events. Evaluation is idempotent (cursor, hits recorded once). |
 | 7 | Splits look like crashes | **Fixed** | Polygon candles are now fetched raw (`adjusted=false`) and marked `raw`; splits come from Polygon's splits list (`split`, `split_run`, migration `0013`) and are read once a day. `marketdata.Compare` reconciles two closes with the splits between them: the move is shown on one basis, not hidden for its size. A candle of unknown basis next to a later split, or a split-like move the known splits do not cover (the coverage is recorded), is `unresolved` and shows as `split?` in the lists. Old candles stay of unknown basis until fetched again: `universe quotes -refetch 30 -max 30` fetches the last 30 days again (paced to the free plan's five requests a minute; days already raw are skipped, so an interrupted run resumes). |
 | 8 | Change spans missing sessions | **Fixed** | `SessionChange` needs both closes of consecutive sessions (at most one weekday between, for a holiday). |
-| 9 | Market cap from the wrong share count | **Partial** | Frames shares are suppressed for companies with several tickers under one CIK. New: `universe fundamentals classes TICKER` reads the cover page of the latest 10-K or 10-Q (inline XBRL) and stores shares per class (`share_class`); `Capitalise` values each class at its own symbol's price and gives an issuer value only when every class is priced. The lists still use the frames count; they do not yet use `share_class`. |
+| 9 | Market cap from the wrong share count | **Fixed for covered issuers (section 11)** | Lists, filters, sorting, details and exports use class-aware values (`classcap`, `issuercap`; `marketcap` is issuer capitalisation) from cover-page counts read in the background and stored per class. An issuer whose cover page is not read, whose class is unmapped or ambiguous, or whose price is missing, stale or in the way of a split shows `n/a` with the reason. Left: ADR conversion ratios, non-USD, coverage that depends on `covers_per_cycle`. |
 | 10 | Insider amendments and instrument identity | **Fixed** | 4/A is read and replaces the earlier forms of the same owner and period; only common stock counts; P and S are called purchases and sales. Footnotes are not read. |
 | 11 | Unknown insider value shown as nothing | **Fixed** | Unpriced trades are counted and warned about; list and page summaries come from the same trades. |
 | 12 | Older response erases newer "Latest news" | **Fixed** | Generation numbers; stale answers are dropped. |
@@ -629,7 +629,7 @@ decisions that remain are listed in the questionnaire that ended the work.
   time and receipt time, accession, period, concept, unit, dimensions, source;
   revisions as new rows); (3) per-class share counts, with class capitalisation
   kept apart from issuer capitalisation.
-- **Not committed yet:** the work above (section 8) is in the working tree only.
+- **Not committed yet:** the work above (sections 8, 10 and 11) is in the working tree only.
 
 ## 10. Evidence and event model (implemented 2026-11-07)
 
@@ -655,10 +655,10 @@ given with the last request:
 - **Times** kept apart: effective day, public time (earliest evidence), received
   time (observation), recorded time (revision), assessment time.
 - **Commands:** `events rebuild | timeline TICKER -at TIME | show EVENT`;
-  `signals` (a security is *corroborated* by a primary source or by two distinct
-  non-primary publishers; events are counted as episodes within 72 hours;
-  materiality plays no part in the verdict; a dominating episode is flagged; it
-  measures breadth of evidence, not predictive value); `graph TICKER`
+  `signals` (evidence is *primary*, *corroborated* or *unresolved* by reporting origin,
+  see section 11; materiality plays no part in the verdict; a dominating episode
+  is flagged; it measures breadth and independence of evidence, not predictive
+  value); `graph TICKER`
   (text, json or dot); `export` writes `research/events/evt_*.md` and
   `research/securities/sec_*.md`, only when the text changed, so Git holds
   readable history and the database stays the record (no branch per stock).
@@ -672,3 +672,170 @@ given with the last request:
   answer was **not** checked live. Valued at the cover counts times the stored
   closes, both classes priced, the issuer came to about 9.8 billion USD.
   Everything else in this section ran only against synthetic fixtures.
+
+## 11. Provenance, reconciliation, class valuation and assertions (implemented 2026-11-07)
+
+One coordinated change on top of section 10. Nothing is committed. Existing
+observations, event revisions, stable security IDs and point-in-time history are
+preserved: every new table is additive and append-only, and every relationship
+inferred now is stamped with the time it was made, never backdated.
+
+### 11.1 What changed, and what is new or old
+
+| Area | Before | Now |
+|---|---|---|
+| `signals` | default `-min 2` removed events before the corroboration verdict | default `-min 0`; the verdict is independent of materiality; a given `-min` is labelled with the number of events left out and the warning that it can lower states. New `-at`, `-explain`. |
+| Evidence states | corroborated or not | `primary` (one origin), `corroborated` (two or more origins that do not rest on each other), `unresolved` (independence not established) |
+| Origins | publisher domain | publisher and reporting origin kept apart (`0015`), derivation, method, confidence, version; copies count once; unknown stays unknown |
+| Episodes | any event of one kind within 72 hours merged | 72 hours is a candidate filter; a proof is needed to merge, a difference to keep apart; decisions stored with provenance (`0015`) |
+| `reconcile` | seven days, daily index only, a missing index could be skipped for ever | per-day state and progress (`0016`), explicit `-from -to`, `-catchup`, quarterly indexes, separate `-enrich`, `-facts`, `-repair`, backfill marks |
+| Share counts | the frames count, the first `share_class` table | class observations, mappings and cover checks (`0017`), background cover keeper |
+| `marketcap` | shares times close | `issuercap`; new `classcap`; reasons for unavailable values |
+| Claims | first keyword in an article | assertions per sentence, assessments of four separate dimensions (`0018`) |
+
+New commands and flags: `signals -at -explain`; `reconcile -from -to -catchup
+-no-quarterly -refetch -max-requests -enrich -facts` (`-days`, `-repair`
+existed); `universe fundamentals classes -stored -at` (the command existed with
+other behaviour); `universe fundamentals covers`; `universe fundamentals probe`;
+queries and exports `classcap`, `issuercap`; config `company.covers_per_cycle`.
+`events rebuild` now also writes assertions and assessments. Existing commands
+without a listed change behave as before.
+
+### 11.2 Materiality and corroboration (item 2)
+
+Materiality is a keyword rule and is not evidence. It no longer filters what the
+corroboration assessment sees. One filing is primary evidence; it is not
+independent corroboration of its own claims, and neither are the stories that
+quote it. The same semantics apply to the CLI (`signals`, `graph`), the exports
+(`export`) and the documents ([docs/events.md](docs/events.md)).
+
+### 11.3 Live check of the SEC frames (item 3)
+
+Made on 2026-11-07 with `stoxicity universe fundamentals probe MOG-A`, read-only,
+through the existing HTTP client (contact identification, rate limit and body
+cap apply). It stores nothing. Fixtures, with their source URL and retrieval date,
+are in `app/src/fundamentals/testdata/`.
+
+Observed in these two answers (observations, not documented guarantees):
+
+- Duration frame `us-gaap/RevenueFromContractWithCustomerExcludingAssessedTax/USD/CY2024`
+  (2,973 records, 454,719 bytes): every record has `accn`, `cik`, `end`,
+  `entityName`, `loc`, `start`, `val`. Periods seen: 321 days x1, 329 x1, 363 x227,
+  364 x150, 365 x2,564, 370 x30, so a "CY2024" frame holds fiscal years of
+  different lengths ending at different days. One record per CIK; every accession
+  is in the `NNNNNNNNNN-YY-NNNNNN` form. The header says `pts` 2973, equal to the
+  records.
+- Instant frame `us-gaap/Assets/USD/CY2024Q4I` (6,280 records, 836,865 bytes): the
+  same fields without `start`. `end` is the company's own balance date near the
+  quarter end (for example 2024-11-30 and 2024-12-28), not 2024-12-31 for all.
+  An accession carries the year of the filing that stated the value, which can be
+  after the period (for example `-26-` for fiscal 2024 figures).
+- Units: only `USD` named in both. **No** field named dimensions, dimension, axis,
+  member or segment occurs in these answers. That is an observation of these two
+  answers; it says nothing about other frames, concepts or dates, and no
+  universal claim is made.
+- Comparison: for Moog (CIK 67887) the instant frame record (accession
+  `0001628280-25-054103`, period end 2024-12-28, value 4,181,848,000) matched the
+  company's own fact history: 10-K of that accession, filed 2025-11-26, no
+  dimensions. Moog does not occur in the duration frame that was read.
+- No filing date or acceptance time is in a frames record; none is inferred. The
+  filing day of a frame fact comes only from matching the accession against the
+  company facts or the filing record.
+
+### 11.4 Reconciliation (item 4)
+
+See [docs/events.md](docs/events.md#reconcile-finding-filings-the-live-feed-missed).
+Summary: seven-day rolling overlap kept; explicit range; per-day state
+(`complete`, `partial`, `unpublished`, `nonfiling`, `error`) with `unpublished`,
+`partial` and `error` days retried; catch-up after outages up to 90 days; quarterly
+indexes for ended quarters with enough days to read, daily for the rest, with fall
+back to daily on failure; accessions de-duplicated; index discovery, enrichment
+(acceptance time from the company record) and repair are separate steps;
+recovered articles are backfills (`late` within 3 days of the filing day,
+`historical` after); the ledger withholds urgent alerts of any backfilled article;
+fundamentals' filing days are resolved by accession for the accessions needed
+only; a date-only filing keeps `precision` `day`.
+
+### 11.5 Class valuation (items 5 and 6)
+
+See [docs/universe.md](docs/universe.md#share-classes-and-capitalisation). The
+cover page is parsed by a background keeper, never while a list is drawn.
+Observations keep accession, public availability, time received, class
+dimensions, shares and the count date; duplicates are counted, conflicts, revisions
+and dropped classes are explicit; mappings keep their method and basis. Weighted
+average shares are never used. `marketcap` = `issuercap` = the sum of every class,
+only when every class can be valued; each valued class keeps `classcap`.
+
+Cases with expected results, tested in `valuation_test.go`: Moog with both classes
+listed has `issuercap` = sum and both `classcap`; Alphabet with class B unmapped
+has `classcap` for GOOGL and GOOG and **no** `issuercap`/`marketcap`.
+
+### 11.6 Reporting origin and episodes (items 7 and 8)
+
+See [docs/events.md](docs/events.md#reporting-origin). Rules are explicit and
+conservative: provider ID, wire attribution or byline, canonical reference, filing
+accession, exact-copy fingerprint. Topic similarity is not independence. Episodes:
+kind + 72 hours are candidates; filing/release identifiers, shared evidence and
+event-specific facts decide. A release, its 8-K and coverage form one episode; two
+separate acquisitions within 72 hours stay two. The 70% diagnostic is computed
+after de-duplication over the reports (distinct origins) of the window, and the
+numerator, denominator and window are printed.
+
+### 11.7 Assertions and assessments (item 9)
+
+See [docs/events.md](docs/events.md#assertions-assessments-and-the-four-dimensions).
+Multiple assertions per article, roles, negation, denial (including
+retractions), history, anticipation, status and attribution; filing items are
+evidence of kind not size; assessments are separate and versioned; materiality,
+novelty, urgency and price impact are distinct; the system abstains when evidence
+is insufficient and price impact always abstains. The AI path exists as a schema
+and a vetting function only (model and prompt versions, truncation and evidence
+spans are stored; source-embedded instructions change nothing).
+
+### 11.8 Migrations and what they mean
+
+`0015` origins and episode decisions; `0016` EDGAR index days (new columns with
+defaults on `filing_index_day`, one `UPDATE` that classifies the days already recorded: those recorded as
+missing become `unpublished`, so they are retried, read-after-the-day ones
+`complete`, the others `partial`), quarters, runs, filing metadata and backfill marks; `0017` class
+observations, mappings, cover checks, plus `INSERT OR IGNORE ... SELECT` from the old
+`share_class`; `0018` assertions and assessments. Nothing is dropped and no stored
+evidence is rewritten; the old `share_class` table stays. They run when the
+database is opened, so back up `data/` before the first run of the new binary. No
+downgrade script exists.
+
+Run on a **copy** of the live data on 2026-11-07 (the live files untouched): the
+reference database went from migration 14 to 18, the two stored `share_class`
+rows were copied to `share_class_obs` (2), and the tenant database was at 4 (it
+has its own migration series). `events rebuild -days 365` on the copy wrote 3,233
+events from 5,223 articles with 143 revisions, 4,740 claims of 3,841 articles
+(`assert-1`), 18,648 assessment readings (`assess-1`) and 3,315 origin findings.
+
+### 11.9 Verification (item 10)
+
+Tests cover: wire republication, independent follow-up reporting, uncertain
+origins, distinct nearby events, denials, corrections, incidental ticker mentions,
+multi-event articles, duplicate XBRL contexts, split-adjusted counts, missing class
+prices, ambiguous class mappings, revised filings, temporarily missing indexes,
+interrupted backfills, repeated repairs, historical-alert suppression, Moog and
+Alphabet, injection resistance of the vetting, and as-of cutoffs that exclude
+information received, decided, mapped or assessed after the cutoff.
+
+### 11.10 Unresolved limitations
+
+- Current feeds supply no provider IDs; wire attribution is read from text and not
+  verified; near-copy detection is not built, so a rewritten copy is `unknown`.
+- No AI extractor is wired in. The lens's per-article score is still first-keyword;
+  events use assertions. One event per story remains; several claims are kept as
+  assertions. Claim importance ranking is a judgement, not calibrated.
+- Market cap exists only for issuers whose cover page was read; coverage grows with
+  `covers_per_cycle`. ADR conversion ratios are unavailable (ADR classes are
+  rejected, not guessed). Currency is assumed USD.
+- Only the newest stored session price exists, so valuation is not offered as of a
+  past time. A split that the source lists late can misalign a count and a price;
+  the split-list coverage rule then rejects the value.
+- The holiday calendar cannot know special closures. `acceptanceDateTime` is used as
+  the SEC writes it. The quarterly index can exceed the HTTP body limit; the daily
+  indexes are used then.
+- Still not a trading tool (section 5): nothing here predicts prices or gives
+  advice.

@@ -195,7 +195,10 @@ tag:moat                 carries your tag
 watched:yes              on your watchlist or in a watch
 news:>=3  news:yes       relevant articles in the window
 close:>=10 change:<-5%   last close and the move from the day before (need prices)
-marketcap:>10b           shares outstanding times the last close; k, m, b, t
+marketcap:>10b           issuer capitalisation: every class's shares times its own
+                         last close; k, m, b, t (see Share classes)
+classcap:>1b issuercap:>10b
+                         one class's value; the whole issuer's (= marketcap)
 revenue:1b..5b           revenue of the latest fiscal year; a range with ..
 income:>0  assets:>1b  equity:>0
 growth:>5%  margin:>10%  revenue growth over the year before; net income over
@@ -208,7 +211,7 @@ buys:>=100k  sells:>1m   money the insiders (officers, directors, 10% owners)
 buyers:>=2  sellers:>=3  how many different insiders did; a stock none of whose
                          insiders traded has no figure, not a zero
 sort:name  sort:-news    the order: ticker, name, news, industry, exchange, kind,
-                         type, domain, close, change, marketcap, revenue, income,
+                         type, domain, close, change, marketcap, classcap, issuercap, revenue, income,
                          growth, margin, roe, buys, sells (the last ones need prices or the
                          SEC figures; a stock without the number is last either
                          way round, and matches none of the number filters)
@@ -293,9 +296,117 @@ before this change) next to a later split, or a move looks like a split that
 the known splits do not cover, the lists show `split?` instead of a number.
 Nothing is hidden because of its size.
 
-## Share classes
+## Share classes and capitalisation
 
-`stoxicity universe fundamentals classes TICKER` reads the cover page (inline
-XBRL) of the company's latest 10-K or 10-Q, stores the shares outstanding per
-class and prints each class's value at its own symbol's price. The issuer's
-value is printed only when every class has a price.
+Shares outstanding come from the **cover page** (inline XBRL) of an issuer's
+latest 10-K or 10-Q, read per class. The SEC frames answer is **not** used for
+market capitalisation (it leaves out class-level counts); `fundamentals` still
+fills revenue, income and the other figures from it.
+
+### Where the counts come from
+
+A background **cover keeper** runs in the reference refresh (`company.covers_per_cycle`,
+default 20, 0 to 500; see [configuration.md](configuration.md)), never while a list is drawn. For
+each due issuer it reads the SEC's record of the company, then the newest
+periodic report's document (first the first megabyte with a `Range` request,
+trusted only when the last cover fact lies in the first half of what was read;
+otherwise the whole document). Order: issuers never read, then ones you follow,
+then ones with several listings, then the longest unread. An issuer is read again
+after 30 days (3 days after a failure) and a newer report is stored as a new
+observation. The SEC's block or rate limit stops the cycle.
+
+Each observation is kept in `share_class_obs` (append only): accession, form,
+filing day, acceptance time when the record gives it (`precision` `time`) or only
+the day (`day`), time received, the class dimensions, the shares, the count date
+(the date on the cover) and how many facts stated it. The same count stated
+twice (two contexts of one class) is one row with `duplicates` counted; a
+different count for the same class and date is a separate row. Which row wins
+(`valuation.Select`): the newest report by count date, then filing day, then
+accession; two different counts in one report make the class **conflicted** (no
+count, with the reason), an earlier report that stated a different count marks it
+**revised**, and a class stated earlier but missing now is **dropped** (so the
+issuer total is withheld). Weighted-average shares are never used as shares
+outstanding. An observation counts for a question only if it was received, and
+(by acceptance time, or the end of the filing day when only the day is known)
+public, by the time asked.
+
+### Mapping classes to securities
+
+`share_class_map` (append only, provenance kept; a new row only when the status,
+security, ticker or method changes) ties each class to a stable security ID.
+Rules in order: the cover lists a trading symbol and one listing has it
+(`cover-symbol`); the class carries a letter (Class B) and exactly one listing of the
+issuer carries that letter in its ticker (`class-suffix`); one class and one
+listing of common stock (`sole-listing`). More than one candidate is
+`ambiguous` (candidates named); no candidate is `unmapped` (an unlisted class). A
+class is never priced from another class's price. Mappings made after a cutoff
+are not used for it.
+
+### Values and the reasons they are missing
+
+- `classcap` = the class's shares times its own listing's raw close, after
+  aligning the count and price across splits.
+- `issuercap` = the sum of every class, only when **every** class can be valued.
+  If one is unlisted, ambiguous, stale or conflicting, the issuer total is
+  **unavailable** and the classes that can be valued keep their values.
+- `marketcap` is defined as **issuer capitalisation** (the same as `issuercap`),
+  and is the same number on each of an issuer's listed class tickers. Use
+  `classcap` for one class.
+
+A value is computed only if: the class is mapped (not ambiguous, not unmapped);
+the security is not an ADR (the ADR conversion ratio is not known, so an ADR
+mapped class is rejected rather than priced as one share); the count is at most
+200 days old; there is a price for that listing, a raw (not split-adjusted) close,
+in USD, at most 10 days old; and the split list covers the days between the
+count and the price. A split between the count date and the price day multiplies
+the count by the split ratio (a reverse split divides it). A split list that was
+not read after the price day is not trusted, and the value is unavailable with
+that reason. Where a value is unavailable the lists show `n/a`, the profile and
+`universe show` print `unavailable: <reason>`, and exports leave the cell empty.
+
+Only the newest stored price exists, so valuation is not offered as of a past
+time (counts and mappings can be queried as known at a time).
+
+### Commands
+
+Existing: `universe fundamentals [-force]`, `universe fundamentals history
+TICKER [-at TIME]`, `universe show TICKER`, queries `marketcap:`.
+
+New or changed:
+
+```
+stoxicity universe fundamentals classes TICKER [-stored] [-at TIME]
+                       per class: symbol, mapping and its basis, count date, shares,
+                       split alignment, price, session, value or reason; revised,
+                       conflict and dropped notes; the issuer total. Without -stored it reads
+                       the cover page first (and stores it); -stored reads what is stored;
+                       -at TIME shows the counts and mappings known by then, with no values
+                       (only the newest price is kept).
+stoxicity universe fundamentals covers [-max N]
+                       read the due cover pages by hand (as the keeper does)
+stoxicity universe fundamentals probe TICKER [-annual SPEC] [-instant SPEC] [-out DIR]
+                       the read-only live check of the SEC frames (see PROTOCOL.md section 11)
+```
+
+Queries accept `classcap:` and `issuercap:` (the same operators as `marketcap:`),
+and `sort:classcap` and `sort:issuercap` order by them. A stock whose value is
+unavailable matches none of these filters and sorts last. TSV export
+adds the columns `classcap` and `issuercap`. The CLI, the TUI (the MCAP column
+shows `n/a` with the reason in the profile), the query engine and exports all use the same
+calculation (`valuation.Build`).
+
+### Examples with expected availability
+
+- **Moog** (classes A and B, both listed): mapped by cover symbol or class
+  letter, both priced: `classcap` for each ticker and `issuercap`/`marketcap` the
+  sum, e.g. 28,000,000 sh x 200 + 4,000,000 sh x 190 in the tests.
+- **Alphabet** (A, B and C; class B has no listing in the universe): GOOGL and
+  GOOG have `classcap`; class B is `unmapped`; so `issuercap`/`marketcap` are
+  **unavailable** ("a class is not listed") and no value is guessed for B.
+
+### Limits
+
+Coverage grows with `covers_per_cycle`; an issuer whose cover has not been read
+has no market cap (it says so). The currency is assumed to be USD (candles come
+from US exchanges); anything else is rejected. ADR ratios are not available.
+Polygon may list a split late.

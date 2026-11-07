@@ -11,6 +11,7 @@ import (
 
 	"github.com/b070nd/stoxicity/app/src/channel"
 	"github.com/b070nd/stoxicity/app/src/model"
+	"github.com/b070nd/stoxicity/app/src/store"
 	"github.com/b070nd/stoxicity/app/src/watch"
 )
 
@@ -311,5 +312,41 @@ func TestEvaluatePagesThroughManyArticles(t *testing.T) {
 	}
 	if got := f.evaluate(t, "alice"); got["all"] != 0 {
 		t.Errorf("second Evaluate = %v, want 0", got)
+	}
+}
+
+func TestABackfilledArticleIsAHitButNeverAnUrgentAlert(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	f.saveWatch(t, "alice", alertWatch("all", alert("any", channel.File)))
+
+	// A filing recovered from the index days after it was filed, and a live one.
+	if err := f.db.PutBackfill(ctx, []store.Backfill{{ArticleID: "recovered", Kind: store.BackfillLate, FiledDay: "2026-11-01", Reason: "listed by the index, missed by the feed"}}, day(12, 0)); err != nil {
+		t.Fatal(err)
+	}
+	f.save(t,
+		article("recovered", "pub", "Annual results filed on Sunday", day(0, 0), day(12, 30)),
+		article("live", "pub", "Annual results of another company", day(12, 20), day(12, 30)))
+	f.at(day(12, 35))
+
+	if got := f.evaluate(t, "alice"); got["all"] != 2 {
+		t.Fatalf("both are evidence the watch matches and are hits: %v", got)
+	}
+	hits, err := f.db.Tenant("alice").Hits(ctx, "all", time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	alerts := map[string]int{}
+	for _, h := range hits {
+		alerts[h.ArticleID] = len(h.Alerts)
+	}
+	if alerts["recovered"] != 0 || alerts["live"] != 1 {
+		t.Errorf("alerts per article: %v; the recovered filing must not alert as new news", alerts)
+	}
+	if d := f.deliver(t, "alice"); d.Sent != 1 {
+		t.Errorf("only the live article is delivered: %+v", d)
+	}
+	if got := f.file.notifications(); len(got) != 1 || !reflect.DeepEqual(titles(got[0].Articles), []string{"Annual results of another company"}) {
+		t.Errorf("file channel got %+v", got)
 	}
 }

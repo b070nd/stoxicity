@@ -142,13 +142,17 @@ func TestStocksCommand(t *testing.T) {
 	r := e.run(t, "stocks")
 	r.wantCode(t, exitOK)
 	r.wantOut(t, "Stocks, tenant default", "4 articles, 3 relevant")
-	if line := lineStarting(r.out, "ACME"); !strings.Contains(line, "2") || !strings.Contains(line, "3.5") || !strings.Contains(line, "(watchlist)") {
+	if line := lineStarting(r.out, "ACME"); !strings.Contains(line, "2") || !strings.Contains(line, "3.5") || !strings.Contains(line, "★ yes") {
 		t.Errorf("ACME line = %q", line)
 	}
-	if line := lineStarting(r.out, "GLOB"); !strings.Contains(line, "5.0") || strings.Contains(line, "watchlist") {
+	if line := lineStarting(r.out, "GLOB"); !strings.Contains(line, "5.0") || strings.Contains(line, "★") {
 		t.Errorf("GLOB line = %q", line)
 	}
 	r.wantNotOut(t, "HIDDEN", "private")
+	// A table: a header, a rule under it, and a legend for the colours (none are
+	// written when the output is not a terminal).
+	r.wantOut(t, "STOCK", "MATERIALITY", "──────", "green is favourable or ordinary")
+	r.wantNotOut(t, "\x1b[")
 }
 
 func TestTopicCommand(t *testing.T) {

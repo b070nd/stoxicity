@@ -501,6 +501,8 @@ func (a *app) pipeline(db store.Store) *pipeline.Pipeline {
 		Enricher:      a.enricher(),
 		Use:           layaUse(a.cfg.Laya),
 		MinConfidence: a.cfg.Laya.MinConfidence,
+		Primary:       a.isPrimary,
+		ItemRating:    edgar.Rate,
 		Logger:        a.log,
 		Now:           a.now,
 	})
@@ -752,11 +754,12 @@ func (a *app) referenceKeeper(db *store.DB, client httpx.Client) *refdata.Refres
 			Dir: a.companyDir(), MasterURL: c.URL, NasdaqURL: c.NasdaqURL, OtherURL: c.OtherURL,
 			SubmissionsURL: c.SubmissionsURL, SitesURL: c.SitesURL, MaxAge: a.cfg.CompanyMaxAge(), Listing: c.Listing,
 			PerCycle: c.EnrichPerCycle, SitesPerCycle: c.SitesPerCycle, QuotesPerCycle: c.QuotesPerCycle, FeedSearch: c.FeedSearchPerCycle,
-			InsidersPerCycle: c.InsidersPerCycle,
+			InsidersPerCycle: c.InsidersPerCycle, CoversPerCycle: c.CoversPerCycle,
 		},
 		Feeds:        &stockfeeds.Keeper{Store: db, Client: client, Now: a.now},
 		Quotes:       a.quoteKeeper(db, client),
 		Fundamentals: a.fundamentalsKeeper(db, client),
+		Covers:       a.coverKeeper(db, client),
 		Insiders:     a.insiderKeeper(db, client),
 		Logf:         func(format string, args ...any) { fmt.Fprintf(a.stdout, format+"\n", args...) },
 	}

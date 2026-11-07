@@ -1,0 +1,51 @@
+{
+  "source_url": "https://data.sec.gov/api/xbrl/frames/us-gaap/Revenues/USD/CY2024.json",
+  "retrieved": "2026-11-07",
+  "note": "records of one live answer, read-only; the sample is not exhaustive and shows nothing about records that were not kept",
+  "header": {
+    "ccp": "CY2024",
+    "label": "Revenues",
+    "pts": "2511",
+    "tag": "Revenues",
+    "taxonomy": "us-gaap",
+    "uom": "USD"
+  },
+  "data": [
+    {
+      "accn": "0001193125-26-102079",
+      "cik": 2098,
+      "entityName": "ACME UNITED CORP",
+      "loc": "US-CT",
+      "start": "2024-01-01",
+      "end": "2024-12-31",
+      "val": 194489991
+    },
+    {
+      "accn": "0000002969-25-000055",
+      "cik": 2969,
+      "entityName": "AIR PRODUCTS AND CHEMICALS, INC.",
+      "loc": "US-PA",
+      "start": "2023-10-01",
+      "end": "2024-09-30",
+      "val": 12100600000
+    },
+    {
+      "accn": "0000003499-26-000005",
+      "cik": 3499,
+      "entityName": "ALEXANDERS INC",
+      "loc": "US-NJ",
+      "start": "2024-01-01",
+      "end": "2024-12-31",
+      "val": 226374000
+    },
+    {
+      "accn": "0001628280-25-054103",
+      "cik": 67887,
+      "entityName": "MOOG Inc.",
+      "loc": "US-NY",
+      "start": "2023-10-01",
+      "end": "2024-09-28",
+      "val": 3608960000
+    }
+  ]
+}

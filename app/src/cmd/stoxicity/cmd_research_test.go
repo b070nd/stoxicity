@@ -13,17 +13,27 @@ func TestSignalsGraphAndExportRunOverTheEventHistory(t *testing.T) {
 	e.run(t, "fetch").wantCode(t, exitOK)
 	e.run(t, "events", "rebuild").wantCode(t, exitOK)
 
-	// One publisher is an echo, however material: not corroborated, shown only with -all.
-	r := e.run(t, "signals", "-min", "1", "-days", "3650")
+	// One site with no attribution is unresolved however material: hidden by default, shown with -all.
+	r := e.run(t, "signals", "-days", "3650")
 	r.wantCode(t, exitOK)
-	r.wantOut(t, "nothing corroborated")
-	r = e.run(t, "signals", "-all", "-min", "1", "-days", "3650")
+	r.wantOut(t, "no security with primary or corroborated evidence")
+	r.wantNotOut(t, "materiality filter")
+	r = e.run(t, "signals", "-all", "-days", "3650", "-explain")
 	r.wantCode(t, exitOK)
-	r.wantOut(t, "ACME", "single publisher", "not corroborated: one publisher", "not whether the news will move the price")
+	r.wantOut(t, "ACME", "unresolved", "independence not established", "unknown [unknown:news.example.com", "not whether the news is true or will move a price")
+	// An explicit materiality filter is labelled, and says how many events it removed.
+	r = e.run(t, "signals", "-all", "-min", "5", "-days", "3650")
+	r.wantCode(t, exitOK)
+	r.wantOut(t, "materiality filter -min 5", "can be lower than with every event")
+	// Judging as of a time before anything was stored finds nothing, and stores nothing.
+	r = e.run(t, "signals", "-all", "-days", "3650", "-at", "2001-01-01")
+	r.wantCode(t, exitOK)
+	r.wantOut(t, "no security with primary or corroborated evidence")
 
 	r = e.run(t, "graph", "ACME", "-days", "3650")
 	r.wantCode(t, exitOK)
-	r.wantOut(t, "buyback: Acme Corp announces record earnings", "[subject]", "evidence: news.example.com (1)", "evidence: not corroborated (single publisher)")
+	// The story says two things; the more important claim names the event, not the first keyword.
+	r.wantOut(t, "results: Acme Corp announces record earnings", "[subject]", "evidence: news.example.com (1)", "evidence: unresolved: independence not established")
 	if r := e.run(t, "graph", "ACME", "-days", "3650", "-format", "dot"); !strings.Contains(r.out, "digraph signal") {
 		t.Errorf("dot: %s", r.out)
 	}

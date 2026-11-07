@@ -69,8 +69,8 @@ func TestUniverseFindCanListEveryCompanyAndExportThem(t *testing.T) {
 		t.Errorf("sort:-ticker gave %s first and %s last", first, last)
 	}
 	for _, l := range lines {
-		if n := strings.Count(l, "\t"); n != 26 {
-			t.Errorf("%d tabs in %q, want 24", n, l)
+		if n := strings.Count(l, "\t"); n != 28 {
+			t.Errorf("%d tabs in %q, want 28", n, l)
 		}
 	}
 

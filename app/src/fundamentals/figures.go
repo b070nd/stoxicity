@@ -5,12 +5,15 @@ import "github.com/b070nd/stoxicity/app/src/universe"
 // Figures turns the summaries into what a query compares and a list shows: by
 // name and then ticker. Only common stocks have figures, because the numbers
 // belong to the company's shares, not to its warrants, units or preferred
-// stock. closes are the last closes by ticker; with one, the stock also has a
-// market value (shares outstanding times close). Where a company has several
-// classes of shares on the exchanges the cover page may give the shares of one
-// class, so such a company, with more than one common ticker on the exchanges,
-// gets no share count and no market value.
-func Figures(sums map[string]Summary, profiles []universe.Profile, closes map[string]float64) map[string]map[string]float64 {
+// stock.
+//
+// Market values are not made here. A share count from the frames cannot be
+// attributed to a class, so classcap, issuercap and marketcap come from package
+// valuation, which works from the class counts on the cover pages. Where a
+// company has several common tickers on the exchanges, the count of shares from
+// the frames is not the count of any one ticker's shares, so such a company gets
+// no share count.
+func Figures(sums map[string]Summary, profiles []universe.Profile) map[string]map[string]float64 {
 	out := map[string]map[string]float64{}
 	if len(sums) == 0 {
 		return out
@@ -21,10 +24,6 @@ func Figures(sums map[string]Summary, profiles []universe.Profile, closes map[st
 		}
 		out[name][ticker] = v
 	}
-	// A company with shares of more than one class listed has one share count on
-	// its cover page for whichever class the filer chose to give, or the sum of
-	// the classes. Either way it is not the number of this ticker's shares, so
-	// the share count and market value of such a company are not shown at all.
 	classes := map[string]int{}
 	for _, p := range profiles {
 		if p.CIK != "" && p.Type() == universe.TypeStock {
@@ -45,18 +44,6 @@ func Figures(sums map[string]Summary, profiles []universe.Profile, closes map[st
 				continue
 			}
 			set(name, p.Ticker, v)
-		}
-		if multi {
-			continue
-		}
-		// A foreign issuer that files under IFRS has shares on its cover page but
-		// no US GAAP figures; its shares are ordinary shares and the price is
-		// that of a receipt for several of them, so no market value is made.
-		_, usGAAP := s.Num[Revenue]
-		_, hasIncome := s.Num[NetIncome]
-		_, hasAssets := s.Num[Assets]
-		if mc, ok := s.MarketCap(closes[p.Ticker]); ok && (usGAAP || hasIncome || hasAssets) {
-			set("marketcap", p.Ticker, mc)
 		}
 	}
 	return out

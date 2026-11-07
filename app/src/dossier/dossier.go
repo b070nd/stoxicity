@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/b070nd/stoxicity/app/src/model"
+	"github.com/b070nd/stoxicity/app/src/origin"
 	"github.com/b070nd/stoxicity/app/src/store"
 )
 
@@ -42,8 +43,10 @@ func SecurityFile(securityID string) string { return securityID + ".md" }
 // evidence, the observed roles of the securities, the assessments (which are
 // interpretations, kept apart) and every revision that led here. history is
 // oldest first and must not be empty; articles gives the evidence by ID, and an
-// article that is missing is listed by its ID alone.
-func EventMarkdown(history []model.EventRevision, articles map[string]model.Article) string {
+// article that is missing is listed by its ID alone. origins gives the stored
+// reporting origin of each article; an article without one is shown as not yet
+// assessed rather than guessed.
+func EventMarkdown(history []model.EventRevision, articles map[string]model.Article, origins map[string]origin.Origin) string {
 	cur := history[len(history)-1]
 	var b strings.Builder
 	fmt.Fprintf(&b, "# %s\n\n", line(cur.Title))
@@ -67,7 +70,7 @@ func EventMarkdown(history []model.EventRevision, articles map[string]model.Arti
 	}
 
 	b.WriteString("\n## Evidence\n\n")
-	domains := map[string]bool{}
+	domains, keys := map[string]bool{}, map[string]bool{}
 	for _, ev := range cur.Evidence {
 		a, ok := articles[ev.ArticleID]
 		if !ok {
@@ -79,9 +82,23 @@ func EventMarkdown(history []model.EventRevision, articles map[string]model.Arti
 		if a.URL != "" {
 			title = fmt.Sprintf("[%s](%s)", title, a.URL)
 		}
-		fmt.Fprintf(&b, "- %s, %s (%s), published %s\n", title, a.Domain, ev.SourceID, stamp(a.Published))
+		fmt.Fprintf(&b, "- %s, %s (%s), published %s", title, a.Domain, ev.SourceID, stamp(a.Published))
+		if o, has := origins[ev.ArticleID]; has {
+			keys[o.Key] = true
+			fmt.Fprintf(&b, "; origin %s (%s)", o.Kind, o.Key)
+			if o.DerivedFrom != "" {
+				fmt.Fprintf(&b, " resting on %s", o.DerivedFrom)
+			}
+			if o.CopyOf != "" {
+				fmt.Fprintf(&b, ", copy of `%s`", o.CopyOf)
+			}
+			fmt.Fprintf(&b, ", found by %s", o.Method)
+		} else {
+			b.WriteString("; origin not assessed")
+		}
+		b.WriteString("\n")
 	}
-	fmt.Fprintf(&b, "\n%d observations from %d publishers.\n", len(cur.Evidence), len(domains))
+	fmt.Fprintf(&b, "\n%d observations from %d publishers and %d reporting origins (copies counted once; articles without an assessed origin are not counted).\n", len(cur.Evidence), len(domains), len(keys))
 
 	b.WriteString("\n## Assessments (interpretation, not observation)\n\n")
 	if len(cur.Assessments) == 0 {

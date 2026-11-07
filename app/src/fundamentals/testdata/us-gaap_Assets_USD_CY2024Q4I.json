@@ -1,0 +1,47 @@
+{
+  "source_url": "https://data.sec.gov/api/xbrl/frames/us-gaap/Assets/USD/CY2024Q4I.json",
+  "retrieved": "2026-11-07",
+  "note": "records of one live answer, read-only; the sample is not exhaustive and shows nothing about records that were not kept",
+  "header": {
+    "ccp": "CY2024Q4I",
+    "label": "Assets",
+    "pts": "6280",
+    "tag": "Assets",
+    "taxonomy": "us-gaap",
+    "uom": "USD"
+  },
+  "data": [
+    {
+      "accn": "0001410578-25-000003",
+      "cik": 1750,
+      "entityName": "AAR CORP",
+      "loc": "US-IL",
+      "end": "2024-11-30",
+      "val": 2849300000
+    },
+    {
+      "accn": "0001628280-26-010185",
+      "cik": 1800,
+      "entityName": "Abbott Laboratories",
+      "loc": "US-IL",
+      "end": "2024-12-31",
+      "val": 81414000000
+    },
+    {
+      "accn": "0000001961-26-000030",
+      "cik": 1961,
+      "entityName": "GEMAXEL INC. (formerly known as Worlds Inc.)",
+      "loc": "US-FL",
+      "end": "2024-12-31",
+      "val": 15130
+    },
+    {
+      "accn": "0001628280-25-054103",
+      "cik": 67887,
+      "entityName": "MOOG Inc.",
+      "loc": "US-NY",
+      "end": "2024-12-28",
+      "val": 4181848000
+    }
+  ]
+}

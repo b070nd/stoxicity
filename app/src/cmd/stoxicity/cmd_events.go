@@ -7,6 +7,9 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/b070nd/stoxicity/app/src/assertion"
+	"github.com/b070nd/stoxicity/app/src/feeds/edgar"
+	"github.com/b070nd/stoxicity/app/src/model"
 	"github.com/b070nd/stoxicity/app/src/pipeline"
 	"github.com/b070nd/stoxicity/app/src/store"
 )
@@ -57,7 +60,20 @@ func eventsRebuild(ctx context.Context, a *app, db *store.DB, args []string) err
 	if err != nil {
 		return err
 	}
-	in := pipeline.Events(arts)
+	// What each article claims, one claim at a time: an event is named by its most
+	// important current claim, not by the first keyword of the text.
+	names := func(t string) []string {
+		e, ok := a.entities().Lookup(t)
+		if !ok {
+			return nil
+		}
+		return append([]string{e.Name}, e.Aliases...)
+	}
+	claims := make(map[string]assertion.Result, len(arts))
+	for _, art := range arts {
+		claims[art.ID] = pipeline.Claims(art, names, edgar.Rate)
+	}
+	in := pipeline.EventsFrom(arts, claims)
 	wrote := 0
 	for start := 0; start < len(in); start += 500 {
 		n, err := db.PutEvents(ctx, in[start:min(start+500, len(in))], now)
@@ -67,6 +83,37 @@ func eventsRebuild(ctx context.Context, a *app, db *store.DB, args []string) err
 		wrote += n
 	}
 	fmt.Fprintf(a.stdout, "events: %d from %d articles, %d revisions written\n", len(in), len(arts), wrote)
+
+	results, assessments := pipeline.Assessments(arts, claims, nil, now)
+	na, err := db.PutAssertions(ctx, results, now)
+	if err != nil {
+		return err
+	}
+	nm, err := db.PutAssessments(ctx, assessments, now)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(a.stdout, "assertions: %d claims of %d articles written (%s); assessments: %d readings written (%s)\n",
+		na, len(results), assertion.Version, nm, assertion.AssessVersion)
+
+	// The reporting origin of every article that is evidence of an event.
+	evidence := map[string]bool{}
+	for _, e := range in {
+		for _, ev := range e.Evidence {
+			evidence[ev.ArticleID] = true
+		}
+	}
+	var rated []model.Article
+	for _, art := range arts {
+		if evidence[art.ID] {
+			rated = append(rated, art)
+		}
+	}
+	n, err := db.PutOrigins(ctx, pipeline.Origins(rated, a.isPrimary), now)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(a.stdout, "origins: %d findings written for %d articles that are evidence (unchanged ones are not rewritten)\n", n, len(rated))
 	return nil
 }
 

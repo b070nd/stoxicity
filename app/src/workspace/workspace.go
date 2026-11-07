@@ -33,6 +33,7 @@ import (
 	"github.com/b070nd/stoxicity/app/src/tenant"
 	"github.com/b070nd/stoxicity/app/src/tui"
 	"github.com/b070nd/stoxicity/app/src/universe"
+	"github.com/b070nd/stoxicity/app/src/valuation"
 	"github.com/b070nd/stoxicity/app/src/watch"
 )
 
@@ -79,6 +80,8 @@ type Workspace struct {
 	numbersAt time.Time
 	sums      map[string]fundamentals.Summary
 	sumsAt    time.Time
+	vals      valuation.Set
+	why       map[string]map[string]string
 	// The insiders' purchases and sales of common stock of the last quarter, summed by company.
 	insiders map[string]insider.Summary
 }
@@ -286,10 +289,11 @@ const (
 )
 
 // Numbers are the figures of each common stock's latest fiscal year and its
-// market value (shares times the last close), by name and ticker. Empty until
-// the SEC's figures are stored.
+// class and issuer market values (package valuation: classcap, issuercap and
+// marketcap, which is the issuer's), by name and ticker. Empty until the SEC's
+// figures are stored.
 func (w *Workspace) Numbers() map[string]map[string]float64 {
-	quotes, univ := w.Quotes(), w.Universe() // each takes the lock itself
+	univ := w.Universe() // takes the lock itself
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	now := w.now()
@@ -304,6 +308,12 @@ func (w *Workspace) Numbers() map[string]map[string]float64 {
 			facts = nil
 		}
 		w.sums = fundamentals.Summarize(facts)
+		w.vals = valuation.Set{}
+		if univ != nil {
+			if set, err := valuation.Build(context.Background(), w.db, univ.All(), time.Time{}, now); err == nil {
+				w.vals = set
+			}
+		}
 		w.insiders = nil
 		since := now.AddDate(0, 0, -insider.FigureDays).Format(time.DateOnly)
 		if trades, err := w.db.InsiderTrades(context.Background(), since, "", 0); err == nil {
@@ -314,15 +324,24 @@ func (w *Workspace) Numbers() map[string]map[string]float64 {
 		w.numbers = map[string]map[string]float64{}
 		return w.numbers
 	}
-	closes := make(map[string]float64, len(quotes))
-	for t, q := range quotes {
-		closes[t] = q.Close
+	w.numbers = fundamentals.Figures(w.sums, univ.All())
+	nums, why := w.vals.Figures(univ.All())
+	for name, byTicker := range nums {
+		w.numbers[name] = byTicker
 	}
-	w.numbers = fundamentals.Figures(w.sums, univ.All(), closes)
+	w.why = why
 	for name, byTicker := range insider.Figures(w.insiders, univ.All()) {
 		w.numbers[name] = byTicker
 	}
 	return w.numbers
+}
+
+// Why says, by figure name and ticker, why a market value is missing.
+func (w *Workspace) Why() map[string]map[string]string {
+	w.Numbers()
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.why
 }
 
 // Insiders lists the stored insider trades of a ticker's company over the last

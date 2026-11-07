@@ -133,3 +133,22 @@ func TestRecentFilingsAndTheirDocumentAddress(t *testing.T) {
 		t.Errorf("address %q", got)
 	}
 }
+
+func TestParseCoverKeepsTwoFactsForOneClassAndDateAsOneObservationPerValue(t *testing.T) {
+	// The same class and date stated twice with the same count is two facts of one
+	// observation; the store merges them. The parser reports both, never sums them.
+	dup := strings.Replace(cover, `<ix:nonNumeric`, `<ix:nonFraction name="dei:EntityCommonStockSharesOutstanding" contextRef="c1" unitRef="shares" scale="3" format="ixt:num-dot-decimal">5,800,000</ix:nonFraction><ix:nonNumeric`, 1)
+	got, err := ParseCover([]byte(dup))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var a []ClassShares
+	for _, c := range got {
+		if strings.HasSuffix(c.Dimensions, "x:ClassAMember") {
+			a = append(a, c)
+		}
+	}
+	if len(a) != 2 || a[0].Shares != a[1].Shares || a[0].AsOf != a[1].AsOf {
+		t.Errorf("both facts of class A are reported as they are: %+v", a)
+	}
+}

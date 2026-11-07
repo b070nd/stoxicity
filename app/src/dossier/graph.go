@@ -6,9 +6,10 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"time"
 
+	"github.com/b070nd/stoxicity/app/src/episode"
 	"github.com/b070nd/stoxicity/app/src/model"
+	"github.com/b070nd/stoxicity/app/src/origin"
 	"github.com/b070nd/stoxicity/app/src/store"
 )
 
@@ -41,130 +42,41 @@ type Graph struct {
 	Focus string `json:"focus"`
 	Nodes []Node `json:"nodes"`
 	Edges []Edge `json:"edges"`
+	// Evidence is the state of the evidence around the focus, judged from
+	// reporting origins and never from materiality.
+	Evidence Summary `json:"evidence"`
 }
 
-// Verdict says how far the evidence around a security is corroborated. It
-// measures the breadth and concentration of the evidence, not whether the news
-// predicts a price move, and it is not a trading signal.
-type Verdict struct {
-	Events   int // events as stored
-	Episodes int // events of one kind within EpisodeSpan counted once
-	// Publishers are the distinct domains of the evidence that is not a primary
-	// source. When a primary source (a filing) is among the evidence, everything
-	// quoting it is a copy of it, not another confirmation, and is not counted.
-	Publishers int
-	Primary    int // distinct primary sources
-	Sources    int
-	// PeakShare is the share of the weight in the heaviest episode. The weight
-	// is materiality, which is only an ordering of what to read first.
-	PeakShare    float64
-	Basis        string // "primary", "publishers", "single publisher" or "none"
-	Corroborated bool
-	SinglePeak   bool
-	Reason       string
-	Caveat       string
-}
-
-// The basis of a verdict.
-const (
-	BasisPrimary         = "primary"
-	BasisPublishers      = "publishers"
-	BasisSinglePublisher = "single publisher"
-	BasisNone            = "none"
-)
-
-// EpisodeSpan is how close events of one kind for one security must be to count
-// as one episode: an earnings release, its 8-K and the stories that follow are
-// one episode, not three.
-const EpisodeSpan = 72 * time.Hour
-
-// SinglePeakShare is the share of the weight above which one episode dominates.
-const SinglePeakShare = 0.7
-
-// Caveat is said with every verdict: independence of origin is not established.
-const Caveat = "publishers are counted by domain; copies of one wire story are not detected as one origin, and materiality comes from a keyword rule"
-
-// Assess judges the events of one security. isPrimary says whether a source is a
-// primary one (a filing, a regulator).
-//
-// Corroborated means: a primary source reports it, or at least two distinct
-// publishers that are not primary sources do. Materiality takes no part in that.
-// Episodes, not events, are counted, so one story reported through several
-// filings and articles is not "many events".
-func Assess(events []store.SignalEvent, isPrimary func(sourceID string) bool) Verdict {
-	v := Verdict{Events: len(events), Caveat: Caveat, Basis: BasisNone}
-	if len(events) == 0 {
-		v.Reason = "no event"
-		return v
-	}
-	sorted := slices.Clone(events)
-	slices.SortFunc(sorted, func(a, b store.SignalEvent) int {
-		return cmp.Or(cmp.Compare(a.Kind, b.Kind), a.PublicAt.Compare(b.PublicAt))
-	})
-	type episode struct {
-		kind string
-		last time.Time
-		mat  int
-	}
-	var eps []episode
-	for _, e := range sorted {
-		if n := len(eps); n > 0 && eps[n-1].kind == e.Kind && e.PublicAt.Sub(eps[n-1].last) <= EpisodeSpan {
-			eps[n-1].last = e.PublicAt
-			eps[n-1].mat = max(eps[n-1].mat, e.Materiality)
-			continue
-		}
-		eps = append(eps, episode{e.Kind, e.PublicAt, e.Materiality})
-	}
-	v.Episodes = len(eps)
-	var sum, top int
-	for _, ep := range eps {
-		sum += ep.mat
-		top = max(top, ep.mat)
-	}
-	if sum > 0 {
-		v.PeakShare = float64(top) / float64(sum)
-	}
-	v.SinglePeak = v.Episodes <= 1 || v.PeakShare > SinglePeakShare
-
-	domains, primary, sources := map[string]bool{}, map[string]bool{}, map[string]bool{}
-	for _, e := range events {
-		for _, src := range e.Sources {
-			sources[src] = true
-			if isPrimary != nil && isPrimary(src) {
-				primary[src] = true
-			}
-		}
-	}
-	v.Primary, v.Sources = len(primary), len(sources)
-	for _, e := range events {
-		for _, d := range e.Domains {
-			domains[d] = true
-		}
-	}
-	if v.Primary == 0 {
-		v.Publishers = len(domains)
-	}
-	switch {
-	case v.Primary > 0:
-		v.Basis, v.Corroborated = BasisPrimary, true
-		v.Reason = fmt.Sprintf("reported by a primary source; %d episodes", v.Episodes)
-	case v.Publishers >= 2:
-		v.Basis, v.Corroborated = BasisPublishers, true
-		v.Reason = fmt.Sprintf("%d publishers, %d episodes", v.Publishers, v.Episodes)
-	default:
-		v.Basis = BasisSinglePublisher
-		v.Reason = "one publisher: not enough to tell a fact from an echo"
-	}
-	if v.Corroborated && v.SinglePeak {
-		v.Reason += "; one episode dominates, read it before trusting the rest"
-	}
-	return v
+// Summary is a verdict as the graph and the exports state it.
+type Summary struct {
+	State    State  `json:"state"`
+	Reason   string `json:"reason"`
+	Events   int    `json:"events"`
+	Episodes int    `json:"episodes"`
+	// Concentration: PeakReports of TotalReports reports (distinct origins,
+	// copies once, counted within each episode) are in the largest episode.
+	PeakReports  int    `json:"peak_reports"`
+	TotalReports int    `json:"total_reports"`
+	Caveat       string `json:"caveat"`
 }
 
 // BuildGraph joins the events of a security with their evidence. timeline is
 // the security's events; history gives every event's revisions; articles the
-// evidence by ID. Only the latest revision of each event is drawn.
-func BuildGraph(sec store.SecurityInfo, timeline []store.TimelineEntry, history map[string][]model.EventRevision, articles map[string]model.Article, isPrimary func(sourceID string) bool) (Graph, Verdict) {
+// evidence by ID; stored the origins already stored (an article without one is
+// read by rules, now). Only the latest revision of each event is drawn. The
+// verdict is judged with fresh episode decisions and is not stored.
+func BuildGraph(sec store.SecurityInfo, timeline []store.TimelineEntry, history map[string][]model.EventRevision, articles map[string]model.Article, stored map[string]origin.Origin, isPrimary func(sourceID string) bool) (Graph, Verdict) {
+	fresh := map[string]origin.Origin{}
+	{
+		var all []model.Article
+		for _, a := range articles {
+			if _, ok := stored[a.ID]; !ok {
+				all = append(all, a)
+			}
+		}
+		slices.SortFunc(all, func(x, y model.Article) int { return cmp.Compare(x.ID, y.ID) })
+		fresh = OriginsOf(all, isPrimary)
+	}
 	g := Graph{Focus: sec.ID}
 	seen := map[string]bool{}
 	node := func(id, kind, label string) {
@@ -191,7 +103,13 @@ func BuildGraph(sec store.SecurityInfo, timeline []store.TimelineEntry, history 
 		if role == "" {
 			continue
 		}
-		se := store.SignalEvent{SecurityID: sec.ID, Ticker: sec.Ticker, EventID: cur.EventID, Kind: string(cur.Kind), PublicAt: cur.PublicAt, Materiality: cur.Materiality}
+		se := store.SignalEvent{SecurityID: sec.ID, Ticker: sec.Ticker, EventID: cur.EventID, Kind: string(cur.Kind), Title: cur.Title, EffectiveDay: cur.EffectiveDay,
+			PublicAt: cur.PublicAt, Materiality: cur.Materiality, Origins: map[string]origin.Origin{}}
+		for _, s := range cur.Securities {
+			if s.Role == model.RoleCounterparty {
+				se.Counterparties = append(se.Counterparties, s.SecurityID)
+			}
+		}
 		node(cur.EventID, NodeEvent, fmt.Sprintf("%s: %s", cur.Kind, cur.Title))
 		edge(cur.EventID, sec.ID, string(role))
 		for _, s := range cur.Securities {
@@ -213,6 +131,16 @@ func BuildGraph(sec store.SecurityInfo, timeline []store.TimelineEntry, history 
 			node("article:"+ev.ArticleID, NodeArticle, label)
 			edge("article:"+ev.ArticleID, cur.EventID, "evidence")
 			se.Sources = append(se.Sources, ev.SourceID)
+			x := store.SignalEvidence{ArticleID: ev.ArticleID, SourceID: ev.SourceID}
+			if ok {
+				x.Domain, x.Form, x.CIK, x.Title, x.URL, x.Items, x.Published = a.Domain, a.Form, a.CIK, a.Title, a.URL, a.Items, a.Published
+				if o, has := stored[a.ID]; has {
+					se.Origins[a.ID] = o
+				} else if o, has := fresh[a.ID]; has {
+					se.Origins[a.ID] = o
+				}
+			}
+			se.Evidence = append(se.Evidence, x)
 			if ok && a.Domain != "" {
 				se.Domains = append(se.Domains, a.Domain)
 				node("publisher:"+a.Domain, NodePublisher, a.Domain)
@@ -227,7 +155,9 @@ func BuildGraph(sec store.SecurityInfo, timeline []store.TimelineEntry, history 
 	slices.SortFunc(g.Edges, func(a, b Edge) int {
 		return cmp.Or(cmp.Compare(a.From, b.From), cmp.Compare(a.To, b.To), cmp.Compare(a.Rel, b.Rel))
 	})
-	return g, Assess(signal, isPrimary)
+	v := Assess(signal, episode.Decisions(SignalEpisodeEvents(signal)), isPrimary)
+	g.Evidence = Summary{State: v.State, Reason: v.Reason, Events: v.Events, Episodes: v.Episodes, PeakReports: v.PeakReports, TotalReports: v.TotalReports, Caveat: v.Caveat}
+	return g, v
 }
 
 // JSON writes the graph as indented JSON.
@@ -241,6 +171,7 @@ func (g Graph) DOT() string {
 	shape := map[string]string{NodeSecurity: "box", NodeEvent: "ellipse", NodeArticle: "note", NodePublisher: "folder", NodeTopic: "plaintext"}
 	var b strings.Builder
 	b.WriteString("digraph signal {\n  rankdir=LR;\n")
+	fmt.Fprintf(&b, "  // evidence: %s (%s)\n", g.Evidence.State, strings.ReplaceAll(g.Evidence.Reason, "\n", " "))
 	for _, n := range g.Nodes {
 		fmt.Fprintf(&b, "  %q [label=%q, shape=%s];\n", n.ID, n.Label, shape[n.Kind])
 	}

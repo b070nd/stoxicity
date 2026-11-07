@@ -28,6 +28,16 @@ type ClassShares struct {
 // each stands for and its trading symbol. A fact whose number cannot be read is
 // an error, not a zero.
 func ParseCover(doc []byte) ([]ClassShares, error) {
+	cs, _, err := ParseCoverAt(doc)
+	return cs, err
+}
+
+// ParseCoverAt is ParseCover that also says how far into the document the last
+// cover fact (a share count or a trading symbol) ends, in bytes. A caller that
+// read only the start of a document can tell from it whether the cover can have
+// been cut off.
+func ParseCoverAt(doc []byte) ([]ClassShares, int64, error) {
+	var last int64
 	dec := xml.NewDecoder(bytes.NewReader(doc))
 	dec.Strict = false
 	dec.Entity = xml.HTMLEntity
@@ -71,7 +81,7 @@ func ParseCover(doc []byte) ([]ClassShares, error) {
 			if len(shares) > 0 {
 				break // the rest of a large document is not needed, and not always well formed
 			}
-			return nil, fmt.Errorf("fundamentals: read the cover page: %w", err)
+			return nil, 0, fmt.Errorf("fundamentals: read the cover page: %w", err)
 		}
 		switch t := tok.(type) {
 		case xml.StartElement:
@@ -115,6 +125,10 @@ func ParseCover(doc []byte) ([]ClassShares, error) {
 				stack = stack[:len(stack)-1]
 				raw := strings.TrimSpace(text.String())
 				switch o.name {
+				case "dei:EntityCommonStockSharesOutstanding", "dei:TradingSymbol":
+					last = dec.InputOffset()
+				}
+				switch o.name {
 				case "dei:EntityCommonStockSharesOutstanding":
 					v, err := parseIXNumber(raw, o.scale, o.sign, o.format)
 					if err != nil {
@@ -129,13 +143,13 @@ func ParseCover(doc []byte) ([]ClassShares, error) {
 		}
 	}
 	if bad != nil {
-		return nil, fmt.Errorf("fundamentals: cover page: %w", bad)
+		return nil, 0, fmt.Errorf("fundamentals: cover page: %w", bad)
 	}
 	var out []ClassShares
 	for _, s := range shares {
 		c := contexts[s.ref]
 		if c == nil {
-			return nil, fmt.Errorf("fundamentals: cover page: shares refer to a context %q the filing does not define", s.ref)
+			return nil, 0, fmt.Errorf("fundamentals: cover page: shares refer to a context %q the filing does not define", s.ref)
 		}
 		members := slices.Clone(c.members)
 		slices.Sort(members)
@@ -156,7 +170,7 @@ func ParseCover(doc []byte) ([]ClassShares, error) {
 		out = append(out, cs)
 	}
 	slices.SortFunc(out, func(a, b ClassShares) int { return strings.Compare(a.Dimensions, b.Dimensions) })
-	return out, nil
+	return out, last, nil
 }
 
 // parseIXNumber reads the value of an inline XBRL number: digits with the

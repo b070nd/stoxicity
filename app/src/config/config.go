@@ -146,6 +146,12 @@ type Company struct {
 	// unread filings one background cycle reads (the whole backlog of a few
 	// hundred a day is a minute of requests); InsidersURL replaces the SEC's web
 	// address, for a test.
+	//
+	// CoversPerCycle is how many companies' cover pages one background cycle
+	// reads for the share count of each class of stock (one request for the
+	// company's record of filings and one for the start of the newest report).
+	// Zero reads none, and then no class-level market value is available.
+	CoversPerCycle   int    `yaml:"covers_per_cycle"`
 	Insiders         string `yaml:"insiders"`
 	InsidersPerCycle int    `yaml:"insiders_per_cycle"`
 	InsidersURL      string `yaml:"insiders_url"`

@@ -117,7 +117,7 @@ func defaults() Config {
 			Device:          "cpu",
 			Offline:         true,
 		},
-		Company: Company{Enabled: true, MaxAge: "168h", Listing: true, RefreshEvery: "6h", EnrichPerCycle: 200, SitesPerCycle: 400, Quotes: "polygon", QuotesPerCycle: 10, Fundamentals: "sec", Insiders: "sec", InsidersPerCycle: 300, FeedSearchPerCycle: 60},
+		Company: Company{Enabled: true, MaxAge: "168h", Listing: true, RefreshEvery: "6h", EnrichPerCycle: 200, SitesPerCycle: 400, Quotes: "polygon", QuotesPerCycle: 10, Fundamentals: "sec", Insiders: "sec", InsidersPerCycle: 300, CoversPerCycle: 20, FeedSearchPerCycle: 60},
 		Tenancy: Tenancy{Dir: "tenants", Default: "default"},
 	}
 }
@@ -205,6 +205,9 @@ func validate(cfg Config) error {
 	}
 	if cfg.Company.InsidersPerCycle < 0 || cfg.Company.InsidersPerCycle > 5000 {
 		errs = append(errs, fmt.Errorf("config: company.insiders_per_cycle must be between 0 and 5000, got %d", cfg.Company.InsidersPerCycle))
+	}
+	if cfg.Company.CoversPerCycle < 0 || cfg.Company.CoversPerCycle > 500 {
+		errs = append(errs, fmt.Errorf("config: company.covers_per_cycle must be between 0 and 500, got %d", cfg.Company.CoversPerCycle))
 	}
 	if cfg.Company.QuotesPerCycle < 0 || cfg.Company.QuotesPerCycle > 5000 {
 		errs = append(errs, fmt.Errorf("config: company.quotes_per_cycle must be between 0 and 5000, got %d", cfg.Company.QuotesPerCycle))

@@ -92,3 +92,10 @@ type Backend interface {
 	// A list that does not exist is created when a stock is added.
 	SetListMember(ctx context.Context, listID, ticker string, add bool) error
 }
+
+// Explainer is implemented by a Backend that can say why a figure is missing:
+// Why gives, by figure name and then ticker, the reason a market value could not
+// be calculated.
+type Explainer interface {
+	Why() map[string]map[string]string
+}

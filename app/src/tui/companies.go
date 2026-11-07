@@ -326,6 +326,8 @@ func companyItem(h universe.Hit, watched bool, d Data, cols companyCols) Item {
 		var mcap, rev, growth, margin Cell
 		if v, ok := num("marketcap"); ok {
 			mcap = Num(moneyText(v), v).Styled(Info)
+		} else if d.Why["marketcap"][p.Ticker] != "" {
+			mcap = Str("n/a").Styled(Warn) // the stock page says why
 		}
 		if v, ok := num("revenue"); ok {
 			rev = Num(moneyText(v), v)
@@ -397,13 +399,19 @@ func profileRows(b *builder, ticker string, d Data) (known bool) {
 			b.add(Row{Text: fmt.Sprintf("  %-10s %s  low %s · open %s · close %s · high %s", "day", bar, priceText(q.Low), priceText(q.Open), priceText(q.Close), priceText(q.High)), Style: bs})
 		}
 	}
-	if _, ok := d.Numbers["revenue"][p.Ticker]; ok || d.Numbers["marketcap"][p.Ticker] != 0 {
+	_, hasRev := d.Numbers["revenue"][p.Ticker]
+	if hasRev || d.Numbers["marketcap"][p.Ticker] != 0 || d.Why["marketcap"][p.Ticker] != "" {
 		figure := func(name, key string, text func(float64) string) {
 			if v, ok := d.Numbers[key][p.Ticker]; ok {
-				b.add(Row{Text: fmt.Sprintf("  %-10s %s", name, text(v)), Style: Plain})
+				b.add(Row{Text: fmt.Sprintf("  %-12s %s", name, text(v)), Style: Plain})
+			} else if why := d.Why[key][p.Ticker]; why != "" {
+				// A value that cannot be calculated says why, in words, never as a blank.
+				b.add(Row{Text: fmt.Sprintf("  %-12s unavailable: %s", name, why), Style: Warn})
 			}
 		}
 		figure("market cap", "marketcap", moneyText)
+		figure("class cap", "classcap", moneyText)
+		figure("issuer cap", "issuercap", moneyText)
 		figure("revenue", "revenue", moneyText)
 		figure("growth", "growth", signedPercent)
 		figure("net income", "income", moneyText)
@@ -412,7 +420,7 @@ func profileRows(b *builder, ticker string, d Data) (known bool) {
 		figure("equity", "equity", moneyText)
 		figure("roe", "roe", percentText)
 		figure("shares", "shares", moneyText)
-		b.styled(Dim, "  last fiscal year, from the SEC's XBRL data; market cap = shares on the cover page × last close")
+		b.styled(Dim, "  fiscal year figures from the SEC's XBRL data; market cap is the issuer's: the value of every class of its stock, from the class counts on the cover page and each class's own last close")
 	}
 	switch {
 	case p.SIC != "" && p.Industry != "":

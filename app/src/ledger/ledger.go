@@ -192,7 +192,15 @@ func (l *Ledger) evaluate(ctx context.Context, ts store.TenantStore, allowed map
 		if len(page) == 0 {
 			break
 		}
-		n, err := ts.AddHits(ctx, watch.Evaluate(w, page, opts))
+		hits := watch.Evaluate(w, page, opts)
+		hits, quiet, err := l.withoutBackfillAlerts(ctx, hits)
+		if err != nil {
+			return added, fmt.Errorf("ledger: watch %q: %w", w.ID, err)
+		}
+		if quiet > 0 {
+			l.cfg.Logger.Info("ledger: alerts withheld for backfilled articles", "watch", w.ID, "hits", quiet)
+		}
+		n, err := ts.AddHits(ctx, hits)
 		if err != nil {
 			return added, fmt.Errorf("ledger: watch %q: %w", w.ID, err)
 		}
@@ -219,6 +227,36 @@ func (l *Ledger) evaluate(ctx context.Context, ts store.TenantStore, allowed map
 	}
 	l.cfg.Logger.Debug("ledger: evaluated", "tenant", ts.ID(), "watch", w.ID, "new_hits", added)
 	return added, nil
+}
+
+// withoutBackfillAlerts removes the alerts from the hits of backfilled
+// articles and counts those hits. The hit itself stays: the article is evidence
+// the watch matches, shown in lists and digests, but it was not published when
+// this system stored it, so it must not raise an urgent alert as new news. If
+// the marks cannot be read the evaluation fails and is tried again from the same
+// cursor, rather than alert wrongly or lose an alert.
+func (l *Ledger) withoutBackfillAlerts(ctx context.Context, hits []watch.Hit) ([]watch.Hit, int, error) {
+	var ids []string
+	for _, h := range hits {
+		if len(h.Alerts) > 0 {
+			ids = append(ids, h.ArticleID)
+		}
+	}
+	if len(ids) == 0 {
+		return hits, 0, nil
+	}
+	marks, err := l.cfg.Store.Backfilled(ctx, ids)
+	if err != nil {
+		return nil, 0, err
+	}
+	quiet := 0
+	for i := range hits {
+		if _, flagged := marks[hits[i].ArticleID]; flagged && len(hits[i].Alerts) > 0 {
+			hits[i].Alerts = nil
+			quiet++
+		}
+	}
+	return hits, quiet, nil
 }
 
 // Preview returns the articles published since that the tenant may see and that

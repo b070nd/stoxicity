@@ -81,6 +81,12 @@ type Config struct {
 	// They are ignored without an Enricher.
 	Use           lens.Use
 	MinConfidence float64
+	// Primary says whether a source is a primary one (a filing, a regulator),
+	// which decides the reporting origin of its articles. Nil means none is.
+	Primary func(sourceID string) bool
+	// ItemRating reads the 8-K items of a filing into a kind and a materiality;
+	// the claims of a filing come from it. Nil leaves items without claims.
+	ItemRating func(items []string) (model.ItemRating, bool)
 	// Logger receives debug lines. Nil discards them.
 	Logger *slog.Logger
 	// Now is the clock; time.Now if nil.

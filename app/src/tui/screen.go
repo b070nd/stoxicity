@@ -170,6 +170,9 @@ type Data struct {
 	Quotes map[string]Quote
 	// Numbers are the companies' figures, by name and ticker (see Backend).
 	Numbers map[string]map[string]float64
+	// Why says why a market value is missing, by figure name and ticker (see
+	// Explainer); nil when the backend does not say.
+	Why map[string]map[string]string
 }
 
 func (d Data) name(t string) string {
@@ -434,6 +437,30 @@ var stockColumns = []Column{
 	{Title: "TONE", Key: "tone", Width: 5, Right: true, Desc: true},
 }
 
+// materialityStyle is a traffic light: the more material the news, the more it
+// needs attention (red 4 and above, yellow 3, green below).
+func materialityStyle(v float64) Style {
+	switch {
+	case v >= 4:
+		return Bad
+	case v >= 3:
+		return Warn
+	}
+	return Good
+}
+
+// toneLight is a traffic light for tone: green positive, yellow neutral, red
+// negative.
+func toneLight(t float64) Style {
+	switch {
+	case t >= 0.05:
+		return Good
+	case t <= -0.05:
+		return Bad
+	}
+	return Warn
+}
+
 // stockTable is the stocks of the news, most mentioned first unless sorted.
 func stockTable(rows []pages.StockRow, d Data) Table {
 	t := Table{Columns: stockColumns, Default: Sort{Key: "mentions", Desc: true}}
@@ -448,8 +475,8 @@ func stockTable(rows []pages.StockRow, d Data) Table {
 				Str(r.Ticker).Styled(Strong),
 				Str(d.name(r.Ticker)),
 				Num(fmt.Sprint(r.Mentions), float64(r.Mentions)).Styled(newsStyle(r.Mentions)),
-				Num(fmt.Sprintf("%.1f", r.Materiality), r.Materiality).Styled(newsStyle(int(r.Materiality + 0.5))),
-				Num(tonePct(r.Tone), r.Tone).Styled(toneStyle(r.Tone)),
+				Num(fmt.Sprintf("%.1f", r.Materiality), r.Materiality).Styled(materialityStyle(r.Materiality)),
+				Num(tonePct(r.Tone), r.Tone).Styled(toneLight(r.Tone)),
 			},
 			Row: Row{Go: route(nav.Stock, r.Ticker)},
 		})
@@ -472,7 +499,7 @@ func buildStocks(d Data) Screen {
 		return s
 	}
 	var b builder
-	b.styled(Dim, fmt.Sprintf("%d stocks in %d relevant articles (★ = on your watchlist) · < > pick the column, I turns it round", len(page.Rows), page.Relevant))
+	b.styled(Dim, fmt.Sprintf("%d stocks in %d relevant articles (★ = on your watchlist) · MATERIALITY red 4+, yellow 3, green below · TONE green positive, yellow neutral, red negative · < > pick the column, I turns it round", len(page.Rows), page.Relevant))
 	t := stockTable(page.Rows, d)
 	b.rows = append(b.rows, t.Rows(d.Sort)...)
 	s.Rows, s.Table, s.Sort = b.rows, t.shape(), t.Effective(d.Sort)

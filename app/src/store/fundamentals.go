@@ -155,7 +155,7 @@ func (db *DB) FactHistory(ctx context.Context, cik string) ([]fundamentals.Fact,
 		return nil, err
 	}
 	rows, err := h.r.QueryContext(ctx, `SELECT f.cik, f.metric, f.taxonomy, f.concept, f.unit, f.period_start, f.period_end, f.dimensions,
-			f.accession, f.form, COALESCE(NULLIF(f.filed_day, ''), (SELECT i.filed_day FROM filing_index i WHERE i.accession = f.accession), ''), f.value
+			f.accession, f.form, COALESCE(NULLIF(f.filed_day, ''), (SELECT i.filed_day FROM filing_index i WHERE i.accession = f.accession), (SELECT m.filed_day FROM filing_meta m WHERE m.accession = f.accession), ''), f.value
 		FROM fundamental_fact f WHERE f.cik = ? ORDER BY f.metric, f.period_end, f.seq`, cik)
 	if err != nil {
 		return nil, fmt.Errorf("store: fundamental history: %w", err)
@@ -171,51 +171,4 @@ func (db *DB) FactHistory(ctx context.Context, cik string) ([]fundamentals.Fact,
 		out = append(out, f)
 	}
 	return out, rows.Err()
-}
-
-// PutShareClasses adds the cover-page share counts of a filing; one already
-// stored stays as it was first read.
-func (db *DB) PutShareClasses(ctx context.Context, cik, accession, form, filed string, classes []fundamentals.ClassShares, at time.Time) error {
-	h, err := db.baseHandle()
-	if err != nil {
-		return err
-	}
-	tx, err := h.w.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("store: share classes: %w", err)
-	}
-	defer tx.Rollback()
-	for _, c := range classes {
-		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO share_class (cik, accession, as_of, dimensions, shares, ticker, form, filed_day, source, received_ms)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'sec-cover', ?)`, cik, accession, c.AsOf, c.Dimensions, c.Shares, c.Ticker, form, filed, ms(at)); err != nil {
-			return fmt.Errorf("store: share classes: %w", err)
-		}
-	}
-	return tx.Commit()
-}
-
-// ShareClasses returns the share counts of the company's newest filing that has
-// any, and that filing's accession and filing day.
-func (db *DB) ShareClasses(ctx context.Context, cik string) ([]fundamentals.ClassShares, string, string, error) {
-	h, err := db.baseHandle()
-	if err != nil {
-		return nil, "", "", err
-	}
-	rows, err := h.r.QueryContext(ctx, `SELECT accession, filed_day, as_of, dimensions, shares, ticker FROM share_class
-		WHERE cik = ? AND accession = (SELECT accession FROM share_class WHERE cik = ? ORDER BY as_of DESC, filed_day DESC, accession DESC LIMIT 1)
-		ORDER BY dimensions`, cik, cik)
-	if err != nil {
-		return nil, "", "", fmt.Errorf("store: share classes: %w", err)
-	}
-	defer rows.Close()
-	var out []fundamentals.ClassShares
-	var acc, filed string
-	for rows.Next() {
-		var c fundamentals.ClassShares
-		if err := rows.Scan(&acc, &filed, &c.AsOf, &c.Dimensions, &c.Shares, &c.Ticker); err != nil {
-			return nil, "", "", fmt.Errorf("store: share classes: %w", err)
-		}
-		out = append(out, c)
-	}
-	return out, acc, filed, rows.Err()
 }

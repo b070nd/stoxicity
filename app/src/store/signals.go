@@ -2,62 +2,173 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/b070nd/stoxicity/app/src/origin"
 )
 
+// SignalEvidence is one article an event rests on, with what the episode and
+// origin rules read of it.
+type SignalEvidence struct {
+	ArticleID, SourceID, Domain, Form, CIK, Title, URL string
+	Items                                              []string
+	Published                                          time.Time
+}
+
 // SignalEvent is one event as the signal rules read it: the latest revision of
-// an event that a security is the subject of, with the publishers and sources of
-// the evidence it rests on.
+// an event that a security is the subject of, with the evidence it rests on.
 type SignalEvent struct {
 	SecurityID, Ticker string
 	EventID            string
 	Kind               string
+	Title              string
+	EffectiveDay       string
 	PublicAt           time.Time
 	Materiality        int
-	Domains            []string
-	Sources            []string
+	// Counterparties are the securities the event names in that role.
+	Counterparties []string
+	// Evidence are the supporting articles. Domains and Sources are the distinct
+	// publishers and sources among them.
+	Evidence []SignalEvidence
+	Domains  []string
+	Sources  []string
+	// Origins are the reporting origins of the evidence by article ID, as
+	// understood at the query's cutoff (see AttachOrigins).
+	Origins map[string]origin.Origin
 }
 
-// SignalEvents returns the events of at least minMateriality made public in the
-// window, one per event and subject security, oldest first.
-func (db *DB) SignalEvents(ctx context.Context, from, to time.Time, minMateriality int) ([]SignalEvent, error) {
+// SignalQuery says which events SignalEvents returns.
+type SignalQuery struct {
+	From, To time.Time
+	// MinMateriality keeps only events of at least this materiality. Zero keeps
+	// every event: materiality is a keyword rule's reading and takes no part in
+	// whether evidence is corroborated, so the default is not to filter by it.
+	MinMateriality int
+	// AsOf reads the history as it was recorded at that time: revisions
+	// recorded later are not seen. Zero reads the history as it stands.
+	AsOf time.Time
+}
+
+// SignalEvents returns the events made public in the window, one per event and
+// subject security, oldest first.
+func (db *DB) SignalEvents(ctx context.Context, q SignalQuery) ([]SignalEvent, error) {
 	h, err := db.baseHandle()
 	if err != nil {
 		return nil, err
 	}
-	rows, err := h.r.QueryContext(ctx, `
-		WITH latest AS (
-			SELECT r.event_id, r.revision, r.kind, r.public_ms, r.materiality FROM event_revision r
-			WHERE r.public_ms >= ? AND r.public_ms < ? AND r.materiality >= ?
-			  AND r.revision = (SELECT MAX(r2.revision) FROM event_revision r2 WHERE r2.event_id = r.event_id))
-		SELECT es.security_id,
-		       COALESCE((SELECT t.ticker FROM security_ticker t WHERE t.security_id = es.security_id ORDER BY t.to_day = '' DESC, t.from_day DESC LIMIT 1), ''),
-		       l.event_id, l.kind, l.public_ms, l.materiality,
-		       COALESCE(group_concat(DISTINCT a.domain), ''), COALESCE(group_concat(DISTINCT v.source_id), '')
-		FROM latest l
-		JOIN event_security es ON es.event_id = l.event_id AND es.revision = l.revision AND es.role = 'subject'
-		LEFT JOIN event_evidence v ON v.event_id = l.event_id AND v.revision = l.revision AND v.relation = 'supports'
-		LEFT JOIN articles a ON a.id = v.article_id
-		GROUP BY es.security_id, l.event_id ORDER BY es.security_id, l.public_ms, l.event_id`, ms(from), ms(to), minMateriality)
+	bound := int64(1) << 62
+	if !q.AsOf.IsZero() {
+		bound = ms(q.AsOf)
+	}
+	const latest = `WITH latest AS (
+				SELECT r.event_id, r.revision, r.kind, r.title, r.effective_day, r.public_ms, r.materiality FROM event_revision r
+				WHERE r.public_ms >= ? AND r.public_ms < ? AND r.materiality >= ? AND r.recorded_ms <= ?
+				  AND r.revision = (SELECT MAX(r2.revision) FROM event_revision r2 WHERE r2.event_id = r.event_id AND r2.recorded_ms <= ?))`
+	args := []any{ms(q.From), ms(q.To), q.MinMateriality, bound, bound}
+	rows, err := h.r.QueryContext(ctx, latest+`
+			SELECT es.security_id,
+			       COALESCE((SELECT t.ticker FROM security_ticker t WHERE t.security_id = es.security_id ORDER BY t.to_day = '' DESC, t.from_day DESC LIMIT 1), ''),
+			       l.event_id, l.kind, l.title, l.effective_day, l.public_ms, l.materiality,
+			       COALESCE((SELECT group_concat(c.security_id) FROM event_security c WHERE c.event_id = l.event_id AND c.revision = l.revision AND c.role = 'counterparty'), '')
+			FROM latest l
+			JOIN event_security es ON es.event_id = l.event_id AND es.revision = l.revision AND es.role = 'subject'
+			ORDER BY es.security_id, l.public_ms, l.event_id`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: signals: %w", err)
 	}
-	defer rows.Close()
 	var out []SignalEvent
+	index := map[string][]int{} // event ID -> positions in out
 	for rows.Next() {
 		var e SignalEvent
 		var pub int64
-		var domains, sources string
-		if err := rows.Scan(&e.SecurityID, &e.Ticker, &e.EventID, &e.Kind, &pub, &e.Materiality, &domains, &sources); err != nil {
+		var counter string
+		if err := rows.Scan(&e.SecurityID, &e.Ticker, &e.EventID, &e.Kind, &e.Title, &e.EffectiveDay, &pub, &e.Materiality, &counter); err != nil {
+			rows.Close()
 			return nil, fmt.Errorf("store: signals: %w", err)
 		}
 		e.PublicAt = fromMS(pub)
-		e.Domains, e.Sources = splitList(domains), splitList(sources)
+		e.Counterparties = splitList(counter)
+		index[e.EventID] = append(index[e.EventID], len(out))
 		out = append(out, e)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, fmt.Errorf("store: signals: %w", err)
+	}
+	rows.Close()
+
+	ev, err := h.r.QueryContext(ctx, latest+`
+			SELECT l.event_id, v.article_id, v.source_id, a.domain, a.form, a.cik, a.title, a.url, a.items, a.published_ms
+			FROM latest l
+			JOIN event_evidence v ON v.event_id = l.event_id AND v.revision = l.revision AND v.relation = 'supports'
+			JOIN articles a ON a.id = v.article_id
+			ORDER BY l.event_id, a.published_ms, v.article_id`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("store: signals: %w", err)
+	}
+	defer ev.Close()
+	for ev.Next() {
+		var id, items string
+		var x SignalEvidence
+		var pub int64
+		if err := ev.Scan(&id, &x.ArticleID, &x.SourceID, &x.Domain, &x.Form, &x.CIK, &x.Title, &x.URL, &items, &pub); err != nil {
+			return nil, fmt.Errorf("store: signals: %w", err)
+		}
+		x.Published = fromMS(pub)
+		_ = json.Unmarshal([]byte(items), &x.Items)
+		for _, i := range index[id] {
+			out[i].Evidence = append(out[i].Evidence, x)
+		}
+	}
+	if err := ev.Err(); err != nil {
+		return nil, fmt.Errorf("store: signals: %w", err)
+	}
+	for i := range out {
+		seenD, seenS := map[string]bool{}, map[string]bool{}
+		for _, x := range out[i].Evidence {
+			if x.Domain != "" && !seenD[x.Domain] {
+				seenD[x.Domain] = true
+				out[i].Domains = append(out[i].Domains, x.Domain)
+			}
+			if !seenS[x.SourceID] {
+				seenS[x.SourceID] = true
+				out[i].Sources = append(out[i].Sources, x.SourceID)
+			}
+		}
+	}
+	return out, nil
+}
+
+// AttachOrigins reads the origins of the events' evidence, as understood at
+// asOf (zero: now), and sets them on the events. An article without an origin
+// is left out of the map, which means its origin has not been assessed.
+func (db *DB) AttachOrigins(ctx context.Context, events []SignalEvent, asOf time.Time) error {
+	seen := map[string]bool{}
+	var ids []string
+	for _, e := range events {
+		for _, x := range e.Evidence {
+			if !seen[x.ArticleID] {
+				seen[x.ArticleID] = true
+				ids = append(ids, x.ArticleID)
+			}
+		}
+	}
+	os, err := db.Origins(ctx, ids, asOf)
+	if err != nil {
+		return err
+	}
+	for i := range events {
+		events[i].Origins = map[string]origin.Origin{}
+		for _, x := range events[i].Evidence {
+			if o, ok := os[x.ArticleID]; ok {
+				events[i].Origins[x.ArticleID] = o
+			}
+		}
+	}
+	return nil
 }
 
 func splitList(s string) []string {

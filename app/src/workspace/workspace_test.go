@@ -15,6 +15,7 @@ import (
 	"github.com/b070nd/stoxicity/app/src/scheduler"
 	"github.com/b070nd/stoxicity/app/src/status"
 	"github.com/b070nd/stoxicity/app/src/store"
+	"github.com/b070nd/stoxicity/app/src/valuation"
 	"github.com/b070nd/stoxicity/app/src/watch"
 )
 
@@ -426,7 +427,7 @@ func TestStockFeedsAreTheOnesRecordedForTheTicker(t *testing.T) {
 	}
 }
 
-func TestNumbersJoinTheSECFiguresWithTheLastClose(t *testing.T) {
+func TestNumbersJoinTheSECFiguresWithTheClassCountsAndTheLastClose(t *testing.T) {
 	dir := setup(t)
 	db, err := store.Open(filepath.Join(dir, "data"))
 	if err != nil {
@@ -447,14 +448,36 @@ func TestNumbersJoinTheSECFiguresWithTheLastClose(t *testing.T) {
 	}, now); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.PutCandles(ctx, []marketdata.Candle{{Ticker: "NVDA", Day: "2026-11-04", Open: 10, High: 12, Low: 9, Close: 11, Volume: 5}}); err != nil {
+	if err := db.PutCandles(ctx, []marketdata.Candle{{Ticker: "NVDA", Day: "2026-11-03", Open: 10, High: 12, Low: 9, Close: 11, Volume: 5, Raw: true}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.PutSplits(ctx, nil, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), now); err != nil {
+		t.Fatal(err)
+	}
+	// Before the cover page is read there is no market value, and the reason is given.
+	db.Close()
+	w := open(t, dir)
+	if n := w.Numbers(); n["revenue"]["NVDA"] != 200 || n["marketcap"]["NVDA"] != 0 || w.Why()["marketcap"]["NVDA"] == "" {
+		t.Errorf("without a cover page there is a reason and no value: %v %v", n["marketcap"], w.Why())
+	}
+	w.Close()
+
+	db, err = store.Open(filepath.Join(dir, "data"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.PutCover(ctx, fundamentals.CoverRead{CIK: "0001045810", Accession: "0001045810-26-000001", Form: "10-Q", Filed: "2026-08-25",
+		Classes: []fundamentals.ClassShares{{AsOf: "2026-08-21", Shares: 24}}, At: now.Add(-48 * time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.MapClasses(ctx, "0001045810", []valuation.Listing{{SecurityID: "sec_nvda", Ticker: "NVDA", Type: "stock"}}, now.Add(-47*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	db.Close()
 
-	w := open(t, dir)
+	w = open(t, dir)
 	n := w.Numbers()
-	if n["revenue"]["NVDA"] != 200 || n["margin"]["NVDA"] != 0.5 || n["marketcap"]["NVDA"] != 264 {
+	if n["revenue"]["NVDA"] != 200 || n["margin"]["NVDA"] != 0.5 || n["marketcap"]["NVDA"] != 264 || n["issuercap"]["NVDA"] != 264 || n["classcap"]["NVDA"] != 264 {
 		t.Errorf("numbers = %v", n)
 	}
 	if _, ok := n["revenue"]["KO"]; ok {

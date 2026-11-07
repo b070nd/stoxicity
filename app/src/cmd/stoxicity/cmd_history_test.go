@@ -55,5 +55,5 @@ func TestFundamentalsClassesReadsTheCoverPageAndValuesTheIssuer(t *testing.T) {
 
 	r := e.run(t, "universe", "fundamentals", "classes", "ACME")
 	r.wantCode(t, exitOK)
-	r.wantOut(t, "read the cover page of 10-Q", "all (one class)", "2000000", "issuer value (all classes)")
+	r.wantOut(t, "read the cover page of ACME", "all shares", "2000000", "mapped (sole-listing", "issuer capitalisation")
 }

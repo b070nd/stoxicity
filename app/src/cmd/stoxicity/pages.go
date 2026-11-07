@@ -197,12 +197,16 @@ func renderStocksPage(w io.Writer, pg pages.StocksPage, tenantID string) {
 		fmt.Fprintln(w, "\nNo relevant article names a stock in this window.")
 		return
 	}
-	fmt.Fprintf(w, "\n%-10s %8s %12s %7s\n", "Stock", "mentions", "materiality", "tone")
+	fmt.Fprintln(w)
+	t := cliTable{Header: []string{"STOCK", "WATCH", "MENTIONS", "MATERIALITY", "TONE"}, Right: []bool{false, false, true, true, true}}
 	for _, r := range pg.Rows {
-		mark := ""
+		watch := plain("")
 		if r.Watched {
-			mark = " (watchlist)"
+			watch = styled("★ yes", cliYellow)
 		}
-		fmt.Fprintf(w, "%-10s %8d %12.1f %+7.2f%s\n", r.Ticker, r.Mentions, r.Materiality, r.Tone, mark)
+		t.Rows = append(t.Rows, []cliCell{styled(r.Ticker, cliStrong), watch, plain(fmt.Sprint(r.Mentions)),
+			styled(fmt.Sprintf("%.1f", r.Materiality), materialityLight(r.Materiality)), styled(fmt.Sprintf("%+.2f", r.Tone), toneLight(r.Tone))})
 	}
+	t.write(w, useColor(w))
+	fmt.Fprintf(w, "\nTONE: green above +0.05, yellow between, red below -0.05 · MATERIALITY: red 4 and above, yellow 3, green below · %s\n", cliLegend)
 }

@@ -2,19 +2,14 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"maps"
 	"slices"
 	"strings"
-	"text/tabwriter"
 	"time"
 
-	"github.com/b070nd/stoxicity/app/src/company"
 	"github.com/b070nd/stoxicity/app/src/fundamentals"
 	"github.com/b070nd/stoxicity/app/src/httpx"
-	"github.com/b070nd/stoxicity/app/src/marketdata"
-	"github.com/b070nd/stoxicity/app/src/store"
 )
 
 // parseWhen reads a time given as RFC 3339 or as a day (taken as its end, so
@@ -39,6 +34,8 @@ func (a *app) universeFundamentals(ctx context.Context, args []string) error {
 			return a.fundamentalsHistory(ctx, args[1:])
 		case "classes":
 			return a.fundamentalsClasses(ctx, args[1:])
+		case "probe":
+			return a.fundamentalsProbe(ctx, args[1:])
 		}
 	}
 	fs := newFlags("universe fundamentals")
@@ -162,114 +159,6 @@ func (a *app) fundamentalsHistory(ctx context.Context, args []string) error {
 		fmt.Fprintf(a.stdout, "restated %s: %s\n", k, strings.Join(parts, " -> "))
 	}
 	return nil
-}
-
-// fundamentalsClasses reads the cover page of the company's newest annual or
-// quarterly report for the shares outstanding of each class, stores them and
-// prints the value of each class and of the issuer.
-func (a *app) fundamentalsClasses(ctx context.Context, args []string) error {
-	fs := newFlags("universe fundamentals classes")
-	offline := fs.Bool("stored", false, "do not ask the SEC, read what is stored")
-	rest, err := parseMixed(fs, args)
-	if err != nil {
-		return err
-	}
-	if len(rest) != 1 {
-		return usageErrorf("classes takes one ticker")
-	}
-	p, ok := a.universe().Get(rest[0])
-	if !ok || p.CIK == "" {
-		return fmt.Errorf("%s has no SEC number in the company list", strings.ToUpper(rest[0]))
-	}
-	db, err := a.store()
-	if err != nil {
-		return err
-	}
-	if !*offline {
-		client, err := a.httpClient()
-		if err != nil {
-			return err
-		}
-		if err := a.readCover(ctx, db, client, p.CIK); err != nil {
-			return err
-		}
-	}
-	classes, acc, filed, err := db.ShareClasses(ctx, p.CIK)
-	if err != nil {
-		return err
-	}
-	if len(classes) == 0 {
-		return fmt.Errorf("no cover page share count is stored for %s", p.Ticker)
-	}
-	prices := map[string]float64{}
-	if latest, err := db.LatestCandles(ctx); err == nil {
-		for t, c := range latest {
-			if len(c) > 0 {
-				prices[marketdata.NormTicker(t)] = c[0].Close
-			}
-		}
-	}
-	capn := fundamentals.Capitalise(classes, p.Ticker, func(t string) (float64, bool) { v, ok := prices[marketdata.NormTicker(t)]; return v, ok })
-	fmt.Fprintf(a.stdout, "%s: cover page of filing %s (filed %s)\n", p.Ticker, acc, filed)
-	tw := tabwriter.NewWriter(a.stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "CLASS\tTICKER\tAS OF\tSHARES\tPRICE\tVALUE")
-	for _, c := range capn.Classes {
-		class := c.Dimensions
-		if class == "" {
-			class = "all (one class)"
-		}
-		price, value := "no price", "unknown"
-		if c.Priced {
-			price, value = fmt.Sprintf("%.2f", c.Price), moneyOrBlank(c.Cap)
-		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", class, c.Ticker, c.AsOf, countText(c.Shares), price, value)
-	}
-	tw.Flush()
-	if capn.IssuerKnown {
-		fmt.Fprintf(a.stdout, "issuer value (all classes): %s\n", moneyOrBlank(capn.Issuer))
-	} else {
-		fmt.Fprintf(a.stdout, "issuer value: not known (%s)\n", capn.Note)
-	}
-	return nil
-}
-
-// readCover finds the company's newest annual or quarterly report, reads its
-// cover page and stores the share counts.
-func (a *app) readCover(ctx context.Context, db *store.DB, client httpx.Client, cik string) error {
-	sub := a.cfg.Company.SubmissionsURL
-	if sub == "" {
-		sub = company.SubmissionsURL
-	}
-	resp, err := client.Do(ctx, httpx.Request{URL: fmt.Sprintf(sub, cik)})
-	if err != nil {
-		return err
-	}
-	filings, err := fundamentals.RecentFilings(resp.Body)
-	if err != nil {
-		return err
-	}
-	for _, f := range filings {
-		if !f.Periodic() || f.Document == "" {
-			continue
-		}
-		doc, err := client.Do(ctx, httpx.Request{URL: f.DocumentURL(a.fundamentalsArchives(), cik)})
-		if err != nil {
-			return err
-		}
-		classes, err := fundamentals.ParseCover(doc.Body)
-		if err != nil {
-			return fmt.Errorf("filing %s: %w", f.Accession, err)
-		}
-		if len(classes) == 0 {
-			continue // this report has no machine-readable cover page; try the one before
-		}
-		if err := db.PutShareClasses(ctx, cik, f.Accession, f.Form, f.Filed, classes, a.now()); err != nil {
-			return err
-		}
-		fmt.Fprintf(a.stdout, "read the cover page of %s %s (filed %s): %d share counts\n", f.Form, f.Accession, f.Filed, len(classes))
-		return nil
-	}
-	return errors.New("no annual or quarterly report with a readable cover page among the company's recent filings")
 }
 
 func (a *app) fundamentalsFetcher(client httpx.Client) fundamentals.Fetcher {

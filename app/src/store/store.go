@@ -87,6 +87,10 @@ type Base interface {
 	// ChangeSeqAt is the change number reached by the commits fetched at or
 	// before t, to move a position kept as a time to the numbered order.
 	ChangeSeqAt(ctx context.Context, t time.Time) (int64, error)
+	// Backfilled returns the marks of those of the articles that were stored by
+	// a repair or a historical range instead of delivered by the live feed. The
+	// hit ledger raises no alert for them: they were not news when stored.
+	Backfilled(ctx context.Context, ids []string) (map[string]Backfill, error)
 }
 
 // Store is the whole database.

@@ -1,0 +1,42 @@
+{
+  "source_url": "https://data.sec.gov/api/xbrl/frames/us-gaap/RevenueFromContractWithCustomerExcludingAssessedTax/USD/CY2024.json",
+  "retrieved": "2026-11-07",
+  "note": "records of one live answer, read-only; the sample is not exhaustive and shows nothing about records that were not kept",
+  "header": {
+    "ccp": "CY2024",
+    "label": "Revenue from Contract with Customer, Excluding Assessed Tax",
+    "pts": "2973",
+    "tag": "RevenueFromContractWithCustomerExcludingAssessedTax",
+    "taxonomy": "us-gaap",
+    "uom": "USD"
+  },
+  "data": [
+    {
+      "accn": "0001628280-26-010185",
+      "cik": 1800,
+      "entityName": "Abbott Laboratories",
+      "loc": "US-IL",
+      "start": "2024-01-01",
+      "end": "2024-12-31",
+      "val": 41950000000
+    },
+    {
+      "accn": "0000002488-26-000018",
+      "cik": 2488,
+      "entityName": "ADVANCED MICRO DEVICES, INC.",
+      "loc": "US-CA",
+      "start": "2023-12-31",
+      "end": "2024-12-28",
+      "val": 25785000000
+    },
+    {
+      "accn": "0001193125-26-085815",
+      "cik": 3197,
+      "entityName": "CECO ENVIRONMENTAL CORP.",
+      "loc": "US-TX",
+      "start": "2024-01-01",
+      "end": "2024-12-31",
+      "val": 557933000
+    }
+  ]
+}

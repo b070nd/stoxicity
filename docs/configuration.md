@@ -148,13 +148,14 @@ company:
   quotes_url: ""      # the source's address, for a test (the splits list is read from quotes_url + "splits")
   fundamentals: sec   # where revenue, profit and shares come from: sec (no key) or off
   fundamentals_url: "" # the SEC frames address, for a test (company history from + "companyfacts/", filings from + "archives/")
+  covers_per_cycle: 20 # issuers whose cover page (shares per class) is read in one refresh (0 to 500)
   insiders: sec       # where insider trades come from: sec (the Form 4 filings, no key) or off
   insiders_per_cycle: 300 # unread Form 4 filings read in one refresh (0 to 5000)
   insiders_url: ""    # the SEC web address, for a test (also where `reconcile` reads the daily index)
 ```
 
-`fundamentals` fills the MCAP, REVENUE, GROWTH and MARGIN columns, the figures
-on a stock's page and the `marketcap:`, `revenue:`, `income:`, `assets:`,
+`fundamentals` fills the REVENUE, GROWTH and MARGIN columns, the figures on a
+stock's page and the `revenue:`, `income:`, `assets:`,
 `equity:`, `growth:`, `margin:`, `roe:` and `equity_ratio:` queries. The source
 is the SEC's XBRL frames API (`data.sec.gov/api/xbrl/frames`), which needs no
 key: one request answers for every filer, so a reading is about 45 small
@@ -163,6 +164,27 @@ Companies whose fiscal year is not the calendar year are read with their own
 year-end. Only common stock has figures, never its warrants, units or preferred
 stock. `stoxicity universe fundamentals [-force]` reads by hand and prints how
 many companies each figure exists for.
+
+The MCAP column, `marketcap:`, `classcap:` and `issuercap:` do **not** come from
+the frames. They come from the class-level share counts on the cover page of each
+issuer's latest 10-K or 10-Q, which the background cover keeper reads
+(`covers_per_cycle` issuers per refresh, one SEC request for the company record
+and one or two for the document each; the SEC rate limit and contact apply as for
+every SEC call; 0 turns the reading off, and then no market cap exists except for
+what was already stored). Prices come from `quotes`. When a value cannot be
+computed the reason is shown instead. `marketcap` is issuer capitalisation (see
+[universe.md](universe.md#share-classes-and-capitalisation)). Tests point
+`fundamentals_url`, `insiders_url` and `submissions_url` at a local server.
+
+Migrations `0015` to `0018` are additive (new tables only; old tables are kept):
+`0015` origins and episode decisions, `0016` EDGAR index days and backfill marks,
+`0017` class share observations, mappings and cover checks (rows of the old
+`share_class` table are copied), `0018` assertions and assessments. They run when
+the reference database is opened; back up `data/` first (the databases are
+`data/base.db` and one file per tenant, `data/tenants/<id>.db`). Older stored data is not
+rewritten: class counts, mappings, origins, episodes and assertions start empty
+and fill as the keeper runs, the daily process stores new articles, and
+`events rebuild` and `reconcile` are run.
 
 `insiders` reads the Form 4 filings that the filings feed found. The feed says
 only that a Form 4 was filed; each filing is then read once, newest first, with

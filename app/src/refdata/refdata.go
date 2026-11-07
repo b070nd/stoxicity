@@ -69,6 +69,9 @@ type Settings struct {
 	// InsidersPerCycle is how many unread Form 4 filings one cycle reads. Zero
 	// reads none.
 	InsidersPerCycle int
+	// CoversPerCycle is how many companies' cover pages one cycle reads. Zero
+	// reads none.
+	CoversPerCycle int
 }
 
 // Refresher brings the database up to date.
@@ -91,6 +94,9 @@ type Refresher struct {
 	// Fundamentals, when set, keeps the revenue, profit, balance sheet and
 	// shares of every filer.
 	Fundamentals *fundamentals.Keeper
+	// Covers, when set, reads the cover pages of annual and quarterly reports for
+	// the share count of each class of stock.
+	Covers *fundamentals.CoverKeeper
 	// Insiders, when set, reads the Form 4 filings the feed found and keeps the
 	// trades in them.
 	Insiders *insider.Keeper
@@ -109,6 +115,8 @@ type Report struct {
 	// Fundamentals is what the reading of the SEC's frames did; Read says it ran.
 	Fundamentals     fundamentals.Report
 	FundamentalsRead bool
+	// Covers is what the reading of cover pages did.
+	Covers fundamentals.CoverReport
 	// Insiders is what the reading of Form 4 filings did.
 	Insiders insider.Report
 	// FeedsSeeded is how many SEC filing records of stocks are new; Feeds is
@@ -204,6 +212,17 @@ func (r *Refresher) Cycle(ctx context.Context, force bool) Report {
 			problem("fundamentals", err)
 		} else if ran {
 			r.logf("fundamentals: %d facts of %d companies", frep.Facts, frep.Companies)
+		}
+	}
+
+	if r.Covers != nil && r.Set.CoversPerCycle > 0 && ctx.Err() == nil {
+		crep, err := r.Covers.Refresh(ctx, r.Set.CoversPerCycle)
+		rep.Covers = crep
+		if err != nil && ctx.Err() == nil {
+			problem("covers", err)
+		}
+		if crep.Asked > 0 {
+			r.logf("covers: %d companies, %d reports stored, %d unchanged, %d without cover, %d failed, %d left", crep.Asked, crep.Stored, crep.Unchanged, crep.Empty, crep.Bad, crep.Left)
 		}
 	}
 

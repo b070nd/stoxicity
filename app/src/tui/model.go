@@ -357,6 +357,9 @@ func (m *Model) rebuild() {
 		Queue: m.queue, Progress: m.progress,
 		Universe: m.be.Universe(), Following: m.be.Following, Feeds: m.be.StockFeeds, Insiders: m.be.Insiders, Quotes: m.be.Quotes(), Numbers: m.be.Numbers(),
 	}
+	if ex, ok := m.be.(Explainer); ok {
+		d.Why = ex.Why()
+	}
 	d.Exchange, d.Chosen = m.scopeOf(r), m.exchange
 	if needsShared(r.Kind) {
 		d.Articles = m.scoped.news(d.Universe, m.shared, d.Exchange)

@@ -162,7 +162,7 @@ func TestSummarizeLeavesOutWhatTheFilingsDoNotSay(t *testing.T) {
 	}
 }
 
-func TestFiguresAreForCommonStockOnlyAndMarketCapNeedsUSGAAP(t *testing.T) {
+func TestFiguresAreForCommonStockOnlyAndCarryNoMarketValue(t *testing.T) {
 	sums := Summarize([]Fact{
 		{CIK: "0000000001", Metric: Revenue, End: "2025-12-31", Start: "2025-01-01", Value: 100},
 		{CIK: "0000000001", Metric: Shares, End: "2026-01-31", Value: 10},
@@ -173,17 +173,19 @@ func TestFiguresAreForCommonStockOnlyAndMarketCapNeedsUSGAAP(t *testing.T) {
 		{Ticker: "AAAW", CIK: "0000000001", Kind: universe.KindStock, Security: "AAA - Warrant"},
 		{Ticker: "FFF", CIK: "0000000002", Kind: universe.KindStock},
 	}
-	got := Figures(sums, profiles, map[string]float64{"AAA": 5, "AAAW": 1, "FFF": 3})
-	if got["revenue"]["AAA"] != 100 || got["marketcap"]["AAA"] != 50 {
+	got := Figures(sums, profiles)
+	if got["revenue"]["AAA"] != 100 || got["shares"]["AAA"] != 10 {
 		t.Errorf("%v", got)
+	}
+	for _, name := range []string{"marketcap", "classcap", "issuercap"} {
+		if _, ok := got[name]; ok {
+			t.Errorf("a market value is made from class counts (package valuation), not from the frames: %s in %v", name, got)
+		}
 	}
 	if _, ok := got["revenue"]["AAAW"]; ok {
 		t.Error("a warrant has no revenue")
 	}
-	if _, ok := got["marketcap"]["FFF"]; ok {
-		t.Error("shares of a foreign issuer say nothing of its market value")
-	}
-	if len(Figures(nil, profiles, nil)) != 0 {
+	if len(Figures(nil, profiles)) != 0 {
 		t.Error("no sums, no figures")
 	}
 }
@@ -243,11 +245,11 @@ func TestRevenueAndIncomeAreOfTheSameYearAndAClassOfSharesIsNotTheCompany(t *tes
 		{Ticker: "AAA", CIK: "0000000001", Kind: universe.KindStock},
 		{Ticker: "AAB", CIK: "0000000001", Kind: universe.KindStock}, // a second class
 	}
-	got := Figures(sums, profiles, map[string]float64{"AAA": 100, "AAB": 10})
+	got := Figures(sums, profiles)
 	if got["revenue"]["AAA"] != 100 {
 		t.Errorf("the company's revenue is the same for both: %v", got)
 	}
-	for _, name := range []string{"marketcap", Shares} {
+	for _, name := range []string{Shares} {
 		if _, has := got[name]["AAA"]; has {
 			t.Errorf("%s of a company with two classes is not known: %v", name, got)
 		}

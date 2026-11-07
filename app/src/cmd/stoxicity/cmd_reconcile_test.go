@@ -23,13 +23,17 @@ func TestReconcileFindsWhatTheLiveFeedMissedAndRepairsIt(t *testing.T) {
 
 	r := e.run(t, "reconcile", "-days", "2")
 	r.wantCode(t, exitOK)
-	r.wantOut(t, "1 days read", "2026-11-02", "the live feed missed 2 of the wanted filings", "run with -repair")
+	r.wantOut(t, "discover 2026-11-01 to 2026-11-02", "1 daily and 0 quarterly indexes read", "2 filings stored for the first time",
+		"the live feed missed 2 of the wanted filings", "run with -repair")
 
+	// Repairing stores the two filings as backfills; the day is already resolved and is not read again.
 	r = e.run(t, "reconcile", "-days", "2", "-repair")
 	r.wantCode(t, exitOK)
-	r.wantOut(t, "0 days read, 1 already stored", "repaired: 2 articles stored")
+	r.wantOut(t, "0 daily and 0 quarterly indexes read", "repaired: 2 articles stored as backfills (2 late, 0 historical)", "to the start of their filing day because the time is not known")
 
-	r = e.run(t, "reconcile", "-days", "2")
+	// A repeat finds nothing missing and repairs nothing.
+	r = e.run(t, "reconcile", "-days", "2", "-repair")
 	r.wantCode(t, exitOK)
 	r.wantOut(t, "the live feed missed 0")
+	r.wantNotOut(t, "repaired:")
 }

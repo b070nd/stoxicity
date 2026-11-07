@@ -81,10 +81,10 @@ func (h Hit) Group(key string) string {
 
 // sortKeys are the orders sort: knows.
 var sortKeys = []string{"ticker", "name", "news", "industry", "exchange", "kind", "type", "domain",
-	"close", "change", "marketcap", "revenue", "income", "growth", "margin", "roe", "buys", "sells"}
+	"close", "change", "marketcap", "classcap", "issuercap", "revenue", "income", "growth", "margin", "roe", "buys", "sells"}
 
 // numOps are the operators that compare a number: money (close, marketcap,
-// revenue, income, assets, equity; buys and sells are what the insiders bought
+// classcap, issuercap, revenue, income, assets, equity; buys and sells are what the insiders bought
 // and sold, in common stock, in the last 90 days), counts (buyers, sellers:
 // how many different insiders) and ratios (change, growth, margin, roe,
 // equity_ratio), which are written as percentages: margin:>10 and
@@ -92,7 +92,7 @@ var sortKeys = []string{"ticker", "name", "news", "industry", "exchange", "kind"
 // none of them, whatever the comparison. A value is a comparison and a number
 // (marketcap:>=10b, change:<-5%), or a range (revenue:1b..5b); the number takes
 // k, m, b or t after it.
-var numOps = []string{"close", "change", "marketcap", "revenue", "income", "assets", "equity",
+var numOps = []string{"close", "change", "marketcap", "classcap", "issuercap", "revenue", "income", "assets", "equity",
 	"growth", "margin", "roe", "equity_ratio", "buys", "sells", "buyers", "sellers"}
 
 func isNumOp(op string) bool { return slices.Contains(numOps, op) }
@@ -222,8 +222,8 @@ const (
 
 // queryOps is the list of operators, for the error message.
 var queryOps = []string{
-	"assets", "buyers", "buys", "change", "cik", "close", "company", "domain", "equity", "equity_ratio", "exchange", "group", "growth",
-	"income", "industry", "kind", "list", "marketcap", "margin", "market", "name", "news", "revenue", "roe", "sector",
+	"assets", "buyers", "buys", "change", "cik", "classcap", "close", "company", "domain", "equity", "equity_ratio", "exchange", "group", "growth",
+	"income", "industry", "issuercap", "kind", "list", "marketcap", "margin", "market", "name", "news", "revenue", "roe", "sector",
 	"sellers", "sells", "sic", "sort", "state", "status", "tag", "ticker", "type", "watched",
 }
 
@@ -257,9 +257,13 @@ type Facts struct {
 	// fraction: 0.012 is +1.2%), by ticker; only for the stocks that have candles.
 	Close, Change map[string]float64
 	// Num holds the other numbers a query can compare or sort by, by name and
-	// then ticker: marketcap, revenue, income, assets, equity, growth, margin,
-	// roe and equity_ratio (package fundamentals gives them).
+	// then ticker: marketcap, classcap, issuercap (package valuation), revenue,
+	// income, assets, equity, growth, margin, roe and equity_ratio (package
+	// fundamentals gives them).
 	Num map[string]map[string]float64
+	// Why says, by figure name and then ticker, why a figure is not there when
+	// it could be: a market value that cannot be calculated gives its reason.
+	Why map[string]map[string]string
 }
 
 // value is the number the fact named op has for the ticker; false when unknown.
@@ -437,7 +441,7 @@ func opLit(name, value string, pos, valPos int) (lit, error) {
 		if len(l.words) == 0 {
 			return lit{}, &QueryError{Pos: valPos, Msg: fmt.Sprintf("operator %s needs letters or digits", name)}
 		}
-	case "close", "change", "marketcap", "revenue", "income", "assets", "equity", "growth", "margin", "roe", "equity_ratio", "buys", "sells", "buyers", "sellers":
+	case "close", "change", "marketcap", "classcap", "issuercap", "revenue", "income", "assets", "equity", "growth", "margin", "roe", "equity_ratio", "buys", "sells", "buyers", "sellers":
 		r, ok := parseNumRange(val, isRatioOp(name))
 		if !ok {
 			return lit{}, &QueryError{Pos: valPos, Msg: fmt.Sprintf("%s takes a comparison such as >=5b or <10%%, or a range such as 1b..5b", name)}
@@ -575,7 +579,7 @@ func (l lit) eval(p *Profile, f Facts) (bool, int) {
 		return slices.Contains(p.Lists, l.raw), 0
 	case "tag":
 		return slices.Contains(p.Tags, l.raw), 0
-	case "close", "change", "marketcap", "revenue", "income", "assets", "equity", "growth", "margin", "roe", "equity_ratio", "buys", "sells", "buyers", "sellers":
+	case "close", "change", "marketcap", "classcap", "issuercap", "revenue", "income", "assets", "equity", "growth", "margin", "roe", "equity_ratio", "buys", "sells", "buyers", "sellers":
 		v, ok := f.value(l.op, p.Ticker)
 		return ok && l.rng.holds(v), 0
 	case "watched":
