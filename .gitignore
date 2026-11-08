@@ -19,3 +19,6 @@
 /app/stoxicity-tui
 /app/src/cmd/stoxicity/stoxicity
 /app/src/cmd/stoxicity-tui/stoxicity-tui
+
+# private maintenance summary (local only)
+/MAINTENANCE.md
