@@ -27,8 +27,16 @@ type FundFacts struct {
 	Holdings           int            `json:"holdings,omitempty"`        // count of constituents
 	HoldingsDate       string         `json:"holdings_date,omitempty"`   // date of the look-through
 	Tilted             bool           `json:"dividend_tilted,omitempty"` // a dividend or factor tilt, not broad
-	Source             string         `json:"source"`
-	Ref                string         `json:"ref"`
+	// Portfolio names the underlying fund portfolio. The share classes and
+	// listings of one fund carry the same name, so the single-fund cap counts them
+	// together; empty means this security is treated as a fund of its own.
+	Portfolio string `json:"portfolio,omitempty"`
+	// LookThrough is the weight of each company issuer in the fund as of
+	// HoldingsDate, as a fraction of the fund's value. Only what is listed is
+	// known: the rest is unknown, never zero.
+	LookThrough map[string]money.Decimal `json:"look_through,omitempty"`
+	Source      string                   `json:"source"`
+	Ref         string                   `json:"ref"`
 }
 
 // FundConfig are the starter limits for diversified-core-fund-v1, unvalidated and editable.
@@ -169,4 +177,45 @@ func orNone(s string) string {
 		return "none"
 	}
 	return s
+}
+
+// UsableLookThrough returns the company weights when they are dated, no older
+// than maxAgeDays on asOf, each above zero and at most one, and add up to at
+// most one. Otherwise it returns nil and says why, and the exposure through the
+// fund stays unknown.
+func (f FundFacts) UsableLookThrough(asOf string, maxAgeDays int) (map[string]money.Decimal, string) {
+	if len(f.LookThrough) == 0 {
+		return nil, "no look-through weights"
+	}
+	hd, err := time.Parse(time.DateOnly, f.HoldingsDate)
+	if err != nil {
+		return nil, "the look-through has no holdings date"
+	}
+	ad, err := time.Parse(time.DateOnly, asOf)
+	if err != nil {
+		return nil, "the as-of day is not a date"
+	}
+	if hd.After(ad) {
+		return nil, "the holdings date " + f.HoldingsDate + " is after " + asOf
+	}
+	if maxAgeDays > 0 && int(ad.Sub(hd).Hours()/24) > maxAgeDays {
+		return nil, "the holdings date " + f.HoldingsDate + " is too old"
+	}
+	sum := money.Int(0)
+	out := make(map[string]money.Decimal, len(f.LookThrough))
+	for k, w := range f.LookThrough {
+		if k == "" || w.Sign() <= 0 || w.Cmp(money.Int(1)) > 0 {
+			return nil, "the look-through weight of " + k + " is not a fraction above 0 and at most 1"
+		}
+		next, err := sum.Add(w)
+		if err != nil {
+			return nil, err.Error()
+		}
+		sum = next
+		out[k] = w
+	}
+	if sum.Cmp(money.Int(1)) > 0 {
+		return nil, "the look-through weights add up to " + sum.String() + ", more than the whole fund"
+	}
+	return out, ""
 }

@@ -150,9 +150,19 @@ type Preferences struct {
 // Constraints are the limits proposals must stay inside. Fractions are of the
 // investable money unless the name says otherwise.
 type Constraints struct {
-	MaxIssuer         money.Decimal `yaml:"max_issuer" json:"max_issuer"` // across all listings and share classes
-	MaxSector         money.Decimal `yaml:"max_sector" json:"max_sector"` // of direct holdings
-	MaxFund           money.Decimal `yaml:"max_fund" json:"max_fund"`
+	// MaxIssuer limits one operating company: its shares in every class and
+	// listing, plus the exposure to it through funds whose dated holdings are known.
+	// A fund is not an issuer of its provider's other funds.
+	MaxIssuer money.Decimal `yaml:"max_issuer" json:"max_issuer"`
+	// MaxSector is measured against the whole portfolio (cash plus holdings), and
+	// the share of the invested holdings is shown beside it.
+	MaxSector money.Decimal `yaml:"max_sector" json:"max_sector"`
+	// MaxFund limits one underlying fund: all its share classes and listings
+	// together. A broad core fund is not held to the company cap.
+	MaxFund money.Decimal `yaml:"max_fund" json:"max_fund"`
+	// MaxProvider optionally limits the funds of one provider together. Zero: no
+	// cap, the share is still reported.
+	MaxProvider       money.Decimal `yaml:"max_provider,omitempty" json:"max_provider,omitzero"`
 	MaxCurrency       money.Decimal `yaml:"max_foreign_currency" json:"max_foreign_currency"` // all currencies but the base
 	MaxCountry        money.Decimal `yaml:"max_country" json:"max_country"`
 	MaxEventSleeve    money.Decimal `yaml:"max_event_sleeve" json:"max_event_sleeve"`

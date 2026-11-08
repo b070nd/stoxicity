@@ -307,8 +307,14 @@ func gatherAllocation(ctx context.Context, a *app, g allocParams) (*allocGathere
 		heldQty[pos.Security] = true
 		s := names[pos.Security]
 		h := allocate.Holding{Security: pos.Security, Kind: map[bool]string{true: "fund", false: "stock"}[s.Kind == instrument.KindETF], Issuer: s.IssuerID, Country: issuers[s.IssuerID].Country, Currency: base, Sleeve: "core"}
+		if h.Kind == "fund" {
+			h.Provider = s.IssuerID
+		}
 		if r, ok := byID[pos.Security]; ok {
 			h.Sector, h.Currency = r.sector, r.currency
+			if h.Kind == "fund" {
+				h.Fund, h.LookThrough, _ = fundInfo(r.row["facts"], day)
+			}
 			if r.price != nil {
 				if v, err := baseNotional(r.price, pos.Qty, base, rt); err == nil {
 					h.Value, h.ValueKnown = v, true
@@ -316,6 +322,12 @@ func gatherAllocation(ctx context.Context, a *app, g allocParams) (*allocGathere
 			}
 		}
 		holdings = append(holdings, h)
+	}
+
+	// open buy orders count as held: the caps are measured after the trade
+	pending, pendingNotes, err := pendingBuys(ctx, a, l.Book.ID, g.LedgerAt, base, rt, names, byID2(byID, func(r *resolved) map[string]string { return r.row }), day)
+	if err != nil {
+		return nil, err
 	}
 
 	// proposals
@@ -348,7 +360,15 @@ func gatherAllocation(ctx context.Context, a *app, g allocParams) (*allocGathere
 				skipped = append(skipped, allocate.Skip{Security: id, Reason: "no current price"})
 				continue
 			}
-			cands = append(cands, candidateOf(r.sec, r.row, r.price, "fund", r.sector, issuers, money.Decimal{}, 1, true, false, "", fracDefault))
+			c := candidateOf(r.sec, r.row, r.price, "fund", r.sector, issuers, money.Decimal{}, 1, false, false, "", fracDefault)
+			c.Provider = r.sec.IssuerID
+			c.Fund = ff.Portfolio
+			if through, why := ff.UsableLookThrough(day, strategy.DefaultFundConfig().MaxHoldingsAge); through != nil {
+				c.LookThrough, c.LookThroughKnown = through, true
+			} else if len(ff.LookThrough) > 0 {
+				skipped = append(skipped, allocate.Skip{Security: id + " (look-through)", Reason: "the documented holdings are not used: " + why})
+			}
+			cands = append(cands, c)
 			continue
 		}
 		card, err := loadCard(ctx, rs, id, known, 5)
@@ -391,11 +411,12 @@ func gatherAllocation(ctx context.Context, a *app, g allocParams) (*allocGathere
 	}
 
 	cons := pol.Constraints
-	lim := allocate.Limits{MaxIssuer: cons.MaxIssuer, MaxSector: cons.MaxSector, MaxFund: cons.MaxFund, MaxForeign: cons.MaxCurrency, MaxCountry: cons.MaxCountry,
+	lim := allocate.Limits{MaxIssuer: cons.MaxIssuer, MaxSector: cons.MaxSector, MaxFund: cons.MaxFund, MaxProvider: cons.MaxProvider, MaxForeign: cons.MaxCurrency, MaxCountry: cons.MaxCountry,
 		CashReserve: pol.Finances.CashReserve, MinPosition: minPos, MaxCostBurden: cons.MaxCostBurden,
 		ExcludedSectors: pol.Preferences.ExcludedSectors, ExcludedIssuers: pol.Preferences.ExcludedIssuers}
 	other, otherNotes := foreignCash(proj, base, rt)
-	req := allocate.Request{OtherCash: other, OtherCashNotes: otherNotes, Base: base, Cash: proj.Available(base), Holdings: holdings, Candidates: cands, Rates: rt, Limits: lim, Fees: fees, Contribution: contribution}
+	otherNotes = append(otherNotes, pendingNotes...)
+	req := allocate.Request{OtherCash: other, OtherCashNotes: otherNotes, Base: base, Cash: proj.Available(base), Holdings: holdings, Pending: pending, Candidates: cands, Rates: rt, Limits: lim, Fees: fees, Contribution: contribution}
 	heldQ, freeQ := map[string]string{}, map[string]string{}
 	for _, pos := range proj.Positions() {
 		heldQ[pos.Security] = pos.Qty.String()
@@ -537,6 +558,14 @@ func writePlan(a *app, p allocate.Plan, base money.Currency) {
 		}
 		t.write(a.stdout, useColor(a.stdout))
 	}
+	if len(p.Exposure) > 0 {
+		fmt.Fprintln(a.stdout, "\nafter the trade, pending orders included (share of the whole portfolio, and of the invested holdings alone):")
+		t := cliTable{Header: []string{"measure", "name", "value", "of portfolio", "of invested", "limit", "note"}, Right: []bool{false, false, true, true, true, true}}
+		for _, x := range p.Exposure {
+			t.Rows = append(t.Rows, []cliCell{plain(x.Dimension), styled(x.Name, cliStrong), plain(minorText(x.Value, base)), plain(x.OfEquity), plain(x.OfInvested), plain(x.Limit), plain(x.Note)})
+		}
+		t.write(a.stdout, useColor(a.stdout))
+	}
 	section := func(title string, lines []string) {
 		if len(lines) == 0 {
 			return
@@ -594,4 +623,85 @@ func foreignCash(proj *portfolio.Projection, base money.Currency, rates map[mone
 		total += v.Minor()
 	}
 	return total, notes
+}
+
+// fundInfo reads the documented portfolio identity and the usable look-through
+// weights of a fund from the facts file of its candidate row. Without a file, or
+// with weights that cannot be used, the fund is its own fund and its holdings
+// stay unknown.
+func fundInfo(factsFile, day string) (string, map[string]money.Decimal, string) {
+	if factsFile == "" {
+		return "", nil, "no facts file"
+	}
+	var ff strategy.FundFacts
+	if err := readJSONFile(factsFile, &ff); err != nil {
+		return "", nil, err.Error()
+	}
+	through, why := ff.UsableLookThrough(day, strategy.DefaultFundConfig().MaxHoldingsAge)
+	return ff.Portfolio, through, why
+}
+
+// pendingBuys values the buy orders still open for a book, at their limit, in
+// the base currency. They count toward the caps as if they had been filled.
+// An order that cannot be valued is said, not skipped silently. A reading of the
+// ledger at a past time carries no pending orders: their state then is not rebuilt.
+func pendingBuys(ctx context.Context, a *app, bookID string, ledgerAt time.Time, base money.Currency, rates map[money.Currency]money.Decimal, names map[string]instrument.Security, rows map[string]map[string]string, day string) ([]allocate.Holding, []string, error) {
+	if !ledgerAt.IsZero() {
+		return nil, []string{"open orders are not rebuilt for a reading of the ledger at a past time: exposure may be understated by them"}, nil
+	}
+	src, err := workflowSource(a)
+	if err != nil {
+		return nil, nil, err
+	}
+	orders, err := src.OrderRows(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("open orders: %w", err)
+	}
+	var out []allocate.Holding
+	var notes []string
+	for _, o := range orders {
+		if o.Book != bookID || o.Side != "buy" {
+			continue
+		}
+		switch o.State {
+		case "filled", "cancelled", "rejected", "expired":
+			continue
+		}
+		rem, err1 := money.ParseDecimal(o.Remaining)
+		limit, err2 := money.ParseDecimal(o.Limit)
+		if err1 != nil || err2 != nil || rem.Sign() <= 0 || limit.Sign() <= 0 {
+			notes = append(notes, fmt.Sprintf("open order %s for %s has no limit price to value it: exposure is understated by it", o.ID, o.Security))
+			continue
+		}
+		v, err := baseNotional(&strategy.Price{Value: limit, Currency: money.Currency(o.Currency)}, rem, base, rates)
+		if err != nil {
+			notes = append(notes, fmt.Sprintf("open order %s for %s could not be valued: %v; exposure is understated by it", o.ID, o.Security, err))
+			continue
+		}
+		// the cash held for the order includes its fee estimate: counting it keeps the equity whole
+		if fe, err := money.ParseAmount(o.FeeEstimate); err == nil && fe.Currency() == base {
+			v += fe.Minor()
+		}
+		sec := names[o.Security]
+		h := allocate.Holding{Security: o.Security, Kind: map[bool]string{true: "fund", false: "stock"}[sec.Kind == instrument.KindETF], Issuer: sec.IssuerID, Currency: money.Currency(o.Currency), Value: v, ValueKnown: true, Sleeve: "core"}
+		if row := rows[o.Security]; row != nil {
+			h.Sector = row["sector"]
+			if h.Kind == "fund" {
+				h.Fund, h.LookThrough, _ = fundInfo(row["facts"], day)
+			}
+		}
+		if h.Kind == "fund" {
+			h.Provider = sec.IssuerID
+		}
+		out = append(out, h)
+	}
+	return out, notes, nil
+}
+
+func byID2[T any](m map[string]*T, row func(*T) map[string]string) map[string]map[string]string {
+	out := make(map[string]map[string]string, len(m))
+	for k, v := range m {
+		out[k] = row(v)
+	}
+	return out
 }

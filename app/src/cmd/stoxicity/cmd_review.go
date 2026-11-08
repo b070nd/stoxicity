@@ -517,6 +517,7 @@ func reviewHoldings(ctx context.Context, a *app, bookRef, pricesFile, ratesFlag,
 	unknown := 0
 	byIssuer := map[string]int64{}
 	byFund := map[string]int64{}
+	byProvider := map[string]int64{}
 	for _, p := range positions {
 		sec := names[p.Security]
 		free, err := p.Qty.Sub(proj.ReservedShares(p.Security, ""))
@@ -532,9 +533,14 @@ func reviewHoldings(ctx context.Context, a *app, bookRef, pricesFile, ratesFlag,
 			if v, err := baseNotional(x.price, p.Qty, base, rt); err == nil {
 				x.pos.Value, x.pos.ValueKnown = v, true
 				equity += v
-				byIssuer[sec.IssuerID] += v
 				if sec.Kind == instrument.KindETF {
+					// a fund is not an issuer of its provider's other funds: it counts against
+					// the single-fund cap and the provider share, and against a company only
+					// through holdings that are documented (not available to this review)
 					byFund[p.Security] += v
+					byProvider[sec.IssuerID] += v
+				} else {
+					byIssuer[sec.IssuerID] += v
 				}
 			} else {
 				x.why = append(x.why, err.Error())
@@ -576,12 +582,16 @@ func reviewHoldings(ctx context.Context, a *app, bookRef, pricesFile, ratesFlag,
 				}
 				return q
 			}
-			if s := share(byIssuer[sec.IssuerID]); cons.MaxIssuer.Sign() > 0 && s.Cmp(cons.MaxIssuer) > 0 {
-				f.Breaches = append(f.Breaches, review.Breach{Dimension: "issuer", Name: sec.IssuerID, Share: s, Limit: cons.MaxIssuer})
-			}
-			if sec.Kind == instrument.KindETF {
+			if sec.Kind != instrument.KindETF {
+				if s := share(byIssuer[sec.IssuerID]); cons.MaxIssuer.Sign() > 0 && s.Cmp(cons.MaxIssuer) > 0 {
+					f.Breaches = append(f.Breaches, review.Breach{Dimension: "issuer", Name: sec.IssuerID, Share: s, Limit: cons.MaxIssuer})
+				}
+			} else {
 				if s := share(byFund[sec.ID]); cons.MaxFund.Sign() > 0 && s.Cmp(cons.MaxFund) > 0 {
 					f.Breaches = append(f.Breaches, review.Breach{Dimension: "fund", Name: sec.ID, Share: s, Limit: cons.MaxFund})
+				}
+				if s := share(byProvider[sec.IssuerID]); cons.MaxProvider.Sign() > 0 && s.Cmp(cons.MaxProvider) > 0 {
+					f.Breaches = append(f.Breaches, review.Breach{Dimension: "provider", Name: sec.IssuerID, Share: s, Limit: cons.MaxProvider})
 				}
 			}
 		}

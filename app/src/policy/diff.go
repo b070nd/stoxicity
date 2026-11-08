@@ -166,6 +166,7 @@ func RiskIncreases(old, next Policy) []string {
 	hi("constraints.max_issuer", o.MaxIssuer, n.MaxIssuer)
 	hi("constraints.max_sector", o.MaxSector, n.MaxSector)
 	hi("constraints.max_fund", o.MaxFund, n.MaxFund)
+	hi("constraints.max_provider", o.MaxProvider, n.MaxProvider)
 	hi("constraints.max_foreign_currency", o.MaxCurrency, n.MaxCurrency)
 	hi("constraints.max_country", o.MaxCountry, n.MaxCountry)
 	hi("constraints.max_event_sleeve", o.MaxEventSleeve, n.MaxEventSleeve)

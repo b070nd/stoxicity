@@ -529,3 +529,26 @@ func TestHashSeesEveryField(t *testing.T) {
 		}
 	}
 }
+
+// An unset provider cap is not part of the stored policy, so a policy activated
+// before the cap existed keeps the hash its confirmations and plans recorded.
+func TestProviderCapIsOptionalAndDoesNotChangeOldHashes(t *testing.T) {
+	p := reviewed(t)
+	b, _ := Canonical(p)
+	if strings.Contains(string(b), "max_provider") {
+		t.Fatalf("an unset provider cap must not be written: %s", b)
+	}
+	h0, _ := Hash(p)
+	p.Constraints.MaxProvider = money.MustDecimal("0.70")
+	if h, _ := Hash(p); h == h0 {
+		t.Fatal("setting the provider cap must change the hash")
+	}
+	if paths := errorPaths(Validate(p, now)); slices.Contains(paths, "constraints.max_provider") {
+		t.Fatalf("0.70 is above the fund cap and valid: %v", paths)
+	}
+	p.Constraints.MaxProvider = money.MustDecimal("0.10")
+	p.Constraints.MaxFund = money.MustDecimal("0.60")
+	if paths := errorPaths(Validate(p, now)); !slices.Contains(paths, "constraints.max_provider") {
+		t.Fatalf("a provider cap below the single-fund cap must be refused: %v", paths)
+	}
+}

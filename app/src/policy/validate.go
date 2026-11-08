@@ -255,6 +255,7 @@ func (c *checker) constraints(p Policy, base money.Currency) {
 	c.fraction("constraints.max_issuer", k.MaxIssuer, false)
 	c.fraction("constraints.max_sector", k.MaxSector, false)
 	c.fraction("constraints.max_fund", k.MaxFund, true)
+	c.fraction("constraints.max_provider", k.MaxProvider, true)
 	c.fraction("constraints.max_foreign_currency", k.MaxCurrency, true)
 	c.fraction("constraints.max_country", k.MaxCountry, false)
 	c.fraction("constraints.max_event_sleeve", k.MaxEventSleeve, true)
@@ -268,6 +269,9 @@ func (c *checker) constraints(p Policy, base money.Currency) {
 
 	if k.MaxSector.Cmp(k.MaxIssuer) < 0 {
 		c.errf("constraints.max_sector", "%s is below the issuer cap %s; an issuer sits in one sector, so the sector cap cannot be lower", k.MaxSector, k.MaxIssuer)
+	}
+	if k.MaxProvider.Sign() > 0 && k.MaxFund.Sign() > 0 && k.MaxProvider.Cmp(k.MaxFund) < 0 {
+		c.errf("constraints.max_provider", "%s is below the single-fund cap %s; a provider's funds include each of its funds, so the provider cap cannot be lower", k.MaxProvider, k.MaxFund)
 	}
 	if k.MaxEventTradeRisk.Cmp(k.MaxEventSleeve) > 0 {
 		c.errf("constraints.max_event_trade_risk", "%s is above the whole event sleeve %s; one trade cannot plan to lose more than the sleeve holds", k.MaxEventTradeRisk, k.MaxEventSleeve)

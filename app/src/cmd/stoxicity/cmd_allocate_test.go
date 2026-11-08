@@ -81,7 +81,9 @@ func TestAllocatePlan(t *testing.T) {
 		"sec_exw_acc,,,,50.00 EUR,2026-02-27,no,,,yes,"+facts+"\n")
 	r = e.run(t, "allocate", "plan", "main/core", "-candidates", cands2, "-fees", fees, "-as-of", "2026-03-01", "-rates", "USD=0.92")
 	r.wantCode(t, exitOK)
-	r.wantOut(t, "sec_exw_acc", "250.00 EUR", "548.08 EUR", "448.82 EUR")
+	// the fund is held to the single-fund cap (60%), not to the 30% company cap of its provider
+	r.wantOut(t, "sec_exw_acc", "350.00 EUR", "648.08 EUR", "348.82 EUR")
+	r.wantOut(t, "of portfolio", "of invested", "provider", "iss_example_funds", "look-through holdings unknown")
 
 	// the options side by side, unranked
 	r = e.run(t, "allocate", "plan", "main/core", "-candidates", cands2, "-fees", fees, "-as-of", "2026-03-01", "-rates", "USD=0.92", "-compare")
@@ -110,4 +112,39 @@ func TestAllocatePlan(t *testing.T) {
 	e.run(t, "allocate", "plan", "main/core", "-candidates", cands, "-fees", fees, "-rates", "USD").wantCode(t, exitUsage)
 	e.run(t, "allocate", "plan", "main/core", "-candidates", cands, "-fees", fees, "-as-of", "never").wantCode(t, exitUsage)
 	e.run(t, "allocate", "nope").wantCode(t, exitUsage)
+}
+
+// A fund whose dated holdings are documented counts toward the company cap
+// through the part that is known, and the remainder is said to be unknown. Open
+// buy orders count as held.
+func TestAllocateCountsLookThroughAndOpenOrders(t *testing.T) {
+	e := allocateEnv(t)
+	e.run(t, "portfolio", "book", "create", "-account", "paper", "-name", "sim", "-env", "paper_local", "-base", "EUR").wantCode(t, exitOK)
+	e.run(t, "portfolio", "add", "paper/sim", "deposit", "-date", "2026-11-02", "-amount", "1000.00 EUR").wantCode(t, exitOK)
+	activatePolicy(t, e, func(s string) string {
+		s = strings.Replace(s, "max_issuer: \"0.10\"", "max_issuer: \"0.30\"", 1)
+		return strings.Replace(s, "max_sector: \"0.25\"", "max_sector: \"0.40\"", 1)
+	})
+	ff := e.run(t, "strategy", "fund", "-example").out
+	ff = strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(ff, "REPLACE: a broad world equity ETF", "World ETF"), "REPLACE: KID or factsheet", "KID"), "REPLACE: document and date", "KID 2026-01")
+	ff = strings.ReplaceAll(ff, `"REPLACE"`, `"sec_exw_acc"`)
+	ff = strings.ReplaceAll(ff, "2026-01-31", "2026-02-20")
+	ff = strings.Replace(ff, `"security": "sec_exw_acc",`, `"security": "sec_exw_acc", "portfolio": "world", "look_through": {"iss_other": "0.20"},`, 1)
+	facts := writeFile(t, e, "fund.json", ff)
+	cands := writeFile(t, e, "cands.csv", candHeader+
+		"sec_apple,,,technology,1.00 USD,2026-02-27,no,,,yes,\n"+
+		"sec_exw_acc,,,,50.00 EUR,2026-02-27,no,,,yes,"+facts+"\n")
+	fees := writeFile(t, e, "fees.json", `{"known": true, "rate": "0.0005", "min": "1.25 EUR", "fixed": "0.00 EUR", "fx_rate": "0.002", "source": "my broker's schedule, 2026-02"}`)
+
+	r := e.run(t, "allocate", "plan", "paper/sim", "-candidates", cands, "-fees", fees, "-as-of", "2026-03-01", "-rates", "USD=0.92")
+	r.wantCode(t, exitOK)
+	r.wantOut(t, "FEASIBLE", "sec_exw_acc", "through funds with known holdings", "the documented holdings cover 20.00% of the fund")
+	r.wantNotOut(t, "look-through holdings unknown")
+
+	// an open buy order is counted as held
+	d := e.run(t, "order", "draft", "paper/sim", "-security", "sec_apple", "-side", "buy", "-qty", "2", "-limit", "50", "-fee", "1.00 EUR", "-by", "me")
+	d.wantCode(t, exitOK)
+	r = e.run(t, "allocate", "plan", "paper/sim", "-candidates", cands, "-fees", fees, "-as-of", "2026-03-01", "-rates", "USD=0.92")
+	r.wantCode(t, exitOK)
+	r.wantOut(t, "1 open buy order(s) worth 101.00 EUR", "equity 1000.00 EUR")
 }
