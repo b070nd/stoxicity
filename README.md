@@ -47,6 +47,11 @@ tags and the company filters): [docs/universe.md](docs/universe.md). The product
 
 macOS and Linux only; Windows is out of scope.
 
+**Keeping real data off GitHub.** Databases, statements, prices, policy and broker files, credentials
+and built binaries are git-ignored, and `.githooks/` refuses to commit or push them (`make hooks` turns
+the hooks on once per clone; `make guard` checks everything not yet pushed; CI runs the same check).
+Invented fixtures belong under `testdata/`; a deliberate exception is listed in `.githooks/allow`.
+
 ## Screens
 
 Every screen has a route, and the breadcrumb bar shows the trail:
