@@ -283,9 +283,23 @@ func policyActivate(ctx context.Context, a *app, args []string) error {
 	if err != nil {
 		return err
 	}
+	prevTier, _, err := policyTier(ctx, a)
+	if err != nil {
+		return err
+	}
+	if err := requireTierDecision(ctx, a, prevTier, p.Tier); err != nil {
+		return err
+	}
 	rec, err := policy.Activate(ctx, st, p, *confirm, *risk, a.now())
 	if err != nil {
 		return err
+	}
+	if p.Tier < prevTier {
+		n, err := revokeNewRisk(ctx, a, fmt.Sprintf("the tier was lowered from %d to %d", prevTier, p.Tier))
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(a.stdout, "tier lowered from %d to %d: %d unsent confirmation(s) revoked; holdings and open orders are untouched.\n", prevTier, p.Tier, n)
 	}
 	fmt.Fprintf(a.stdout, "policy %q is in force for tenant %s: epoch %d, hash %s\n", rec.Policy.Name, a.tenantID, rec.Epoch, rec.Hash)
 	for _, e := range rec.Effects {

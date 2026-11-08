@@ -75,6 +75,9 @@ func orderService(ctx context.Context, a *app) (order.Service, error) {
 		return order.Service{}, err
 	}
 	svc := order.Service{Store: ords}
+	if svc.Gate, err = tierGate(ctx, a); err != nil {
+		return svc, err
+	}
 	db, err := a.store()
 	if err != nil {
 		return svc, err

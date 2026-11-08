@@ -32,11 +32,13 @@ type Canceller func(ctx context.Context, id, brokerRef string) error
 type Service struct {
 	Store  Runner
 	Limits Limits
+	// Gate limits new risk by tier and health; nil means no gate.
+	Gate *Gate
 }
 
 func (s Service) run(ctx context.Context, book string, fn func(Context) ([]Event, error)) error {
 	return s.Store.Run(ctx, book, func(c Context) ([]Event, error) {
-		c.Limits = s.Limits
+		c.Limits, c.Gate = s.Limits, s.Gate
 		return fn(c)
 	})
 }
@@ -136,6 +138,11 @@ func withEvents(logs map[string][]Event, id string, evs []Event) map[string][]Ev
 // Recover is the restart of the local side for one book.
 func (s Service) Recover(ctx context.Context, book string) error {
 	return s.run(ctx, book, Recover)
+}
+
+// RevokeUnsent withdraws the confirmations of buys that were confirmed but not sent.
+func (s Service) RevokeUnsent(ctx context.Context, book, reason string) error {
+	return s.run(ctx, book, func(c Context) ([]Event, error) { return RevokeUnsent(c, reason) })
 }
 
 // Sweep closes lapsed unsent orders of one book and frees what they held.

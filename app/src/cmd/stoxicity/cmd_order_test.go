@@ -75,7 +75,7 @@ func TestOrderOnARealBookNeedsAPolicyAndNeverReachesABroker(t *testing.T) {
 	r := draft()
 	r.wantCode(t, exitError)
 	r.wantErr(t, "no policy is active")
-	activatePolicy(t, e, nil)
+	tierUp(t, e, 1, nil)
 	r = draft()
 	r.wantCode(t, exitOK)
 	r.wantOut(t, "main / real", "200.00 EUR", "warning: no executing quote has been validated")
@@ -110,6 +110,7 @@ func TestOrderOnARealBookNeedsAPolicyAndNeverReachesABroker(t *testing.T) {
 
 func TestOrderFromAnAcceptedPlan(t *testing.T) {
 	e, cands, fees, book := planFixture(t)
+	tierUp(t, e, 1, capEdit)
 	e.run(t, "portfolio", "add", book, "deposit", "-date", "2026-11-02", "-amount", "300.00 USD").wantCode(t, exitOK)
 	gen := e.run(t, "plan", "generate", book, "-candidates", cands, "-fees", fees, "-as-of", "2026-11-03", "-rates", "USD=0.92")
 	gen.wantCode(t, exitOK)
@@ -137,7 +138,7 @@ func TestOrderFromAnAcceptedPlan(t *testing.T) {
 	draft("-qty", "300").wantErr(t, "not enough cash")
 	r = draft("-qty", "10")
 	r.wantCode(t, exitOK)
-	r.wantOut(t, "sec_apple", "buy", "10", "at most 22.5985 USD", apple+".r1", "epoch 1", "227.24 USD")
+	r.wantOut(t, "sec_apple", "buy", "10", "at most 22.5985 USD", apple+".r1", "epoch 2", "227.24 USD")
 	id := orderIDRE.FindString(r.out)
 	e.run(t, "order", "show", id).wantOut(t, apple+".r1")
 

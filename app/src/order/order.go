@@ -190,6 +190,9 @@ const (
 	CancelledEv     Kind = "cancelled"
 	RejectedEv      Kind = "rejected"
 	ExpiredEv       Kind = "expired"
+	// RevokedEv withdraws the confirmation of an order that was not sent: it is a
+	// draft again and needs a new confirmation.
+	RevokedEv Kind = "confirmation_revoked"
 )
 
 // Fill is one execution.
@@ -344,6 +347,8 @@ func Fold(events []Event) (View, error) {
 			}
 		case ConfirmedEv:
 			v.Confirmation = &Confirmation{Hash: e.Hash, At: e.At, Expires: e.Expires, By: e.By, Acked: e.Acked}
+		case RevokedEv:
+			v.Confirmation = nil
 		case SubmitStarted:
 			v.Attempts++
 		case CancelRequestEv:

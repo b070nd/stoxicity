@@ -660,3 +660,50 @@ func TestControlsAreDurableAndDefaultOffForBrokerEnvironments(t *testing.T) {
 	h := x.db.Orders("default")
 	_ = h
 }
+
+func TestGateLimitsNewRiskOnlyAndSparesPaperSalesAndCancels(t *testing.T) {
+	ctx := context.Background()
+	x := newEnv(t, portfolio.Real, 1000000)
+	x.hold("100")
+	x.enable()
+	g := &order.Gate{Tier: 0}
+	x.svc.Gate = g
+	// tier 0 is paper only
+	_, err := x.svc.Draft(ctx, x.book.ID, order.DraftRequest{Terms: x.terms(order.Buy, "1", "10", 0), By: "me", Valid: time.Hour})
+	if err == nil || !strings.Contains(err.Error(), "tier 0 allows paper trading only") {
+		t.Fatalf("%v", err)
+	}
+	// reducing risk is never gated
+	g.Tier = 1
+	g.Suspended = []string{"drawdown: 16% fall"}
+	sell := x.ready(x.terms(order.Sell, "10", "20", 0))
+	_, err = x.svc.Draft(ctx, x.book.ID, order.DraftRequest{Terms: x.terms(order.Buy, "1", "10", 0), By: "me", Valid: time.Hour})
+	if err == nil || !strings.Contains(err.Error(), "new risk is suspended (drawdown: 16% fall)") {
+		t.Fatalf("%v", err)
+	}
+	// a buy confirmed before the suspension is revoked, not cancelled, and keeps its hold
+	g.Suspended = nil
+	buy := x.ready(x.terms(order.Buy, "5", "10", 0))
+	g.Suspended = []string{"manual: away"}
+	must(t, x.svc.RevokeUnsent(ctx, x.book.ID, "manual: away"))
+	if v := x.view(buy); v.State != order.Draft || v.Confirmation != nil || v.Reservation == "" {
+		t.Fatalf("%+v", v)
+	}
+	if v := x.view(sell); v.State != order.Confirmed {
+		t.Fatalf("a sale was revoked: %+v", v)
+	}
+	// nothing can be confirmed or sent while suspended, but cancelling and selling go on
+	if err := x.svc.Confirm(ctx, x.book.ID, buy, "me", nil, time.Minute); err == nil {
+		t.Fatal("confirmed during a suspension")
+	}
+	send := func(context.Context, order.Submission) (order.SendResult, error) {
+		return order.SendResult{Broker: "B"}, nil
+	}
+	must(t, x.svc.Submit(ctx, x.book.ID, sell, "me", send))
+	must(t, x.svc.Cancel(ctx, x.book.ID, buy, "me", nil))
+	x.invariants()
+	// a local paper book is not gated at all
+	p := newEnv(t, portfolio.PaperLocal, 100000)
+	p.svc.Gate = &order.Gate{Tier: 0, Suspended: []string{"manual: away"}}
+	p.draft(p.terms(order.Buy, "1", "10", 0))
+}

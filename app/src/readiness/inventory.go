@@ -219,8 +219,17 @@ func Inventory() []Capability {
 		Blocker:  "Fills are a simulation from user-supplied daily bars: no intraday data, spread, tax or corporate actions; the Polygon candle store is not bridged",
 	})
 
+	caps = append(caps, Capability{
+		ID: "tiers", Name: "Tier progression and suspension", Scope: Portfolio, Story: "US-016",
+		Levels: map[Dimension]Level{
+			Implemented: Yes, FixtureVerified: Yes, SourceVerified: NotApplicable,
+			AccountVerified: NotApplicable, InvestmentEvaluated: NotApplicable,
+		},
+		Evidence: map[Dimension]string{Implemented: "src/tier/tier.go", FixtureVerified: "src/tier/tier_test.go"},
+		Blocker:  "Evidence items are your sourced attestations; broker health signals are set by hand until the IBKR adapters exist",
+	})
+
 	caps = append(caps,
-		planned("tiers", "Tier progression and suspension", Portfolio, "US-016", "needs policy, exit rules and the paper engine"),
 		planned("ibkr-readonly", "IBKR connection and read-only reconciliation", Broker, "US-017", "needs an IBKR account and the supported retail session flow, reverified"),
 		planned("ibkr-submit", "Confirmed IBKR order preview and submission", Broker, "US-018", "needs read-only sync, tiers and current execution-grade quotes"),
 		planned("order-monitoring", "Order monitoring, cancel and replace", Broker, "US-019", "needs confirmed submission"),

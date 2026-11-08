@@ -3,6 +3,7 @@ package order
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/b070nd/stoxicity/app/src/money"
@@ -37,6 +38,29 @@ func DefaultControl(env portfolio.Env) Control {
 	return Control{Disabled: true, Reason: "new orders are disabled until you enable them for " + string(env)}
 }
 
+// Gate is what the tier and the health of the execution inputs allow. It
+// limits new risk only: a sale, a cancellation and a report are never gated, so
+// an unhealthy or demoted account can always reduce risk.
+type Gate struct {
+	Tier int
+	// Suspended lists the reasons new risk is suspended; empty means it is not.
+	Suspended []string
+}
+
+// Check says whether an order with these terms may take this step.
+func (g Gate) Check(t Terms, step string) error {
+	if t.Env == portfolio.PaperLocal || t.Side == Sell {
+		return nil
+	}
+	if g.Tier < 1 {
+		return fmt.Errorf("order: tier %d allows paper trading only: a %s order cannot be %s (policy tier)", g.Tier, t.Env, step)
+	}
+	if len(g.Suspended) > 0 {
+		return fmt.Errorf("order: new risk is suspended (%s): a buy cannot be %s; selling, cancelling and reporting stay possible", strings.Join(g.Suspended, "; "), step)
+	}
+	return nil
+}
+
 // Context is everything a command reads: the book's ledger, the logs of all
 // orders of the account (so that limits are shared), and the controls.
 type Context struct {
@@ -45,6 +69,15 @@ type Context struct {
 	Logs     map[string][]Event
 	Controls map[portfolio.Env]Control
 	Limits   Limits
+	// Gate, when set, limits new risk by tier and health.
+	Gate *Gate
+}
+
+func (c Context) gate(t Terms, step string) error {
+	if c.Gate == nil {
+		return nil
+	}
+	return c.Gate.Check(t, step)
 }
 
 func (c Context) control(env portfolio.Env) Control {
@@ -169,6 +202,9 @@ func NewDraft(c Context, d DraftRequest) (string, []Event, error) {
 	if err := t.Validate(); err != nil {
 		return "", nil, err
 	}
+	if err := c.gate(t, "drafted"); err != nil {
+		return "", nil, err
+	}
 	b := c.Ledger.Book
 	if t.Book != b.ID || t.Account != b.Account || t.Env != b.Env {
 		return "", nil, fmt.Errorf("order: the terms name %s/%s (%s) but the book is %s/%s (%s)", t.Account, t.Book, t.Env, b.Account, b.ID, b.Env)
@@ -263,6 +299,9 @@ func Confirm(c Context, id, by string, acked []string, ttl time.Duration) ([]Eve
 	if by == "" {
 		return nil, fmt.Errorf("order: a confirmation says who gives it")
 	}
+	if err := c.gate(v.Terms, "confirmed"); err != nil {
+		return nil, err
+	}
 	if ttl <= 0 {
 		return nil, fmt.Errorf("order: a confirmation needs a validity longer than zero")
 	}
@@ -330,6 +369,9 @@ func BeginSubmit(c Context, id, by string) (Submission, []Event, error) {
 	}
 	if !held {
 		return Submission{}, nil, fmt.Errorf("order: the hold of %s is gone", id)
+	}
+	if err := c.gate(v.Terms, "submitted"); err != nil {
+		return Submission{}, nil, err
 	}
 	if ct := c.control(v.Terms.Env); ct.Disabled {
 		return Submission{}, nil, fmt.Errorf("order: new orders are disabled for %s: %s", v.Terms.Env, ct.Reason)
@@ -592,6 +634,26 @@ func Sweep(c Context) ([]Event, error) {
 			return nil, err
 		}
 		out = append(out, rel...)
+	}
+	return out, nil
+}
+
+// RevokeUnsent withdraws the confirmation of every buy that was confirmed but
+// not sent, in a book whose environment reaches a broker. The orders stay as
+// drafts with their holds; holdings, open orders and sales are untouched.
+func RevokeUnsent(c Context, reason string) ([]Event, error) {
+	vs, err := c.views()
+	if err != nil {
+		return nil, err
+	}
+	var out []Event
+	for _, v := range vs {
+		if v.Terms.Book != c.Ledger.Book.ID || v.State != Confirmed || v.Sent() || v.Terms.Side != Buy || v.Terms.Env == portfolio.PaperLocal {
+			continue
+		}
+		e := c.ev(v.ID, RevokedEv, "")
+		e.Reason = reason
+		out = append(out, e)
 	}
 	return out, nil
 }
