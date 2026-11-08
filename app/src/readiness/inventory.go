@@ -319,8 +319,17 @@ func Inventory() []Capability {
 		Blocker:  "Checked in a terminal against a scratch fixture workspace only; no real data, no payouts, no open plan; no what-if, no policy editor and no broker-connected confirmation in the interface",
 	})
 
+	caps = append(caps, Capability{
+		ID: "alerts-journal", Name: "Plan alerts and decision journal", Scope: Portfolio, Story: "US-026",
+		Levels: map[Dimension]Level{
+			Implemented: Yes, FixtureVerified: Yes, SourceVerified: NotApplicable,
+			AccountVerified: NotApplicable, InvestmentEvaluated: NotApplicable,
+		},
+		Evidence: map[Dimension]string{Implemented: "src/alerts/outbox.go", FixtureVerified: "src/alerts/alerts_test.go"},
+		Blocker:  "Scan must be run by a scheduler; no TUI screen for alerts or journal; thesis invalidation, policy breach, missing data and dividend declared/paid events are not detected; email and webhook delivery tested through the channel tests only, never a live send; two processes delivering at once are not serialised",
+	})
+
 	caps = append(caps,
-		planned("alerts-journal", "Plan alerts and decision journal", Portfolio, "US-026", "needs plan revisions and the TUI"),
 		planned("ops-recovery", "Multi-database recovery drills and operations", Portfolio, "US-027", "backup.sh covers single databases only"),
 		planned("release-acceptance", "Release documentation and end-to-end acceptance", Portfolio, "US-028", "needs every other story"),
 	)

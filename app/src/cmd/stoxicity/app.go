@@ -606,6 +606,13 @@ func (a *app) channels() map[channel.Kind]channel.Channel {
 		}
 	}
 	slices.Sort(kinds)
+	return a.buildChannels(kinds)
+}
+
+// buildChannels builds the senders for the kinds given, from the environment
+// variables channels describes. A kind that cannot be built is reported on
+// stderr by variable name and left out.
+func (a *app) buildChannels(kinds []channel.Kind) map[channel.Kind]channel.Channel {
 	settings := a.gmailSettings()
 	settings.FileDir = a.relative(os.Getenv("STOXICITY_FILE_DIR"))
 	settings.FeedPath = a.relative(os.Getenv("STOXICITY_FEED_PATH"))
