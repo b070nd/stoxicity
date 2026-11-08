@@ -188,6 +188,9 @@ func roundHalfEven(r *big.Rat) int64 {
 	return q.Int64()
 }
 
+// Of is the fee of one order of the given notional, in minor units.
+func (f Fees) Of(notional int64, foreign bool) int64 { return f.of(notional, foreign) }
+
 func (f Fees) of(notional int64, foreign bool) int64 {
 	fee := frac(f.Rate, notional)
 	if fee < f.Min {

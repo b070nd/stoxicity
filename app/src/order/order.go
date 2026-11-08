@@ -259,6 +259,8 @@ type View struct {
 	Confirmation *Confirmation
 	Attempts     int
 	BrokerRef    string
+	AckedAt      time.Time // when the first acknowledgement was recorded
+	CancelAt     time.Time // when a cancel was first requested
 	Filled       money.Decimal
 	Remaining    money.Decimal
 	FeesPaid     int64
@@ -346,6 +348,9 @@ func Fold(events []Event) (View, error) {
 			v.Attempts++
 		case CancelRequestEv:
 			cancelReq = true
+			if v.CancelAt.IsZero() {
+				v.CancelAt = e.At
+			}
 		case LocalCancelled:
 			local, cancelled = true, true
 		case LocalExpired:
@@ -361,6 +366,9 @@ func Fold(events []Event) (View, error) {
 			whySet = nil
 		case Acknowledged:
 			acked, unknown = true, false
+			if v.AckedAt.IsZero() {
+				v.AckedAt = e.At
+			}
 			if e.Broker != "" {
 				v.BrokerRef = e.Broker
 			}

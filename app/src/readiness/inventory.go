@@ -209,8 +209,17 @@ func Inventory() []Capability {
 		Blocker:  "Fills and statuses come from the user or the local paper engine until a broker adapter exists (US-017..019); the policy tier gate (US-016) and execution-grade quote checks are not wired in",
 	})
 
+	caps = append(caps, Capability{
+		ID: "paper-engine", Name: "Local paper engine with conservative fills", Scope: Portfolio, Story: "US-015",
+		Levels: map[Dimension]Level{
+			Implemented: Yes, FixtureVerified: Yes, SourceVerified: NotApplicable,
+			AccountVerified: NotApplicable, InvestmentEvaluated: NotApplicable,
+		},
+		Evidence: map[Dimension]string{Implemented: "src/paper/paper.go", FixtureVerified: "src/paper/paper_test.go"},
+		Blocker:  "Fills are a simulation from user-supplied daily bars: no intraday data, spread, tax or corporate actions; the Polygon candle store is not bridged",
+	})
+
 	caps = append(caps,
-		planned("paper-engine", "Local paper engine with conservative fills", Portfolio, "US-015", "needs intents, income and exit rules"),
 		planned("tiers", "Tier progression and suspension", Portfolio, "US-016", "needs policy, exit rules and the paper engine"),
 		planned("ibkr-readonly", "IBKR connection and read-only reconciliation", Broker, "US-017", "needs an IBKR account and the supported retail session flow, reverified"),
 		planned("ibkr-submit", "Confirmed IBKR order preview and submission", Broker, "US-018", "needs read-only sync, tiers and current execution-grade quotes"),
