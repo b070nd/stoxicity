@@ -289,8 +289,17 @@ func Inventory() []Capability {
 		Blocker:  "No licensed corpus with independent labels exists yet: every gate reads no_external_labels until you supply one",
 	})
 
+	caps = append(caps, Capability{
+		ID: "walk-forward", Name: "Strategy replay and walk-forward evaluation", Scope: Research, Story: "US-023",
+		Levels: map[Dimension]Level{
+			Implemented: Yes, FixtureVerified: Yes, SourceVerified: NotApplicable,
+			AccountVerified: NotApplicable, InvestmentEvaluated: NotApplicable,
+		},
+		Evidence: map[Dimension]string{Implemented: "src/walkfwd/walkfwd.go", FixtureVerified: "src/walkfwd/walkfwd_test.go"},
+		Blocker:  "No historical point-in-time data, no approved criteria and no strategy has been evaluated: nothing is validated, and synthetic fixtures cannot validate anything",
+	})
+
 	caps = append(caps,
-		planned("walk-forward", "Walk-forward strategy evaluation", Portfolio, "US-023", "needs years of point-in-time history; the dataset starts around November 2026"),
 		planned("plan-cli", "Plan, Portfolio and Income CLI and exports", Portfolio, "US-024", "needs the plan, ledger and income modules"),
 		planned("plan-tui", "Plan, Portfolio and Income TUI", Portfolio, "US-025", "needs the CLI layer"),
 		planned("alerts-journal", "Plan alerts and decision journal", Portfolio, "US-026", "needs plan revisions and the TUI"),
