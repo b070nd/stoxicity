@@ -22,3 +22,30 @@
 
 # private maintenance summary (local only)
 /MAINTENANCE.md
+
+# real data must never be committed or pushed (see .githooks/guard-no-data.sh)
+# the program's own folders
+/research/
+/exports/
+/reports/
+/private/
+/local/
+# databases and copies of them, wherever they are
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+# statements, prices, bars, marks, rates and exports you write or download
+*.csv
+*.tsv
+*.xlsx
+*.xls
+# your policy, fee schedule and broker files kept next to the code
+/policy*.yaml
+/policy*.yml
+/policy*.json
+/fees*.json
+/broker*.json
+# stray copies of the built binary
+/app/src/stoxicity

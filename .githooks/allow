@@ -1,0 +1,5 @@
+# Exact paths the data guard lets through. One per line. Review every addition.
+#
+# A binary that was committed before the guard existed. It is untracked from now on
+# (see .gitignore) but three old commits still contain it.
+app/src/stoxicity
