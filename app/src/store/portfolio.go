@@ -313,6 +313,13 @@ func (p Portfolios) LedgerAsOf(ctx context.Context, ref string, t time.Time, bas
 // record with: never earlier than what the books already hold. fn may return an
 // import batch to record against the first book.
 func (p Portfolios) Update(ctx context.Context, refs []string, fn func(now time.Time, ls []*portfolio.Ledger) (*ImportBatch, error)) error {
+	return p.update(ctx, refs, func(_ *sql.Tx, now time.Time, ls []*portfolio.Ledger) (*ImportBatch, error) { return fn(now, ls) }, nil)
+}
+
+// update is Update that also lets the caller read inside the transaction and
+// write more rows into it, so that something else (an order's events) commits
+// or fails together with the ledger transactions.
+func (p Portfolios) update(ctx context.Context, refs []string, fn func(tx *sql.Tx, now time.Time, ls []*portfolio.Ledger) (*ImportBatch, error), after func(tx *sql.Tx, now time.Time) error) error {
 	h, err := p.t.handle()
 	if err != nil {
 		return err
@@ -345,7 +352,7 @@ func (p Portfolios) Update(ctx context.Context, refs []string, fn func(now time.
 			now = j.txs[n-1].Recorded
 		}
 	}
-	batch, err := fn(now, ls)
+	batch, err := fn(tx, now, ls)
 	if err != nil {
 		return err
 	}
@@ -371,6 +378,11 @@ func (p Portfolios) Update(ctx context.Context, refs []string, fn func(now time.
 		if _, err := tx.ExecContext(ctx, `INSERT INTO pf_import (book_id, file, sha256, rows, posted, repeated, at_ms) VALUES (?, ?, ?, ?, ?, ?, ?)`,
 			ls[0].Book.ID, batch.File, batch.SHA256, batch.Rows, batch.Posted, batch.Repeated, ms(now)); err != nil {
 			return fmt.Errorf("store: portfolio: %w", err)
+		}
+	}
+	if after != nil {
+		if err := after(tx, now); err != nil {
+			return err
 		}
 	}
 	if err := tx.Commit(); err != nil {

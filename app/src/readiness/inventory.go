@@ -199,8 +199,17 @@ func Inventory() []Capability {
 		Blocker:  "thresholds are unvalidated and start unreviewed; rule 6 (rebalance) has no target weights; no costs or taxes are weighed; no sector or fund look-through; event sleeve does not exist yet",
 	})
 
+	caps = append(caps, Capability{
+		ID: "reservations-intents", Name: "Shared reservations and order-intent state machine", Scope: Portfolio, Story: "US-014",
+		Levels: map[Dimension]Level{
+			Implemented: Yes, FixtureVerified: Yes, SourceVerified: NotApplicable,
+			AccountVerified: NotApplicable, InvestmentEvaluated: NotApplicable,
+		},
+		Evidence: map[Dimension]string{Implemented: "src/order/engine.go", FixtureVerified: "src/order/service_test.go"},
+		Blocker:  "Fills and statuses come from the user or the local paper engine until a broker adapter exists (US-017..019); the policy tier gate (US-016) and execution-grade quote checks are not wired in",
+	})
+
 	caps = append(caps,
-		planned("reservations-intents", "Shared reservations and order-intent state machine", Portfolio, "US-014", "needs ledger and plans"),
 		planned("paper-engine", "Local paper engine with conservative fills", Portfolio, "US-015", "needs intents, income and exit rules"),
 		planned("tiers", "Tier progression and suspension", Portfolio, "US-016", "needs policy, exit rules and the paper engine"),
 		planned("ibkr-readonly", "IBKR connection and read-only reconciliation", Broker, "US-017", "needs an IBKR account and the supported retail session flow, reverified"),
