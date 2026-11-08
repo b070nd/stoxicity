@@ -269,8 +269,17 @@ func Inventory() []Capability {
 		Blocker:  "Experimental and paper-only by design; settings are unvalidated and unreviewed until the walk-forward evaluation (US-023) and your review; no price-timing source verified",
 	})
 
+	caps = append(caps, Capability{
+		ID: "performance", Name: "Portfolio performance and benchmarks", Scope: Portfolio, Story: "US-021",
+		Levels: map[Dimension]Level{
+			Implemented: Yes, FixtureVerified: Yes, SourceVerified: NotApplicable,
+			AccountVerified: NotApplicable, InvestmentEvaluated: NotApplicable,
+		},
+		Evidence: map[Dimension]string{Implemented: "src/perf/perf.go", FixtureVerified: "src/perf/perf_test.go"},
+		Blocker:  "Marks and rates come from user files, not the stored quote and candle stores; no source-verified benchmark data; benchmark choice and evaluation criteria need your approval",
+	})
+
 	caps = append(caps,
-		planned("performance", "Performance, income and benchmark reporting", Portfolio, "US-021", "needs the ledger, income accounting and marks"),
 		planned("heldout-news-eval", "Held-out real-news evaluation", Research, "US-022", "needs an independently labelled real corpus"),
 		planned("walk-forward", "Walk-forward strategy evaluation", Portfolio, "US-023", "needs years of point-in-time history; the dataset starts around November 2026"),
 		planned("plan-cli", "Plan, Portfolio and Income CLI and exports", Portfolio, "US-024", "needs the plan, ledger and income modules"),
