@@ -279,8 +279,17 @@ func Inventory() []Capability {
 		Blocker:  "Marks and rates come from user files, not the stored quote and candle stores; no source-verified benchmark data; benchmark choice and evaluation criteria need your approval",
 	})
 
+	caps = append(caps, Capability{
+		ID: "heldout-news-eval", Name: "Held-out claims and event precision", Scope: Research, Story: "US-022",
+		Levels: map[Dimension]Level{
+			Implemented: Yes, FixtureVerified: Yes, SourceVerified: NotApplicable,
+			AccountVerified: NotApplicable, InvestmentEvaluated: NotApplicable,
+		},
+		Evidence: map[Dimension]string{Implemented: "src/heldout/heldout.go", FixtureVerified: "src/heldout/heldout_test.go"},
+		Blocker:  "No licensed corpus with independent labels exists yet: every gate reads no_external_labels until you supply one",
+	})
+
 	caps = append(caps,
-		planned("heldout-news-eval", "Held-out real-news evaluation", Research, "US-022", "needs an independently labelled real corpus"),
 		planned("walk-forward", "Walk-forward strategy evaluation", Portfolio, "US-023", "needs years of point-in-time history; the dataset starts around November 2026"),
 		planned("plan-cli", "Plan, Portfolio and Income CLI and exports", Portfolio, "US-024", "needs the plan, ledger and income modules"),
 		planned("plan-tui", "Plan, Portfolio and Income TUI", Portfolio, "US-025", "needs the CLI layer"),
