@@ -78,6 +78,10 @@ func (p *Projection) apply(book Book, tx *Tx) error {
 		if err := checkCashDirection(tx); err != nil {
 			return err
 		}
+	case Income, DRIP:
+		if err := p.checkPayout(tx); err != nil {
+			return err
+		}
 	}
 
 	touchedSec := map[string]bool{}
@@ -157,8 +161,13 @@ func (p *Projection) record(tx *Tx) {
 	switch tx.Kind {
 	case Reversal:
 		p.reversed[tx.Reverses] = tx.ID
+		if o, ok := p.txs[tx.Reverses]; ok {
+			p.undoPayout(o)
+		}
 	case Settle:
 		p.settledBy[tx.Meta["settle_of"]] = tx.ID
+	case Income, DRIP:
+		p.notePayout(tx)
 	}
 }
 
@@ -431,6 +440,9 @@ func (p *Projection) checkReversal(tx *Tx) error {
 	}
 	if tx.Event.Before(o.Event) {
 		return errors.New("portfolio: a reversal cannot be dated before what it reverses")
+	}
+	if err := p.checkPayoutReversal(o); err != nil {
+		return err
 	}
 	// A lot changed by a later live transaction (a sale, a split) would be left
 	// in a state the reversal cannot restore; that transaction is reversed first.

@@ -162,8 +162,8 @@ that the file is right.
 
 ## Not done here
 
-- Dividend entitlement, receivables, due-bills and withholding reconciliation (US-008). Income is booked
-  when cash arrives or shares are reinvested.
+- Dividend entitlement, receivables and withholding reconciliation are in [income.md](income.md). Due-bills
+  are not modelled.
 - Mark-to-market, performance, time- and money-weighted return, benchmarks (US-021).
 - Merger, spin-off, delisting and other corporate actions beyond splits. They must be entered as recorded
   adjustments; nothing detects them, so a statement difference is the signal.

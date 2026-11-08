@@ -137,8 +137,19 @@ func Inventory() []Capability {
 		Blocker:  "the journal holds only what you enter or import: no broker or custodian statement is reconciled against it until US-017, income is booked when cash arrives (entitlement and receivables arrive with US-008), and cost basis is a display convention, not tax reporting",
 	})
 
+	// US-008 is entitlement from recorded fills and income booked once. It is checked on
+	// fixtures only; the payouts are the ones the user or a fixture imported.
+	caps = append(caps, Capability{
+		ID: "income-accounting", Name: "Dividend entitlement from recorded fills, accruals, receivables, withholding and DRIP without double income", Scope: Portfolio, Story: "US-008",
+		Levels: map[Dimension]Level{
+			Implemented: Yes, FixtureVerified: Yes, SourceVerified: NotApplicable,
+			AccountVerified: NotApplicable, InvestmentEvaluated: NotApplicable,
+		},
+		Evidence: map[Dimension]string{Implemented: "src/income", FixtureVerified: "src/income/income_test.go"},
+		Blocker:  "entitlement is judged by the plain rule in the package doc (shares held before the ex-date); due-bill, special and return-of-capital payouts are reported as unsupported, tax withheld is only what you record, and nothing was checked against a broker statement until US-017",
+	})
+
 	caps = append(caps,
-		planned("income-accounting", "Entitlement, receivables, withholding and DRIP", Portfolio, "US-008", "needs distributions and the ledger"),
 		planned("research-scorecards", "Sourced research scorecards and sector templates", Research, "US-009", "keyword table and rule versions are not in the content hash"),
 		planned("core-strategy", "Valuation scenarios and the core strategy", Portfolio, "US-010", "needs scorecards"),
 		planned("allocator", "Portfolio and contribution allocator", Portfolio, "US-011", "needs strategy proposals and the ledger"),

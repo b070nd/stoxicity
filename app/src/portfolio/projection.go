@@ -41,6 +41,7 @@ type Projection struct {
 	settledBy map[string]string
 	txs       map[string]*Tx
 	order     []string
+	payouts   map[string]*payoutState
 }
 
 func newProjection() *Projection {
@@ -76,6 +77,13 @@ func (p *Projection) clone() *Projection {
 		n.txs[k] = v
 	}
 	n.order = append([]string(nil), p.order...)
+	for k, v := range p.payouts {
+		c := *v
+		if n.payouts == nil {
+			n.payouts = map[string]*payoutState{}
+		}
+		n.payouts[k] = &c
+	}
 	return n
 }
 
@@ -289,6 +297,9 @@ func (p *Projection) Fingerprint() string {
 	}
 	for _, r := range p.Reservations() {
 		fmt.Fprintf(&b, "res %s %s %s %d %s %s\n", r.ID, r.Kind, r.Currency, r.Amount, r.Security, r.Qty)
+	}
+	for _, po := range p.Payouts() {
+		fmt.Fprintf(&b, "payout %s %s %d %s %s %v\n", po.Key, po.Currency, po.Gross, po.AccrualTx, po.PaidTx, po.Direct)
 	}
 	rev := make([]string, 0, len(p.reversed))
 	for k, v := range p.reversed {

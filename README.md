@@ -40,7 +40,7 @@ Read its "Unverified" section before relying on any of it.
 How fetchers and the SEC EDGAR reader are meant to work:
 [docs/fetchers.md](docs/fetchers.md). The full-screen interface and its keys:
 [docs/tui.md](docs/tui.md). The stock universe (every ticker, profiles, lists,
-tags and the company filters): [docs/universe.md](docs/universe.md). The production plan's foundations: [docs/readiness.md](docs/readiness.md) (doctor, exact money) and [docs/policy.md](docs/policy.md) (the investment policy) and [docs/instruments.md](docs/instruments.md) (securities, listings, and what each data source could supply) [docs/fx-prices.md](docs/fx-prices.md) (exchange rates and prices, and when they are refused) and [docs/dividends.md](docs/dividends.md) (dividend and distribution observations, calendar and history quality) and [docs/portfolio.md](docs/portfolio.md) (accounts and the immutable ledger: real and paper books, lots, unsettled cash, reversals, statement reconciliation).
+tags and the company filters): [docs/universe.md](docs/universe.md). The production plan's foundations: [docs/readiness.md](docs/readiness.md) (doctor, exact money) and [docs/policy.md](docs/policy.md) (the investment policy) and [docs/instruments.md](docs/instruments.md) (securities, listings, and what each data source could supply) [docs/fx-prices.md](docs/fx-prices.md) (exchange rates and prices, and when they are refused) and [docs/dividends.md](docs/dividends.md) (dividend and distribution observations, calendar and history quality) and [docs/portfolio.md](docs/portfolio.md) (accounts and the immutable ledger: real and paper books, lots, unsettled cash, reversals, statement reconciliation) and [docs/income.md](docs/income.md) (dividend entitlement, accruals, withholding and the check that income is booked once).
 
 macOS and Linux only; Windows is out of scope.
 
@@ -98,12 +98,13 @@ one pass. Copy any `*.yaml.example` to start a new watch.
 app/
   config/                   config.yaml, sources.yaml
   src/
-    cmd/stoxicity/          CLI: fetch, run, digest, search, watch, tenant, sources, policy, instruments, fx, prices, dividends, portfolio, doctor
+    cmd/stoxicity/          CLI: fetch, run, digest, search, watch, tenant, sources, policy, instruments, fx, prices, dividends, portfolio, income, doctor
     cmd/stoxicity-tui/      full-screen interface
     instrument/             issuer, security, listing identity and the resolver
     capability/             what each data source could supply, where, at what cost
     distribution/           dividend and fund-distribution observations: declared, estimated, cancelled, conflicting; calendar and history quality
     csvtable/               the strict CSV reader the importers share
+    income/                 which payouts a book is entitled to (shares held before the ex-date), and the check that the ledger agrees
     portfolio/              books, the immutable double-entry journal, tax lots, unsettled cash, reservations, replay and statement reconciliation
     quotes/                 exact FX and price observations, the ECB reader, and the rules that refuse stale, conflicting or unit-ambiguous values
     config/                 load the configuration folder

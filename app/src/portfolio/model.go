@@ -201,7 +201,7 @@ var allowed = map[Kind][]string{
 	Sell:        {"securities:", "unsettled", "gain:realized", "expense:commission", "expense:fee", "cash"},
 	Fee:         {"expense:fee", "expense:commission", "cash"},
 	Income:      {"cash", "unsettled", "income:", "expense:withholding", "receivable:dividend"},
-	DRIP:        {"securities:", "income:dividend", "expense:withholding"},
+	DRIP:        {"securities:", "income:dividend", "expense:withholding", "receivable:dividend"},
 	FX:          {"cash", "fx:clearing", "expense:fee"},
 	Split:       {"securities:"},
 	Settle:      {"cash", "unsettled"},
