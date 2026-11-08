@@ -122,9 +122,6 @@ func Build(in Input) (Card, error) {
 	for i, end := range ends {
 		y := Year{End: end, Raw: map[string]Cell{}, Ratios: map[string]Cell{}, Used: map[string]Datum{}}
 		for _, m := range Metrics() {
-			if m == Shares {
-				continue
-			}
 			d, c := sel.pick(m, end)
 			y.Raw[m] = c
 			if c.Has() {

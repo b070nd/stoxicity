@@ -159,8 +159,17 @@ func Inventory() []Capability {
 		Blocker:  "figures are only what you import: nothing fetches or maps SEC frames or European filings into this model yet; banks, insurers, REITs and funds get only the few ratios that mean something, and the scorecard evaluates no investment",
 	})
 
+	caps = append(caps, Capability{
+		ID: "core-strategy", Name: "Valuation scenarios and the core strategy with a scored checklist, entry ceiling and fund template", Scope: Portfolio, Story: "US-010",
+		Levels: map[Dimension]Level{
+			Implemented: Yes, FixtureVerified: Yes, SourceVerified: NotApplicable,
+			AccountVerified: NotApplicable, InvestmentEvaluated: NotApplicable,
+		},
+		Evidence: map[Dimension]string{Implemented: "src/strategy", FixtureVerified: "src/strategy/strategy_test.go"},
+		Blocker:  "starter thresholds are unvalidated research settings and the configuration starts unreviewed; valuation needs your own documented assumptions; proposals carry no probability and no banks, insurers or REITs template exists",
+	})
+
 	caps = append(caps,
-		planned("core-strategy", "Valuation scenarios and the core strategy", Portfolio, "US-010", "needs scorecards"),
 		planned("allocator", "Portfolio and contribution allocator", Portfolio, "US-011", "needs strategy proposals and the ledger"),
 		planned("plan-snapshots", "Immutable plan snapshots and explanations", Portfolio, "US-012", "needs allocator, income and valuation"),
 		planned("hold-exit", "Hold, reduce and sell rules with review lifecycle", Portfolio, "US-013", "needs plan snapshots"),

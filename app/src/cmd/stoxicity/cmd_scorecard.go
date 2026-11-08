@@ -302,9 +302,6 @@ func scorecardShow(ctx context.Context, a *app, args []string) error {
 		t.Rows = append(t.Rows, row)
 	}
 	for _, m := range scorecard.Metrics() {
-		if m == scorecard.Shares {
-			continue
-		}
 		m := m
 		have := false
 		for _, y := range card.Years {

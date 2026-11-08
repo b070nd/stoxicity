@@ -35,6 +35,7 @@ import (
 const (
 	Revenue           = "revenue"
 	OperatingIncome   = "operating_income"
+	Ebitda            = "ebitda"
 	NetIncome         = "net_income"
 	OperatingCashFlow = "operating_cash_flow"
 	Capex             = "capex"
@@ -53,7 +54,7 @@ type metricInfo struct {
 }
 
 var metrics = map[string]metricInfo{
-	Revenue: {flow: true}, OperatingIncome: {flow: true}, NetIncome: {flow: true},
+	Revenue: {flow: true}, OperatingIncome: {flow: true}, Ebitda: {flow: true}, NetIncome: {flow: true},
 	OperatingCashFlow: {flow: true}, Capex: {flow: true}, InterestExpense: {flow: true}, DividendsPaid: {flow: true},
 	TotalAssets: {}, Equity: {}, TotalDebt: {}, Cash: {}, Shares: {count: true},
 }
@@ -63,7 +64,7 @@ var outflows = map[string]bool{Capex: true, InterestExpense: true, DividendsPaid
 
 // Metrics lists the known metric names, for help and validation messages.
 func Metrics() []string {
-	return []string{Revenue, OperatingIncome, NetIncome, OperatingCashFlow, Capex, InterestExpense, DividendsPaid, TotalAssets, Equity, TotalDebt, Cash, Shares}
+	return []string{Revenue, OperatingIncome, Ebitda, NetIncome, OperatingCashFlow, Capex, InterestExpense, DividendsPaid, TotalAssets, Equity, TotalDebt, Cash, Shares}
 }
 
 // Datum is one reported figure of one security for one period or date.
