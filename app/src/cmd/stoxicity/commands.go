@@ -21,6 +21,7 @@ type command struct {
 // commands lists the subcommands in the order the usage shows them.
 func commands() []command {
 	return []command{
+		{name: "quota", usage: "quota status [-json]", summary: "recorded provider request budgets and retry times (offline)", bootstrap: true, run: cmdQuota},
 		{name: "fetch", usage: "fetch [source-id...]", summary: "poll sources once and store what they have", bootstrap: true, run: cmdFetch},
 		{name: "run", usage: "run", summary: "poll the enabled sources until interrupted", bootstrap: true, run: cmdRun},
 		{name: "digest", usage: "digest [-day YYYY-MM-DD]", summary: "the day's relevant news, domains and trends", bootstrap: true, run: cmdDigest},

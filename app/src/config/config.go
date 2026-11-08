@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/b070nd/stoxicity/app/src/model"
+	"github.com/b070nd/stoxicity/app/src/quota"
 )
 
 // Config is the parsed config.yaml.
@@ -235,6 +236,20 @@ type Fetch struct {
 	Contact  string `yaml:"contact"`
 	Interval string `yaml:"interval"` // for example "30m"
 	Timeout  string `yaml:"timeout"`  // per request
+	// Quotas are installation-wide request budgets, keyed by lower-case host
+	// (or "sec" for the grouped SEC hosts). No subscription allowance is assumed.
+	Quotas map[string]RequestQuota `yaml:"quotas"`
+}
+
+type RequestQuota struct {
+	Requests int    `yaml:"requests"`
+	Period   string `yaml:"period"` // duration, e.g. 1m or 24h; starts at first attempt
+}
+
+// Limit converts a validated configuration budget for enforcement and status.
+func (q RequestQuota) Limit() quota.Limit {
+	period, _ := time.ParseDuration(q.Period)
+	return quota.Limit{Requests: q.Requests, Period: period}
 }
 
 // Location returns the zone named by Timezone, or UTC if the name does not

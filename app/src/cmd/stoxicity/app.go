@@ -34,6 +34,7 @@ import (
 	"github.com/b070nd/stoxicity/app/src/model"
 	"github.com/b070nd/stoxicity/app/src/pipeline"
 	"github.com/b070nd/stoxicity/app/src/policy"
+	"github.com/b070nd/stoxicity/app/src/quota"
 	"github.com/b070nd/stoxicity/app/src/refdata"
 	"github.com/b070nd/stoxicity/app/src/sources"
 	"github.com/b070nd/stoxicity/app/src/stockfeeds"
@@ -877,15 +878,33 @@ func (a *app) httpClient() (httpx.Client, error) {
 		}
 		return nil, errors.New("STOXICITY_CONTACT is not usable: it must be an email address or an https URL, without spaces or parentheses")
 	}
+	limits := map[string]quota.Limit{}
+	for key, q := range a.cfg.Fetch.Quotas {
+		limits[key] = q.Limit()
+	}
 	if a.opts.client != nil {
-		return a.opts.client, nil
+		if c, ok := a.opts.client.(*httpx.HTTP); ok {
+			db, err := a.store()
+			if err != nil {
+				return nil, err
+			}
+			return c.WithQuotas(db, limits, a.now)
+		}
+		return a.opts.client, nil // fake clients replace the entire transport/accounting seam
+	}
+	db, err := a.store()
+	if err != nil {
+		return nil, err
 	}
 	c, err := httpx.New(httpx.Config{
-		UserAgent: ua,
-		Timeout:   a.cfg.FetchTimeout(),
-		Burst:     a.cfg.Refresh.PerHost,
-		Groups:    hostGroups,
-		HostRates: map[string]float64{"sec": 10},
+		UserAgent:  ua,
+		Timeout:    a.cfg.FetchTimeout(),
+		Burst:      a.cfg.Refresh.PerHost,
+		Groups:     hostGroups,
+		HostRates:  map[string]float64{"sec": 10},
+		Now:        a.now,
+		Quotas:     limits,
+		QuotaStore: db,
 	})
 	if err != nil {
 		return nil, err

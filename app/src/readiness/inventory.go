@@ -40,6 +40,7 @@ func planned(id, name string, scope Scope, story, blocker string) Capability {
 // Inventory returns the capabilities with their readiness.
 func Inventory() []Capability {
 	caps := []Capability{
+		existing("provider-quotas", "Durable configured fetch budgets and provider throttle cooldowns", Research, "src/httpx/quota.go", "src/cmd/stoxicity/cmd_quota_test.go"),
 		existing("news-ingest", "News ingestion from configured sources", Research, "src/sources", "src/sources"),
 		existing("evidence-events", "Append-only evidence and event history with as-of reads", Research, "src/pipeline", "src/pipeline"),
 		existing("origin-corroboration", "Origin-based corroboration and near-copy suspicion", Research, "src/origin", "src/origin"),

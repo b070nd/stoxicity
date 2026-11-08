@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/b070nd/stoxicity/app/src/model"
+	"github.com/b070nd/stoxicity/app/src/quota"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -174,6 +175,12 @@ func validate(cfg Config) error {
 	}
 	checkDuration("fetch.interval", cfg.Fetch.Interval)
 	checkDuration("fetch.timeout", cfg.Fetch.Timeout)
+	for key, q := range cfg.Fetch.Quotas {
+		period, err := time.ParseDuration(q.Period)
+		if !quota.ValidKey(key) || err != nil || q.Requests <= 0 || (quota.Limit{Requests: q.Requests, Period: period}).Validate() != nil {
+			errs = append(errs, errors.New("config: fetch.quotas needs lower-case provider hosts/groups, positive requests and a period between 1ms and 8784h"))
+		}
+	}
 	checkDuration("refresh.max_backoff", cfg.Refresh.MaxBackoff)
 	checkDuration("laya.timeout", cfg.Laya.Timeout)
 	checkDuration("laya.start_timeout", cfg.Laya.StartTimeout)

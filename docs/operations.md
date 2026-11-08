@@ -18,7 +18,7 @@ None of these opens a database through the application's store, so none of them 
 
 ## Limits
 
-`STOXICITY_MIN_FREE_MB` is the free space the disk must keep; `STOXICITY_MAX_DATA_MB` is the most the data folder may hold. Neither is set by default (no limit). When one is reached, `fetch` and `ops backup` are refused with the reason, and `ops health` fails. Cancelling an order, reconciling, delivering an alert and recording in the books are never refused for space. A value that is not a whole number of megabytes is an error, not "no limit". These are the only quotas: nothing here limits the requests made to a data provider.
+`STOXICITY_MIN_FREE_MB` is the free space the disk must keep; `STOXICITY_MAX_DATA_MB` is the most the data folder may hold. Neither is set by default (no limit). When one is reached, `fetch` and `ops backup` are refused with the reason, and `ops health` fails. Cancelling an order, reconciling, delivering an alert and recording in the books are never refused for space. A value that is not a whole number of megabytes is an error, not "no limit". Separately, configured `fetch.quotas` request budgets and provider throttle cooldowns persist in `base.db`; inspect them offline with `quota status [-json]` ([provider-quotas.md](provider-quotas.md)).
 
 ## Job leases
 
@@ -81,7 +81,7 @@ The recovery point is set by how often backups run, not measured by the drill: w
 - Leases are advisory and only two jobs take them.
 - The coherence check is a fingerprint of commits, not a lock.
 - The process check relies on `pgrep` and the process names `stoxicity` and `stoxicity-tui`.
-- Disk and data-size limits only. No request quotas.
+- Disk/data-size limits and configured fetch request budgets; unknown provider allowances are not inferred. Fetch throttles do not cover the separate IBKR transport.
 - Unix only (free space comes from `statfs`).
 - Nothing starts, supervises or restarts the program; the service files only schedule the two jobs.
 - Reconciliation after a restore is as good as `broker sync`, which is verified against a fixture broker only (see docs/broker.md).

@@ -11,11 +11,11 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/b070nd/stoxicity/app/src/quota"
 	"golang.org/x/time/rate"
 )
 
@@ -71,6 +71,13 @@ type Config struct {
 	// group, keyed by its lower-case name. Host names are matched
 	// case-insensitively and without the port.
 	Groups map[string]string
+	// Quotas are configured request-attempt budgets by host group. QuotaStore
+	// persists reservations and provider throttles across clients/processes.
+	Quotas     map[string]quota.Limit
+	QuotaStore quota.Store
+	// QuotaNow overrides the accounting clock only; nil uses Now. Wrapping an
+	// injected client must preserve its rate-limiter clock and Sleep pairing.
+	QuotaNow func() time.Time
 	// AllowPrivate disables the address checks. For tests only.
 	AllowPrivate bool
 
@@ -135,6 +142,21 @@ func New(cfg Config) (*HTTP, error) {
 		groups[strings.ToLower(host)] = strings.ToLower(key)
 	}
 	cfg.Groups = groups
+	limits := make(map[string]quota.Limit, len(cfg.Quotas))
+	for key, limit := range cfg.Quotas {
+		key = strings.ToLower(key)
+		if !quota.ValidKey(key) {
+			return nil, errors.New("httpx: invalid quota provider key")
+		}
+		if err := limit.Validate(); err != nil {
+			return nil, err
+		}
+		limits[key] = limit
+	}
+	if len(limits) > 0 && cfg.QuotaStore == nil {
+		return nil, errors.New("httpx: configured quotas need a durable store")
+	}
+	cfg.Quotas = limits
 
 	if cfg.Timeout == 0 {
 		cfg.Timeout = defaultTimeout
@@ -307,8 +329,19 @@ func (h *HTTP) attempt(ctx context.Context, start *url.URL, req Request) (*Respo
 			return nil, e
 		}
 		g := h.groupFor(cur.Hostname())
+		if h.cfg.QuotaStore != nil {
+			key := h.groupKey(cur.Hostname())
+			if err := h.quotaError(ctx, cur, h.cfg.QuotaStore.TakeQuota(ctx, key, h.cfg.Quotas[key], h.quotaNow())); err != nil {
+				return nil, err
+			}
+		}
 		if err := h.wait(ctx, g); err != nil {
 			return nil, err
+		}
+		if h.cfg.QuotaStore != nil {
+			if err := h.quotaError(ctx, cur, h.cfg.QuotaStore.CheckQuotaCooldown(ctx, h.groupKey(cur.Hostname()), h.quotaNow())); err != nil {
+				return nil, err
+			}
 		}
 		rep, err := h.get(ctx, cur, h.header(req, strings.EqualFold(cur.Host, start.Host)))
 		if err != nil {
@@ -331,6 +364,9 @@ func (h *HTTP) attempt(ctx context.Context, start *url.URL, req Request) (*Respo
 				d = defaultThrottle
 			}
 			h.cooldown(g, d)
+			if h.cfg.QuotaStore != nil {
+				return nil, h.persistThrottle(ctx, cur, s, rep.header.Get("Retry-After"))
+			}
 			return nil, newError(Throttled, s, d, cur, nil)
 		case s == http.StatusForbidden:
 			return nil, newError(Blocked, s, 0, cur, nil)
@@ -338,6 +374,9 @@ func (h *HTTP) attempt(ctx context.Context, start *url.URL, req Request) (*Respo
 			d, ok := parseRetryAfter(rep.header.Get("Retry-After"), h.cfg.Now())
 			if ok && d > h.cfg.MaxBackoff {
 				h.cooldown(g, d)
+				if h.cfg.QuotaStore != nil {
+					return nil, h.persistThrottle(ctx, cur, s, rep.header.Get("Retry-After"))
+				}
 				return nil, newError(Throttled, s, d, cur, nil)
 			}
 			return nil, newError(Retryable, s, d, cur, nil)
@@ -448,10 +487,7 @@ func (h *HTTP) transportError(ctx context.Context, u *url.URL, err error) error 
 
 // groupFor returns the shared state for a host name.
 func (h *HTTP) groupFor(host string) *group {
-	key := strings.ToLower(host)
-	if k, ok := h.cfg.Groups[key]; ok {
-		key = k
-	}
+	key := h.groupKey(host)
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if g, ok := h.groups[key]; ok {
@@ -513,26 +549,11 @@ func (h *HTTP) wait(ctx context.Context, g *group) error {
 // date, and clamps it to an hour. A negative, past or unparsable value is
 // reported as absent.
 func parseRetryAfter(v string, now time.Time) (time.Duration, bool) {
-	v = strings.TrimSpace(v)
-	if v == "" {
+	at, ok := retryAfterAt(v, now)
+	if !ok {
 		return 0, false
 	}
-	if strings.Trim(v, "0123456789") == "" {
-		n, err := strconv.ParseInt(v, 10, 64)
-		if err != nil || n > int64(maxRetryAfter/time.Second) {
-			return maxRetryAfter, true
-		}
-		return time.Duration(n) * time.Second, true
-	}
-	t, err := http.ParseTime(v)
-	if err != nil {
-		return 0, false
-	}
-	d := t.Sub(now)
-	if d < 0 {
-		return 0, false
-	}
-	return min(d, maxRetryAfter), true
+	return min(at.Sub(now), maxRetryAfter), true
 }
 
 func newError(class Class, status int, retryAfter time.Duration, u *url.URL, err error) *Error {
