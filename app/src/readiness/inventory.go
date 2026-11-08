@@ -299,8 +299,17 @@ func Inventory() []Capability {
 		Blocker:  "No historical point-in-time data, no approved criteria and no strategy has been evaluated: nothing is validated, and synthetic fixtures cannot validate anything",
 	})
 
+	caps = append(caps, Capability{
+		ID: "plan-cli", Name: "Plan, Portfolio and Income CLI and exports", Scope: Portfolio, Story: "US-024",
+		Levels: map[Dimension]Level{
+			Implemented: Yes, FixtureVerified: Yes, SourceVerified: NotApplicable,
+			AccountVerified: NotApplicable, InvestmentEvaluated: NotApplicable,
+		},
+		Evidence: map[Dimension]string{Implemented: "src/report/report.go", FixtureVerified: "src/report/report_test.go"},
+		Blocker:  "Exports are built from stored records only and checked on fixtures; no real book has been exported or reconciled with a statement, and the command family was never used against a live account",
+	})
+
 	caps = append(caps,
-		planned("plan-cli", "Plan, Portfolio and Income CLI and exports", Portfolio, "US-024", "needs the plan, ledger and income modules"),
 		planned("plan-tui", "Plan, Portfolio and Income TUI", Portfolio, "US-025", "needs the CLI layer"),
 		planned("alerts-journal", "Plan alerts and decision journal", Portfolio, "US-026", "needs plan revisions and the TUI"),
 		planned("ops-recovery", "Multi-database recovery drills and operations", Portfolio, "US-027", "backup.sh covers single databases only"),

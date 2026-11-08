@@ -32,6 +32,8 @@ func cmdPlan(ctx context.Context, a *app, args []string) error {
 		return planList(ctx, a, args[1:])
 	case "show":
 		return planShow(ctx, a, args[1:])
+	case "export":
+		return planExport(ctx, a, args[1:])
 	case "diff":
 		return planDiff(ctx, a, args[1:])
 	case "check":
