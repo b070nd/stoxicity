@@ -692,6 +692,27 @@ func RevokeUnsent(c Context, reason string) ([]Event, error) {
 	return out, nil
 }
 
+// RevokeWhere withdraws the confirmation of every order that was confirmed but
+// not sent and that the test picks, whatever the environment of its book. The
+// orders stay as drafts with their holds. An order that was sent is never
+// touched here: what happened at a broker is decided there.
+func RevokeWhere(c Context, pick func(View) bool, reason string) ([]Event, error) {
+	vs, err := c.views()
+	if err != nil {
+		return nil, err
+	}
+	var out []Event
+	for _, v := range vs {
+		if v.Terms.Book != c.Ledger.Book.ID || v.State != Confirmed || v.Sent() || !pick(v) {
+			continue
+		}
+		e := c.ev(v.ID, RevokedEv, "")
+		e.Reason = reason
+		out = append(out, e)
+	}
+	return out, nil
+}
+
 // Resolve records that a person looked at an unknown order and compared it with
 // the other side. It clears the flag, not the facts.
 func Resolve(c Context, id, by, note string) ([]Event, error) {

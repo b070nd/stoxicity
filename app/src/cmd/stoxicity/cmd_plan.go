@@ -277,12 +277,21 @@ func planGenerate(ctx context.Context, a *app, args []string) error {
 	}
 	var rows []row
 	for i, c := range cards {
+		if err := withEvidence(ctx, a, &c, &mans[i]); err != nil {
+			return err
+		}
 		rev, err := plan.New(c, mans[i], a.now())
 		if err != nil {
 			return fmt.Errorf("%s: %w", c.Security, err)
 		}
 		sv, err := repo.Save(ctx, rev, a.now())
 		if err != nil {
+			return err
+		}
+		if err := recordRecipe(ctx, a, sv.Revision, book, *candFile, *feeFile, *rates, *contrib, *valid); err != nil {
+			return err
+		}
+		if err := trackRevision(ctx, a, sv.Revision); err != nil {
 			return err
 		}
 		out := "new"
@@ -468,6 +477,9 @@ func planShow(ctx context.Context, a *app, args []string) error {
 	writeList(a, "costs and assumptions", cs)
 	writeList(a, "reasons", c.Reasons)
 	writeList(a, "unknown", c.Unknowns)
+	writeList(a, "review required", c.Review)
+	writeList(a, "why this revision exists (a change in its evidence)", c.Corrections)
+	writeList(a, "evidence cited, each at the version read", c.Evidence)
 	writeList(a, "thesis (supporting notes)", c.Thesis)
 	writeList(a, "counter-evidence", c.Counter)
 	writeList(a, "invalidation", c.Invalidation)
@@ -582,6 +594,9 @@ func currentManifest(ctx context.Context, a *app, rv plan.Revision) (plan.Manife
 		return cur, err
 	}
 	cur.Ledger = l.Projection().Fingerprint()
+	if cur.Evidence, err = currentEvidenceHash(ctx, a, rv); err != nil {
+		return cur, err
+	}
 	if rv.Card.Strategy != strategy.CoreID && rv.Card.Strategy != review.ID {
 		return cur, nil // a fund's facts are a file the run was given; its expiry covers it
 	}

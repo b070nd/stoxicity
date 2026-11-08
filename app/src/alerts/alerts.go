@@ -67,11 +67,12 @@ const (
 	IncomeDifference Rule = "income_difference" // the ledger differs from what the payout implies
 	BrokerException  Rule = "broker_exception"  // the broker and the books differ
 	OrderUnknown     Rule = "order_unknown"     // an order's state is unknown
+	PlanCorrection   Rule = "plan_correction"   // the evidence behind a plan changed and the plan was revised
 )
 
 // Rules lists every rule in a fixed order.
 func Rules() []Rule {
-	return []Rule{PlanRevision, ReviewDue, DividendExDate, IncomeMissing, IncomeDifference, BrokerException, OrderUnknown}
+	return []Rule{PlanRevision, ReviewDue, DividendExDate, IncomeMissing, IncomeDifference, BrokerException, OrderUnknown, PlanCorrection}
 }
 
 // Valid reports whether r is a known rule.
@@ -87,7 +88,7 @@ func (r Rule) Valid() bool {
 // Condition reports whether the rule describes a situation that can end. When
 // it ends before the alert was delivered, the alert is withdrawn. A plan
 // revision is an event: it stays true.
-func (r Rule) Condition() bool { return r != PlanRevision }
+func (r Rule) Condition() bool { return r != PlanRevision && r != PlanCorrection }
 
 // Alert is one fact the user should hear about. It is never edited.
 type Alert struct {

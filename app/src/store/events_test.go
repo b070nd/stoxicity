@@ -215,3 +215,30 @@ func TestACompleteDerivationReplacesOnlyWhatItLookedAt(t *testing.T) {
 		t.Errorf("history after a repeat: %d revisions, first has %d evidence", len(hist), len(hist[0].Evidence))
 	}
 }
+
+func TestArticleHeadsMoveOnlyWhenASourceChangesItsText(t *testing.T) {
+	db, _ := openTemp(t)
+	ctx := context.Background()
+	a := art("a1", t0)
+	mustSave(t, db, a, art("a2", t0))
+	first, err := db.ArticleHeads(ctx, []string{"a1", "a2", "nope"})
+	if err != nil || len(first) != 2 || first["a1"] == "" || first["a1"] == first["a2"] {
+		t.Fatalf("%v %v", first, err)
+	}
+	// the same text again is not a change
+	mustSave(t, db, a)
+	again, _ := db.ArticleHeads(ctx, []string{"a1"})
+	if again["a1"] != first["a1"] {
+		t.Errorf("seen again, head moved: %v -> %v", first["a1"], again["a1"])
+	}
+	// a correction at the source is
+	a.Title = "Title a1, corrected"
+	mustSave(t, db, a)
+	changed, _ := db.ArticleHeads(ctx, []string{"a1", "a2"})
+	if changed["a1"] == first["a1"] || changed["a2"] != first["a2"] {
+		t.Errorf("only the corrected article moves: %v -> %v", first, changed)
+	}
+	if none, err := db.ArticleHeads(ctx, nil); err != nil || len(none) != 0 {
+		t.Errorf("%v %v", none, err)
+	}
+}

@@ -330,6 +330,16 @@ func Inventory() []Capability {
 	})
 
 	caps = append(caps, Capability{
+		ID: "plan-corrections", Name: "Corrections, retractions and thesis rules revise plans", Scope: Portfolio,
+		Levels: map[Dimension]Level{
+			Implemented: Yes, FixtureVerified: Yes, SourceVerified: NotApplicable,
+			AccountVerified: NotApplicable, InvestmentEvaluated: NotApplicable,
+		},
+		Evidence: map[Dimension]string{Implemented: "src/corrections/corrections.go", FixtureVerified: "src/cmd/stoxicity/cmd_corrections_test.go"},
+		Blocker:  "Scan must be run by a scheduler; events are cited context and do not move a score; a thesis is broken only by an event-kind rule you record (no price, dividend or figure rules); tested with events written directly, not against live articles from the pipeline; plans from review run -save cannot be generated again and always become review required; plans made before dependencies were kept are untracked",
+	})
+
+	caps = append(caps, Capability{
 		ID: "ops-recovery", Name: "Multi-database recovery drills and operations", Scope: Portfolio, Story: "US-027",
 		Levels: map[Dimension]Level{
 			Implemented: Yes, FixtureVerified: Yes, SourceVerified: NotApplicable,

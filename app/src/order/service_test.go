@@ -757,3 +757,36 @@ func TestAConfirmationCoversOnlyWhatTheBrokerWasShown(t *testing.T) {
 	}
 	x.invariants()
 }
+
+// A selective revocation withdraws the confirmation of the unsent orders that
+// are picked, in a paper book as well, and never an order that was sent.
+func TestRevokeWhereWithdrawsOnlyPickedUnsentConfirmations(t *testing.T) {
+	ctx := context.Background()
+	x := newEnv(t, portfolio.PaperLocal, 100000)
+	picked := x.ready(x.terms(order.Buy, "1", "10", 0))
+	other := x.ready(x.terms(order.Buy, "1", "11", 0))
+	sent := x.ready(x.terms(order.Buy, "1", "12", 0))
+	must(t, x.svc.SubmitBound(ctx, x.book.ID, sent, "me", "p1", func(context.Context, order.Submission) (order.SendResult, error) {
+		return order.SendResult{Broker: "B"}, nil
+	}))
+	ids, err := x.svc.RevokeWhere(ctx, x.book.ID, func(v order.View) bool { return v.ID != other }, "the evidence changed")
+	must(t, err)
+	if len(ids) != 1 || ids[0] != picked {
+		t.Fatalf("only the picked unsent order: %v", ids)
+	}
+	if v := x.view(picked); v.State != order.Draft || v.Confirmation != nil || v.Reservation == "" {
+		t.Fatalf("a withdrawn confirmation leaves a draft that keeps its hold: %+v", v)
+	}
+	if v := x.view(other); v.State != order.Confirmed {
+		t.Fatalf("not picked: %+v", v)
+	}
+	if v := x.view(sent); !v.Sent() || v.State == order.Draft {
+		t.Fatalf("an order that was sent is not touched: %+v", v)
+	}
+	again, err := x.svc.RevokeWhere(ctx, x.book.ID, func(order.View) bool { return true }, "again")
+	must(t, err)
+	if len(again) != 1 || again[0] != other {
+		t.Fatalf("a confirmation is withdrawn once: %v", again)
+	}
+	x.invariants()
+}

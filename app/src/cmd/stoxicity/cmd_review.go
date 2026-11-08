@@ -755,11 +755,19 @@ func reviewRun(ctx context.Context, a *app, args []string) error {
 		}
 		expiry := dayT.AddDate(0, 0, *valid).Format(time.DateOnly)
 		for _, h := range rows {
-			rev, err := plan.New(reviewCard(h, bookID, day, expiry), h.Manifest, a.now())
+			card, man := reviewCard(h, bookID, day, expiry), h.Manifest
+			if err := withEvidence(ctx, a, &card, &man); err != nil {
+				return err
+			}
+			rev, err := plan.New(card, man, a.now())
 			if err != nil {
 				return fmt.Errorf("%s: %w", h.Position.Security, err)
 			}
-			if _, err := repo.Save(ctx, rev, a.now()); err != nil {
+			sv, err := repo.Save(ctx, rev, a.now())
+			if err != nil {
+				return err
+			}
+			if err := trackRevision(ctx, a, sv.Revision); err != nil {
 				return err
 			}
 		}

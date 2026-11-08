@@ -157,6 +157,21 @@ func (s Service) RevokeUnsent(ctx context.Context, book, reason string) error {
 	return s.run(ctx, book, func(c Context) ([]Event, error) { return RevokeUnsent(c, reason) })
 }
 
+// RevokeWhere withdraws the confirmations of the unsent orders of one book that
+// the test picks, and says which ones it withdrew.
+func (s Service) RevokeWhere(ctx context.Context, book string, pick func(View) bool, reason string) ([]string, error) {
+	var ids []string
+	err := s.run(ctx, book, func(c Context) ([]Event, error) {
+		evs, err := RevokeWhere(c, pick, reason)
+		ids = ids[:0]
+		for _, e := range evs {
+			ids = append(ids, e.Order)
+		}
+		return evs, err
+	})
+	return ids, err
+}
+
 // Sweep closes lapsed unsent orders of one book and frees what they held.
 func (s Service) Sweep(ctx context.Context, book string) error {
 	return s.run(ctx, book, Sweep)

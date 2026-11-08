@@ -27,9 +27,10 @@ stoxicity policy history
 - Format and range: fractions are written 0.10, not 10; amounts are `1000.00 EUR` with the currency's digits; amounts must be
   in the base currency because a policy holds no exchange rates; dates are `YYYY-MM-DD`; tax residence is a country code
   (a time zone does not establish it); unknown keys in the file are errors.
-- Contradictions: the sector cap below the issuer cap, a planned event-trade loss above the whole event sleeve, an event
+- Contradictions: the sector cap below the issuer cap, a provider cap below the single-fund cap, a planned event-trade loss above the whole event sleeve, an event
   sleeve larger than what the cash reserve leaves, an income objective with no dividend preference, a contribution that
   ends before it starts, a goal date in the past.
+- Caps: `max_issuer` (one company, with look-through), `max_fund` (one underlying fund), `max_sector` (against total equity), and the optional `max_provider` (leave it out or 0 for no cap; the share is reported anyway). See [allocation.md](allocation.md) for how each is measured.
 - Provenance: a source without a value, or a value without a source, is an error.
 - Feasibility (warnings, never relaxed): when the issuer cap, fund cap, instruments and minimum position make it impossible to
   place the money meant for the core (for example a 150 EUR minimum position under a 10% cap of 1000 EUR), the finding

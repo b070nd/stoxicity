@@ -42,16 +42,23 @@ facts pass the broad core-fund checks; a fund is never compared with a company b
 
 Everything is whole minor units of the base currency, rounded half-even once, so the figures add up.
 
+## How the caps are measured
+
+Your answer to the caps question replaced the starter rules. Four different things are measured and none stands in for another:
+
+- **Company cap** (`max_issuer`): one operating company, counting its shares in every class and listing and, for funds whose dated holdings you supplied (`look_through` in the fund facts, no older than the staleness limit), the company's weight inside them. A fund that gives no usable holdings is counted as itself, and the plan says the coverage is unknown rather than guessing.
+- **Single-fund cap** (`max_fund`): one underlying fund, all of its share classes and listings together (the facts name the fund with `portfolio`). A broad core fund is held to this cap and not to the company cap, so a 10% company cap does not limit a diversified core ETF to 10%.
+- **Provider concentration** (`max_provider`, optional): the funds of one provider together. It is always reported; it limits a purchase only when you set it (zero means no cap). It must be at least the single-fund cap.
+- **Sector cap** (`max_sector`): against total portfolio equity, meaning cash plus holdings of the defined investment portfolio (money outside it is not in the book). The share of the invested holdings is shown beside it so cash cannot hide a concentrated equity allocation: with 1,000 in total, 800 cash and 200 technology, technology is 20% of equity and 100% of the invested holdings.
+
+Every exposure is measured after the trade, counting open buy orders that have not filled yet, and a basket is checked one line at a time so that two purchases cannot each fit under a cap they share. The plan prints an exposure table (before, after, cap, and what is unknown).
+
 ## Decisions to confirm
 
-- The sector cap is measured against investable equity (all cash plus holdings), not only direct
-  holdings; the policy comment says "of direct holdings".
-- The issuer cap applies to a fund's issuer too (one fund provider's funds count together).
 - Fees come from a schedule you enter; the policy's `commission_schedule` is free text and is not parsed.
 
 ## Not done here
 
 - Selling or rebalancing (US-013), the immutable plan snapshot that stores a result (US-012).
 - Tax effects, trade-time price movement and liquidity beyond the minimum position.
-- Look-through of a fund's holdings into sector and country caps: a fund is counted as itself, and an
-  unknown look-through is reported as unknown.
+- Look-through of a fund's holdings into sector and country caps: only the company cap uses look-through. Sector and country are counted for the fund as itself, and an unknown look-through is reported as unknown.

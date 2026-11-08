@@ -169,6 +169,15 @@ type Card struct {
 	ExitRules            []string          `json:"exit_rules,omitempty"`
 	Alternatives         []string          `json:"alternatives,omitempty"`
 	WouldChange          []string          `json:"would_change,omitempty"`
+	// Evidence lists the events the plan rests on, each with the version it was
+	// read at. They are context the plan cites, not inputs of its score.
+	Evidence []string `json:"evidence,omitempty"`
+	// Corrections explains why this revision exists when a change in its
+	// supporting evidence, a revised figure or a thesis rule produced it.
+	Corrections []string `json:"corrections,omitempty"`
+	// Review says the plan could not be reassessed with confidence and what a
+	// person must look at; such a plan proposes nothing.
+	Review []string `json:"review,omitempty"`
 }
 
 // Validate says what makes a card unusable. It is the guard on the rules that
@@ -204,6 +213,9 @@ func (c Card) Validate() error {
 	if Actionable(c.Action) && c.Action != "SELL" && c.Action != "REDUCE" && c.Sizing == nil {
 		bad = append(bad, c.Action+" needs a quantity and its costs")
 	}
+	if len(c.Review) > 0 && (Actionable(c.Action) || c.Action == "HOLD") {
+		bad = append(bad, "a plan that needs review proposes nothing and is not a fresh "+c.Action)
+	}
 	if len(bad) > 0 {
 		return errors.New("plan: " + strings.Join(bad, "; "))
 	}
@@ -235,7 +247,9 @@ type Manifest struct {
 	Rates       string `json:"rates,omitempty"`
 	// Decisions hashes the recorded thesis, instruction and review log a review read.
 	Decisions string `json:"decisions,omitempty"`
-	Ledger    string `json:"ledger"`
+	// Evidence is the hash of the versions of the events the plan cites.
+	Evidence string `json:"evidence,omitempty"`
+	Ledger   string `json:"ledger"`
 }
 
 // Hash of the manifest.
@@ -259,6 +273,7 @@ func (m Manifest) Changed(cur Manifest) []string {
 	add("fee schedule", m.Fees != cur.Fees)
 	add("exchange rates", m.Rates != cur.Rates)
 	add("recorded decisions", m.Decisions != cur.Decisions)
+	add("supporting evidence", m.Evidence != cur.Evidence)
 	add("book", m.Ledger != cur.Ledger)
 	return out
 }
@@ -394,6 +409,9 @@ func Diff(a, b Card) []Change {
 	add("next ex-date", a.NextExDay, b.NextExDay, false)
 	add("review by", a.ReviewBy, b.ReviewBy, false)
 	add("expiry", a.Expiry, b.Expiry, false)
+	set("evidence", a.Evidence, b.Evidence, true)
+	set("corrections", a.Corrections, b.Corrections, true)
+	set("review required", a.Review, b.Review, true)
 	set("thesis", a.Thesis, b.Thesis, false)
 	set("counter-evidence", a.Counter, b.Counter, false)
 	set("alternatives", a.Alternatives, b.Alternatives, false)

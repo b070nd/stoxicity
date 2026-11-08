@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/b070nd/stoxicity/app/src/alerts"
+	"github.com/b070nd/stoxicity/app/src/corrections"
 	"github.com/b070nd/stoxicity/app/src/income"
 	"github.com/b070nd/stoxicity/app/src/money"
 	"github.com/b070nd/stoxicity/app/src/order"
@@ -50,6 +51,7 @@ func (s Source) AlertScan(ctx context.Context, cfg alerts.Config) (alerts.Scan, 
 	run([]alerts.Rule{alerts.DividendExDate, alerts.IncomeMissing, alerts.IncomeDifference}, func() ([]alerts.Alert, error) { return s.incomeAlerts(ctx, cfg) })
 	run([]alerts.Rule{alerts.BrokerException}, func() ([]alerts.Alert, error) { return s.brokerAlerts(ctx, cfg) })
 	run([]alerts.Rule{alerts.OrderUnknown}, func() ([]alerts.Alert, error) { return s.orderAlerts(ctx) })
+	run([]alerts.Rule{alerts.PlanCorrection}, func() ([]alerts.Alert, error) { return s.correctionAlerts(ctx) })
 	return sc, errs
 }
 
@@ -66,10 +68,24 @@ func (s Source) planAlerts(ctx context.Context) ([]alerts.Alert, error) {
 	if err != nil {
 		return nil, err
 	}
+	// A revision a correction made is announced by the correction's alert, once.
+	chs, err := corrections.Repo{RS: s.records()}.Changes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	announced := map[string]bool{}
+	for _, c := range chs {
+		if c.State == corrections.Done {
+			announced[fmt.Sprintf("%s.r%d", c.Plan, c.ToRev)] = true
+		}
+	}
 	var out []alerts.Alert
 	for _, r := range rows {
 		if r.State != string(plan.Draft) && r.State != string(plan.Proposed) {
 			continue // accepted, rejected, expired or replaced: no decision is waiting
+		}
+		if announced[r.Revision] {
+			continue
 		}
 		id, n, err := plan.ParseRef(r.Revision)
 		if err != nil {
@@ -499,4 +515,81 @@ func nameOr(name, id string) string {
 		return name
 	}
 	return id
+}
+
+// correctionAlerts raises one alert for each plan change the correction scan
+// finished. The alert is named by the plan and the change, so reading the same
+// change again, in this process or after a restart, is the same alert.
+func (s Source) correctionAlerts(ctx context.Context) ([]alerts.Alert, error) {
+	cr := corrections.Repo{RS: s.records()}
+	chs, err := cr.Changes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var done []corrections.Change
+	for _, c := range chs {
+		if c.State == corrections.Done {
+			done = append(done, c)
+		}
+	}
+	if len(done) == 0 {
+		return nil, nil
+	}
+	svc, err := s.OrderService(ctx)
+	if err != nil {
+		return nil, err
+	}
+	views, err := svc.Views(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	byID := map[string]order.View{}
+	for _, v := range views {
+		byID[v.ID] = v
+	}
+	var out []alerts.Alert
+	for _, c := range done {
+		sent, live := sentOrders(byID, c.Submitted)
+		var lines []string
+		for _, f := range c.Findings {
+			lines = append(lines, "- "+f.Detail)
+		}
+		body := fmt.Sprintf("Plan %s: revision %d was replaced by revision %d, which is a draft: it proposes nothing until you propose and accept it.\n\nWhat changed:\n%s\n\nYour earlier decision on revision %d is kept in the record; the revision is now out of date.",
+			c.Plan, c.FromRev, c.ToRev, strings.Join(lines, "\n"), c.FromRev)
+		if len(c.Revoked) > 0 {
+			body += fmt.Sprintf("\n\nConfirmation withdrawn from %s: the order stays a draft with its hold; confirm it again only after reviewing the new revision.", strings.Join(c.Revoked, ", "))
+		}
+		if len(sent) > 0 {
+			body += fmt.Sprintf("\n\nAlready sent, and left exactly as it is: %s. Review it yourself; the program never changes or cancels a sent order.", strings.Join(sent, "; "))
+		}
+		body += fmt.Sprintf("\n\nNext: `plan show %s`, then `plan propose` and `plan accept` if it still stands.", c.Plan)
+		rev := c.ID
+		if live {
+			rev += ".urgent"
+		}
+		out = append(out, alerts.Alert{
+			Rule: alerts.PlanCorrection, Subject: clean(c.Plan), Revision: rev, Critical: live,
+			Title: fmt.Sprintf("Plan %s was revised: its evidence changed", c.Plan), Body: body,
+			Link: "/plan/" + c.Plan,
+		})
+	}
+	return out, nil
+}
+
+// sentOrders describes the orders of a plan that were already sent, and says
+// whether any of them is live exposure: an order with real money behind it that
+// is still open or unknown. Such an incident is the one a correction may
+// interrupt quiet hours for; a sent order in a paper book is not.
+func sentOrders(byID map[string]order.View, ids []string) (lines []string, live bool) {
+	for _, id := range ids {
+		v, ok := byID[id]
+		if !ok {
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("%s (%s %s %s, %s)", id, v.Terms.Side, v.Terms.Qty, v.Terms.Security, v.State))
+		if v.Terms.Env == portfolio.Real && !v.Terminal() {
+			live = true
+		}
+	}
+	return lines, live
 }
