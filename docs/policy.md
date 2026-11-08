@@ -49,8 +49,8 @@ both be activated, and an activation dated before the previous one is refused.
 ## What invalidation means today
 
 Activating a policy that differs in content makes the epoch newer. By design, plan proposals and order confirmations record
-the epoch they were made under and are stale when it is no longer current (`policy.Stale`). Plans and confirmations do not
-exist yet (US-012, US-018), so nothing is invalidated in practice; the preview lists the effects the activation will have once they do.
+the epoch they were made under and are stale when it is no longer current (`policy.Stale`). Plans and order confirmations now exist (docs/plans.md, docs/orders.md, docs/broker.md): activating a different policy makes
+open plans stale and a confirmation made under the old epoch unusable (`cmd.TestPolicyReplacedAfterConfirmationInvalidatesTheOrder`). The preview lists these effects before you confirm.
 Renaming a policy changes nothing else.
 
 ## Not here

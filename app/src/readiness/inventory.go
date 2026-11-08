@@ -87,7 +87,7 @@ func Inventory() []Capability {
 			AccountVerified: NotApplicable, InvestmentEvaluated: NotApplicable,
 		},
 		Evidence: map[Dimension]string{Implemented: "src/policy", FixtureVerified: "src/policy/policy_test.go"},
-		Blocker:  "plans and order confirmations that bind to the policy epoch arrive with US-012 and US-018; until then nothing is invalidated because nothing depends on it",
+		Blocker:  "plans and order confirmations bind to the policy epoch (checked on fixtures); the policy fields about your account (tax, entity, permissions) stay unknown until you supply them",
 	})
 
 	// US-004: identity and the capability registry exist; no data source is wired for
@@ -134,7 +134,7 @@ func Inventory() []Capability {
 			AccountVerified: NotApplicable, InvestmentEvaluated: NotApplicable,
 		},
 		Evidence: map[Dimension]string{Implemented: "src/portfolio", FixtureVerified: "src/portfolio/portfolio_test.go"},
-		Blocker:  "the journal holds only what you enter or import: no broker or custodian statement is reconciled against it until US-017, income is booked when cash arrives (entitlement and receivables arrive with US-008), and cost basis is a display convention, not tax reporting",
+		Blocker:  "the journal holds only what you enter or import: statements are reconciled only from a CSV you provide and the fixture broker; no real broker or custodian statement has been compared, and cost basis is a display convention, not tax reporting",
 	})
 
 	// US-008 is entitlement from recorded fills and income booked once. It is checked on
@@ -146,7 +146,7 @@ func Inventory() []Capability {
 			AccountVerified: NotApplicable, InvestmentEvaluated: NotApplicable,
 		},
 		Evidence: map[Dimension]string{Implemented: "src/income", FixtureVerified: "src/income/income_test.go"},
-		Blocker:  "entitlement is judged by the plain rule in the package doc (shares held before the ex-date); due-bill, special and return-of-capital payouts are reported as unsupported, tax withheld is only what you record, and nothing was checked against a broker statement until US-017",
+		Blocker:  "entitlement is judged by the plain rule in the package doc (shares held before the ex-date); due-bill, special and return-of-capital payouts are reported as unsupported, tax withheld is only what you record, and nothing was checked against a real broker or custodian statement",
 	})
 
 	caps = append(caps, Capability{
@@ -196,7 +196,7 @@ func Inventory() []Capability {
 			AccountVerified: NotApplicable, InvestmentEvaluated: NotApplicable,
 		},
 		Evidence: map[Dimension]string{Implemented: "src/review", FixtureVerified: "src/review/review_test.go"},
-		Blocker:  "thresholds are unvalidated and start unreviewed; rule 6 (rebalance) has no target weights; no costs or taxes are weighed; no sector or fund look-through; event sleeve does not exist yet",
+		Blocker:  "thresholds are unvalidated and start unreviewed; rule 6 (rebalance) has no target weights; no costs or taxes are weighed; no sector or fund look-through; the event sleeve has its own distinct exit review (US-020)",
 	})
 
 	caps = append(caps, Capability{
@@ -206,7 +206,7 @@ func Inventory() []Capability {
 			AccountVerified: NotApplicable, InvestmentEvaluated: NotApplicable,
 		},
 		Evidence: map[Dimension]string{Implemented: "src/order/engine.go", FixtureVerified: "src/order/service_test.go"},
-		Blocker:  "Fills and statuses come from the user or the local paper engine until a broker adapter exists (US-017..019); the policy tier gate (US-016) and execution-grade quote checks are not wired in",
+		Blocker:  "Fills and statuses come from the user, the local paper engine or the fixture broker; the IBKR adapter is checked against recorded contract fixtures only, never a live gateway; execution-grade quote checks are the broker limits you set, not a verified feed",
 	})
 
 	caps = append(caps, Capability{
@@ -226,7 +226,7 @@ func Inventory() []Capability {
 			AccountVerified: NotApplicable, InvestmentEvaluated: NotApplicable,
 		},
 		Evidence: map[Dimension]string{Implemented: "src/tier/tier.go", FixtureVerified: "src/tier/tier_test.go"},
-		Blocker:  "Evidence items are your sourced attestations; broker health signals are set by hand until the IBKR adapters exist",
+		Blocker:  "Evidence items are your sourced attestations; broker health signals are set by hand or by a broker sync against a fixture; automatic ones exist only for maintenance and malformed answers",
 	})
 
 	caps = append(caps, Capability{
@@ -326,7 +326,7 @@ func Inventory() []Capability {
 			AccountVerified: NotApplicable, InvestmentEvaluated: NotApplicable,
 		},
 		Evidence: map[Dimension]string{Implemented: "src/alerts/outbox.go", FixtureVerified: "src/alerts/alerts_test.go"},
-		Blocker:  "Scan must be run by a scheduler; no TUI screen for alerts or journal; thesis invalidation, policy breach, missing data and dividend declared/paid events are not detected; email and webhook delivery tested through the channel tests only, never a live send; two processes delivering at once are not serialised",
+		Blocker:  "Scan must be run by a scheduler; no TUI screen for alerts or journal; thesis invalidation, policy breach, missing data and dividend declared/paid events are not detected; email and webhook delivery tested through the channel tests only, never a live send; two deliveries of one tenant are kept apart by an advisory lease, but the scan itself is not leased",
 	})
 
 	caps = append(caps, Capability{
@@ -339,9 +339,15 @@ func Inventory() []Capability {
 		Blocker:  "Drills run on a fixture and a padded 262 MiB fixture only; no real pending migration is exercised; leases are advisory and used by two jobs; the coherence check fingerprints commits and does not lock; broker reconciliation after a restore is verified against a fixture broker only; disk/data-size limits only; Unix only; the recovery point depends on the backup schedule and is not measured",
 	})
 
-	caps = append(caps,
-		planned("release-acceptance", "Release documentation and end-to-end acceptance", Portfolio, "US-028", "needs every other story"),
-	)
+	caps = append(caps, Capability{
+		ID: "release-acceptance", Name: "Release documentation and end-to-end acceptance", Scope: Portfolio, Story: "US-028",
+		Levels: map[Dimension]Level{
+			Implemented: Yes, FixtureVerified: Yes, SourceVerified: NotApplicable,
+			AccountVerified: NotApplicable, InvestmentEvaluated: NotApplicable,
+		},
+		Evidence: map[Dimension]string{Implemented: "../docs/acceptance.md", FixtureVerified: "src/cmd/stoxicity/cmd_acceptance_test.go"},
+		Blocker:  "Every scenario is exercised on fixtures and invented data only; no real broker, account, paid source or five-year history has been used, so source, account and investment readiness are all unrecorded; the external inputs listed in docs/acceptance.md are still needed from you",
+	})
 	return caps
 }
 
@@ -350,10 +356,6 @@ func Gaps() []Gap {
 	return []Gap{
 		{ID: "keyword-table-unversioned", Story: "US-009", Source: "PROTOCOL.md section 12",
 			Summary: "the lens version digests cover boosts and demotions, not the keyword table, so a keyword change does not change a recorded version"},
-		{ID: "readme-status-stale", Story: "US-028", Source: "docs/production-plan-mode.md section 2",
-			Summary: "README.md carries early-status and navigation descriptions that predate the current behavior"},
-		{ID: "backup-not-multi-database", Story: "US-027", Source: "docs/production-plan-mode.md section 9",
-			Summary: "backup.sh copies each database online; it is not a consistent snapshot across the base and tenant databases, and its row-count check can disagree with a source that changed afterwards"},
 		{ID: "claims-corpus-synthetic", Story: "US-022", Source: "app/src/assertion/challenge",
 			Summary: "the claim challenge corpus is 39 invented cases; it guards regressions and says nothing about accuracy on real articles"},
 		{ID: "no-fx-feed", Story: "US-005", Source: "app/src/valuation",

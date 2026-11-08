@@ -39,6 +39,10 @@ read. The loader is described in `app/src/envfile/envfile.go`.
 | `STOXICITY_WEBHOOK_URL` | `.env.local` | **yes** | Webhook channel: the https address notifications are posted to (the URL carries the secret) |
 | `STOXICITY_POLYGON_KEY` or `MASSIVE_API_KEY` | `.env.local` | **yes** | API key of Polygon.io, now called Massive, for daily candles (`company.quotes`); the first name wins; unset: no prices |
 | `STOXICITY_LAYA_API_KEY` | `.env.local` | **yes** | laya-serve key, sent as a Bearer token; must equal the sidecar's `LAYA_API_KEY` |
+| `STOXICITY_BACKUP_DIR` | `.env` | no | Where `ops backup` writes (default `backups/` beside `data/`); see [docs/operations.md](operations.md) |
+| `STOXICITY_MIN_FREE_MB` | `.env` | no | Free disk space the data folder's filesystem must keep, in whole megabytes; `fetch` and `ops backup` are refused below it. Unset: no limit |
+| `STOXICITY_MAX_DATA_MB` | `.env` | no | The most the data folder may hold, in whole megabytes; the same refusals. Unset: no limit |
+| `STOXICITY_LIVE_CONTRACT` | shell | no | Set to `1` (with `STOXICITY_CONTACT`) to run the opt-in live contract test of the ECB reader; ordinary test runs never touch the network |
 
 A licensed source adds one variable of its own and names it with `auth_env:`.
 
@@ -517,3 +521,7 @@ until you own a domain.
 
 macOS and Linux. Windows is out of scope: there are no Windows build files,
 file locking is Unix-only, and the Makefile and CI assume a Unix shell.
+
+## Settings that are records, not files
+
+The production workflow keeps its settings as stored, versioned records in the tenant database, so that a change is dated, attributed and never rewritten: the investment policy (`policy`), the strategy settings (`strategy config`), the alert channels and rules (`alerts config`), the broker connection (`broker config`), the tier parameters (`tier config`), the review rules (`review`), the paper-engine settings (fixed per book) and the event-sleeve settings (`event config`). None of them is read from `config.yaml`, none holds a secret, and the broker's credentials are never stored (the gateway session is the user's own). Each command prints its example with `example` or `-example`, which are drafts that cannot be activated until the unknown fields are filled in.

@@ -4,7 +4,7 @@ Story US-007 of [the production plan](production-plan-mode.md). Nothing here pla
 reads a broker or fetches a price. The ledger holds what you enter or import and adds it up;
 every figure it shows is a sum of recorded lines. **Nothing in it was checked against a real
 account**: reconciling a book with a broker is `portfolio reconcile` against a file you supply,
-and a connection to the broker comes with US-017.
+and the broker connection (docs/broker.md) has been exercised on fixtures only, never against a real account.
 
 ## Books
 

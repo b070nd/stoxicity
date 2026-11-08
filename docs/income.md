@@ -4,7 +4,8 @@ Story US-008 of [the production plan](production-plan-mode.md). It answers one q
 fills a book has recorded and the payouts that are declared, how much income is the book owed, and
 does the ledger say the same?** It fetches nothing and places no order. The payouts are the
 observations you imported with `dividends import`; the fills are the ledger. **Nothing here was
-checked against a broker statement**: reconciling with a real account arrives with US-017.
+checked against a real broker or custodian statement**: `portfolio reconcile` compares a book with a CSV you write, and
+`broker sync` compares it with a fixture broker (docs/broker.md); a real account has never been read.
 
 ## The entitlement rule
 

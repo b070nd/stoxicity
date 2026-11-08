@@ -943,3 +943,25 @@ One caution: `stoxicity eval claims` goes through the normal start-up, which
 touched the live tenant database (migration 4, no schema change). The live
 `base.db` was not modified (its modification time is unchanged and it was at
 migration 18 when copied). Any other command may migrate it.
+
+## 13. The production programme (2026-11-08)
+
+Sections 1-12 are the red-team review of the news side and its remediation, kept as they were.
+On 2026-11-08 a second programme was built on top of it: [docs/production-plan-mode.md](docs/production-plan-mode.md),
+stories US-001 to US-028, a personal portfolio and Plan mode on exact money. It adds nothing to the news pipeline's
+claims and changes none of them. What it is, what was tested and what is pending is in
+[docs/acceptance.md](docs/acceptance.md); the per-feature behaviour is in `docs/`.
+
+What carries over from this document:
+
+- **Evidence, not advice.** The words in section 10 (corroborated, not strong; no trading-signal claims) still hold. Plans
+  and proposals are conditional records linked to a policy; none is an order.
+- **Recovery.** Section 12.3 describes `backup.sh`. It still works and reads the same backups, but it copies each database
+  separately. The coherent multi-database backup, the restore that holds back new orders until the broker is reconciled,
+  and the drills are `stoxicity ops` (docs/operations.md). Section 12.3's caution about commands that open the store applies
+  to every command except `doctor` and `ops`, which do not open it.
+- **Migrations.** Base schema 26 and tenant schema 8 are the ones this binary knows (`store.KnownSchema()`); an older
+  database migrates when a command opens it, and there is no downgrade.
+- **What is still not verified.** Nothing in the programme was run against a real broker, a real account or a paid source,
+  and no strategy has a track record. Section 12.2's list stands, with the FX gap partly closed (observations exist,
+  valuation does not read them).
