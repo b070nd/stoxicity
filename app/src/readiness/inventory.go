@@ -169,8 +169,17 @@ func Inventory() []Capability {
 		Blocker:  "starter thresholds are unvalidated research settings and the configuration starts unreviewed; valuation needs your own documented assumptions; proposals carry no probability and no banks, insurers or REITs template exists",
 	})
 
+	caps = append(caps, Capability{
+		ID: "allocator", Name: "Portfolio and contribution allocator with sourced fees, caps and a wait result", Scope: Portfolio, Story: "US-011",
+		Levels: map[Dimension]Level{
+			Implemented: Yes, FixtureVerified: Yes, SourceVerified: NotApplicable,
+			AccountVerified: NotApplicable, InvestmentEvaluated: NotApplicable,
+		},
+		Evidence: map[Dimension]string{Implemented: "src/allocate", FixtureVerified: "src/allocate/allocate_test.go"},
+		Blocker:  "fees come from a schedule you enter and are not checked against a broker; the sector and issuer cap interpretations await your confirmation; a fund is not looked through; no sale is ever proposed here",
+	})
+
 	caps = append(caps,
-		planned("allocator", "Portfolio and contribution allocator", Portfolio, "US-011", "needs strategy proposals and the ledger"),
 		planned("plan-snapshots", "Immutable plan snapshots and explanations", Portfolio, "US-012", "needs allocator, income and valuation"),
 		planned("hold-exit", "Hold, reduce and sell rules with review lifecycle", Portfolio, "US-013", "needs plan snapshots"),
 		planned("reservations-intents", "Shared reservations and order-intent state machine", Portfolio, "US-014", "needs ledger and plans"),

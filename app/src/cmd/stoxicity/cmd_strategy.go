@@ -337,29 +337,14 @@ func strategyPropose(ctx context.Context, a *app, args []string) error {
 		}
 		in.Price = &strategy.Price{Value: v, Currency: amt.Currency(), Day: *priceDay, Source: "supplied"}
 	case *mic != "" && *ticker != "":
-		reg, err := loadRegistry(ctx, a)
+		pr, why, err := storedPrice(ctx, a, db, *mic, *ticker, day, known, cfg.MaxPriceAgeDays)
 		if err != nil {
 			return err
 		}
-		res := reg.ResolveListing(instrument.Query{MIC: *mic, Ticker: *ticker, Day: day})
-		if res.Status != instrument.Resolved {
-			writeResolution(a, res)
-			return fmt.Errorf("the instrument is %s: name it exactly", res.Status)
+		if pr == nil {
+			fmt.Fprintf(a.stderr, "no usable stored price (%s): the proposal will say so\n", why)
 		}
-		pobs, err := db.PriceObservations(ctx, res.Listing.ID, known)
-		if err != nil {
-			return err
-		}
-		ans := quotes.ResolvePrice(pobs, *res.Listing, quotes.Need{Day: day, KnownAt: known, MaxAgeDays: cfg.MaxPriceAgeDays, Adjustment: quotes.Adjustment("raw"), RequireStatedUnit: true})
-		if ans.Verdict == quotes.OK && ans.Price != nil {
-			v, err := ans.Price.Major()
-			if err != nil {
-				return err
-			}
-			in.Price = &strategy.Price{Value: v, Currency: ans.Price.Unit.Currency, Day: ans.Day, Source: strings.Join(ans.Sources, ",")}
-		} else {
-			fmt.Fprintf(a.stderr, "no usable stored price (%s): the proposal will say so\n", ans.Verdict)
-		}
+		in.Price = pr
 	}
 	p, err := strategy.Evaluate(in)
 	if err != nil {
@@ -498,4 +483,31 @@ func strategyFund(ctx context.Context, a *app, args []string) error {
 		fmt.Fprintln(a.stdout, "  - "+r)
 	}
 	return nil
+}
+
+// storedPrice reads the usable stored close of a listing for a day. It returns
+// nil and the reason when there is none; an unresolvable listing is an error.
+func storedPrice(ctx context.Context, a *app, db *store.DB, mic, ticker, day string, known time.Time, maxAge int) (*strategy.Price, string, error) {
+	reg, err := loadRegistry(ctx, a)
+	if err != nil {
+		return nil, "", err
+	}
+	res := reg.ResolveListing(instrument.Query{MIC: mic, Ticker: ticker, Day: day})
+	if res.Status != instrument.Resolved {
+		writeResolution(a, res)
+		return nil, "", fmt.Errorf("the instrument %s %s is %s: name it exactly", mic, ticker, res.Status)
+	}
+	pobs, err := db.PriceObservations(ctx, res.Listing.ID, known)
+	if err != nil {
+		return nil, "", err
+	}
+	ans := quotes.ResolvePrice(pobs, *res.Listing, quotes.Need{Day: day, KnownAt: known, MaxAgeDays: maxAge, Adjustment: quotes.Adjustment("raw"), RequireStatedUnit: true})
+	if ans.Verdict != quotes.OK || ans.Price == nil {
+		return nil, string(ans.Verdict), nil
+	}
+	v, err := ans.Price.Major()
+	if err != nil {
+		return nil, "", err
+	}
+	return &strategy.Price{Value: v, Currency: ans.Price.Unit.Currency, Day: ans.Day, Source: strings.Join(ans.Sources, ",")}, "", nil
 }
