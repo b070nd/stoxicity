@@ -259,8 +259,17 @@ func Inventory() []Capability {
 		Blocker:  "no in-place replace exists by design (cancel and draft again); real executions, corrections and cancel races not yet seen from a real account",
 	})
 
+	caps = append(caps, Capability{
+		ID: "event-strategy", Name: "Separate time-bounded event strategy", Scope: Portfolio, Story: "US-020",
+		Levels: map[Dimension]Level{
+			Implemented: Yes, FixtureVerified: Yes, SourceVerified: NotApplicable,
+			AccountVerified: NotApplicable, InvestmentEvaluated: NotApplicable,
+		},
+		Evidence: map[Dimension]string{Implemented: "src/eventstrat/eventstrat.go", FixtureVerified: "src/eventstrat/eventstrat_test.go"},
+		Blocker:  "Experimental and paper-only by design; settings are unvalidated and unreviewed until the walk-forward evaluation (US-023) and your review; no price-timing source verified",
+	})
+
 	caps = append(caps,
-		planned("event-strategy", "Separate time-bounded event strategy", Portfolio, "US-020", "needs scorecards, paper engine and tiers"),
 		planned("performance", "Performance, income and benchmark reporting", Portfolio, "US-021", "needs the ledger, income accounting and marks"),
 		planned("heldout-news-eval", "Held-out real-news evaluation", Research, "US-022", "needs an independently labelled real corpus"),
 		planned("walk-forward", "Walk-forward strategy evaluation", Portfolio, "US-023", "needs years of point-in-time history; the dataset starts around November 2026"),
