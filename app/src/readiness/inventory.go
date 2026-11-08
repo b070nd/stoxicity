@@ -149,8 +149,17 @@ func Inventory() []Capability {
 		Blocker:  "entitlement is judged by the plain rule in the package doc (shares held before the ex-date); due-bill, special and return-of-capital payouts are reported as unsupported, tax withheld is only what you record, and nothing was checked against a broker statement until US-017",
 	})
 
+	caps = append(caps, Capability{
+		ID: "research-scorecards", Name: "Sourced multi-year scorecards with sector templates, annotations and versioned content hashes", Scope: Research, Story: "US-009",
+		Levels: map[Dimension]Level{
+			Implemented: Yes, FixtureVerified: Yes, SourceVerified: NotApplicable,
+			AccountVerified: NotApplicable, InvestmentEvaluated: NotApplicable,
+		},
+		Evidence: map[Dimension]string{Implemented: "src/scorecard", FixtureVerified: "src/scorecard/scorecard_test.go"},
+		Blocker:  "figures are only what you import: nothing fetches or maps SEC frames or European filings into this model yet; banks, insurers, REITs and funds get only the few ratios that mean something, and the scorecard evaluates no investment",
+	})
+
 	caps = append(caps,
-		planned("research-scorecards", "Sourced research scorecards and sector templates", Research, "US-009", "keyword table and rule versions are not in the content hash"),
 		planned("core-strategy", "Valuation scenarios and the core strategy", Portfolio, "US-010", "needs scorecards"),
 		planned("allocator", "Portfolio and contribution allocator", Portfolio, "US-011", "needs strategy proposals and the ledger"),
 		planned("plan-snapshots", "Immutable plan snapshots and explanations", Portfolio, "US-012", "needs allocator, income and valuation"),
