@@ -188,7 +188,10 @@ func TestSnapshotVerifyAndTheShellToolAgree(t *testing.T) {
 	// the shell tool reads what this one wrote
 	if sh, err := exec.LookPath("sh"); err == nil {
 		if _, e1 := exec.LookPath("sqlite3"); e1 == nil {
-			if _, e2 := exec.LookPath("shasum"); e2 == nil {
+			// The test database has full-text tables, and the sqlite3 tool of some
+			// systems (the macOS runner's) is built without FTS5 and cannot read them.
+			fts := exec.Command("sqlite3", ":memory:", "create virtual table t using fts5(a)").Run() == nil
+			if _, e2 := exec.LookPath("shasum"); e2 == nil && fts {
 				out, err := exec.Command(sh, "../../../backup.sh", "verify", dest).CombinedOutput()
 				if err != nil || !strings.Contains(string(out), "intact") {
 					t.Errorf("backup.sh verify: %v\n%s", err, out)
