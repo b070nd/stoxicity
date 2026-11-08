@@ -76,7 +76,9 @@ check_size() {
 
 # Added lines only. Prints "path:line kind", never the value.
 check_content() {
-  patch_diff "$1" | awk '
+  hits=$(mktemp)
+  # LC_ALL=C: a fixture with a byte that is not UTF-8 must not stop the scan.
+  patch_diff "$1" | LC_ALL=C awk '
     /^\+\+\+ b\// { file = substr($0, 7); next }
     /^\+\+\+ /   { file = ""; next }
     /^@@/        { split($3, a, ","); n = substr(a[1], 2) + 0; next }
@@ -98,10 +100,12 @@ check_content() {
         printf "%s:%d a credential or personal value in the tracked .env (it belongs in .env.local)\n", file, n
     }
     { if ($0 ~ /^\+/) n++ }
-  ' | while IFS= read -r hit; do
+  ' >"$hits" || say "${1:-staged changes}" "the content scan failed, so the change is not trusted"
+  while IFS= read -r hit; do
     path=${hit%%:*}
     is_allowed "$path" || say "${hit%% *}" "${hit#* }"
-  done
+  done <"$hits"
+  rm -f "$hits"
 }
 
 scan() {
