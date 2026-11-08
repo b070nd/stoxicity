@@ -334,6 +334,7 @@ func TestQuietHoursHoldAndCriticalGoesThrough(t *testing.T) {
 	e.now = time.Date(2026, 11, 4, 23, 0, 0, 0, time.UTC)
 	plan1 := alert(PlanRevision, "pl_1", "r1")
 	crit := alert(OrderUnknown, "or_1", "unknown")
+	crit.Critical = true
 	e.raise(cfg, scan([]Rule{PlanRevision, OrderUnknown}, plan1, crit))
 	f := &fake{kind: channel.File}
 	out := e.deliver(cfg, senders(f), false)
@@ -587,5 +588,122 @@ func TestAStateThatComesBackIsRecordedAgain(t *testing.T) {
 	rows, _ := e.o.Status(context.Background(), true)
 	if len(rows) != 1 || !rows[0].Ended {
 		t.Errorf("the last scan did not find it: %+v", rows)
+	}
+}
+
+// A rule listed as critical is not enough: the alert itself must be about
+// unresolved live exposure. An order of a paper book, or a difference still
+// explained by pending activity, waits for the quiet hours to end.
+func TestAListedRuleGoesThroughQuietHoursOnlyWhenTheAlertIsCritical(t *testing.T) {
+	e := newEnv(t)
+	cfg := DefaultConfig()
+	cfg.Channels = map[string][]channel.Kind{"*": {channel.File}}
+	cfg.QuietStart, cfg.QuietEnd = "22:00", "07:00"
+	e.now = time.Date(2026, 11, 4, 23, 0, 0, 0, time.UTC)
+	paper := alert(BrokerException, "paper/x", "e0")
+	live := alert(BrokerException, "live/y", "e0.urgent")
+	live.Critical = true
+	e.raise(cfg, scan([]Rule{BrokerException}, paper, live))
+	f := &fake{kind: channel.File}
+	out := e.deliver(cfg, senders(f), false)
+	if len(out.Sent) != 1 || len(out.Held) != 1 || f.got[0].Alert != live.Key() {
+		t.Fatalf("%+v", out)
+	}
+}
+
+// A critical alert is not repeated without end and not at all once answered: it
+// is sent again only after the configured wait, and each time says it is a reminder.
+func TestACriticalAlertIsRemindedOnTheScheduleUntilAnswered(t *testing.T) {
+	e := newEnv(t)
+	cfg := DefaultConfig()
+	cfg.Channels = map[string][]channel.Kind{"*": {channel.File}}
+	cfg.RepeatHours = 24
+	a := alert(OrderUnknown, "or_7", "unknown")
+	a.Critical = true
+	sc := scan([]Rule{OrderUnknown}, a)
+	e.raise(cfg, sc)
+	f := &fake{kind: channel.File}
+	if out := e.deliver(cfg, senders(f), false); len(out.Sent) != 1 {
+		t.Fatalf("%+v", out)
+	}
+	// the same scan again, a day less a minute later: nothing
+	e.now = e.now.Add(24*time.Hour - time.Minute)
+	if r := e.raise(cfg, sc); len(r.Reminded) != 0 {
+		t.Fatalf("too early: %+v", r)
+	}
+	e.now = e.now.Add(2 * time.Minute)
+	if r := e.raise(cfg, sc); len(r.Reminded) != 1 {
+		t.Fatalf("%+v", r)
+	}
+	e.deliver(cfg, senders(f), false)
+	if len(f.got) != 2 || !strings.HasPrefix(f.got[1].Title, "Reminder 1, not yet answered:") {
+		t.Fatalf("%+v", f.got)
+	}
+	// the same scan within the next day does not remind again
+	e.now = e.now.Add(time.Hour)
+	if r := e.raise(cfg, sc); len(r.Reminded) != 0 {
+		t.Fatalf("reminded twice in a day: %+v", r)
+	}
+	// an answer ends the reminders
+	if _, err := e.o.Respond(context.Background(), a.ID(), "accepted", "", "me"); err != nil {
+		t.Fatal(err)
+	}
+	e.now = e.now.Add(48 * time.Hour)
+	if r := e.raise(cfg, sc); len(r.Reminded) != 0 {
+		t.Fatalf("reminded after an answer: %+v", r)
+	}
+	// no schedule, no reminder
+	cfg.RepeatHours = 0
+	b := alert(OrderUnknown, "or_8", "unknown")
+	b.Critical = true
+	e.raise(cfg, scan([]Rule{OrderUnknown}, b))
+	e.deliver(cfg, senders(f), false)
+	e.now = e.now.Add(100 * time.Hour)
+	if r := e.raise(cfg, scan([]Rule{OrderUnknown}, b)); len(r.Reminded) != 0 {
+		t.Fatalf("%+v", r)
+	}
+}
+
+// When a difference that was only watched becomes critical, the new revision
+// says it is now urgent and that nothing else about it is new.
+func TestAnEscalatedRevisionSaysItIsNowUrgent(t *testing.T) {
+	e := newEnv(t)
+	cfg := DefaultConfig()
+	cfg.Channels = map[string][]channel.Kind{"*": {channel.File}}
+	watched := alert(BrokerException, "live/y", "e0")
+	e.raise(cfg, scan([]Rule{BrokerException}, watched))
+	f := &fake{kind: channel.File}
+	e.deliver(cfg, senders(f), false)
+	urgent := alert(BrokerException, "live/y", "e0.urgent")
+	urgent.Critical = true
+	e.raise(cfg, scan([]Rule{BrokerException}, urgent))
+	e.deliver(cfg, senders(f), false)
+	if len(f.got) != 2 || !strings.HasPrefix(f.got[1].Title, "Now urgent:") || !strings.Contains(f.got[1].Body, "which was not urgent") {
+		t.Fatalf("%+v", f.got)
+	}
+}
+
+func TestEscalationSettingsHaveDefaultsAndLimits(t *testing.T) {
+	c := DefaultConfig()
+	if c.Syncs() != 2 || c.Minutes() != 30 || c.Tolerance().String() != "1" || c.RepeatHours != 24 || !c.IsCritical(OrderUnknown) || !c.IsCritical(BrokerException) {
+		t.Fatalf("%+v", c)
+	}
+	for _, bad := range []func(*Config){
+		func(c *Config) { c.RepeatHours = -1 },
+		func(c *Config) { c.BrokerSyncs = 21 },
+		func(c *Config) { c.BrokerMinutes = 2000 },
+		func(c *Config) { c.CashTolerance = "abc" },
+		func(c *Config) { c.CashTolerance = "-1" },
+	} {
+		x := DefaultConfig()
+		bad(&x)
+		if x.Validate() == nil {
+			t.Errorf("accepted %+v", x)
+		}
+	}
+	// a configuration stored before these settings existed still validates and means the defaults
+	old := Config{Zone: "UTC", Critical: []Rule{OrderUnknown}, Channels: map[string][]channel.Kind{"*": {channel.File}}, MaxAttempts: 5, RetryMinutes: 15, DividendDays: 7, ReviewDays: 91}
+	if err := old.Validate(); err != nil || old.Syncs() != 2 || old.RepeatHours != 0 {
+		t.Fatalf("%v %+v", err, old)
 	}
 }

@@ -55,7 +55,14 @@ type brokerDiffRec struct {
 	Episode int              `json:"episode"`
 	Book    string           `json:"book"`
 	Diff    recon.Difference `json:"difference"`
-	At      time.Time        `json:"at"`
+	At      time.Time        `json:"at"` // when this record was written
+	// Seen counts the syncs that found this difference during this episode, and
+	// FirstSeen and LastSeen bound them. An alert escalates only after a bounded
+	// number of syncs over a bounded time, so one half-finished snapshot is not
+	// an incident. Records written before these fields existed count as one sync at At.
+	Seen      int       `json:"seen,omitempty"`
+	FirstSeen time.Time `json:"first_seen,omitempty"`
+	LastSeen  time.Time `json:"last_seen,omitempty"`
 }
 
 type brokerSyncRec struct {
@@ -63,6 +70,9 @@ type brokerSyncRec struct {
 	At          time.Time `json:"at"`
 	Applied     int       `json:"applied"`
 	Differences int       `json:"differences"`
+	// LastClean is the last sync that found nothing to differ; an alert says it
+	// so the reader knows how long the books agreed.
+	LastClean time.Time `json:"last_clean,omitempty"`
 }
 
 // cmdBroker is the connection to a broker. It reads, compares and records; it
@@ -643,7 +653,22 @@ func brokerSync(ctx context.Context, a *app, args []string) error {
 	if err != nil {
 		return err
 	}
-	raw, _ := json.Marshal(brokerSyncRec{Book: b.ID, At: a.now().UTC(), Applied: len(first.Facts), Differences: len(final.Differences)})
+	clean := a.now().UTC()
+	if len(final.Differences) > 0 {
+		clean = time.Time{}
+		prev, err := rs.Latest(ctx, recBrokerSync, b.ID)
+		switch {
+		case errors.Is(err, store.ErrNoRecord):
+		case err != nil:
+			return err
+		default:
+			var p brokerSyncRec
+			if json.Unmarshal(prev.Body, &p) == nil {
+				clean = p.LastClean
+			}
+		}
+	}
+	raw, _ := json.Marshal(brokerSyncRec{Book: b.ID, At: a.now().UTC(), Applied: len(first.Facts), Differences: len(final.Differences), LastClean: clean})
 	if _, _, err := rs.Append(ctx, store.RecordInput{Kind: recBrokerSync, Key: b.ID, Body: raw}); err != nil {
 		return err
 	}
@@ -723,30 +748,45 @@ func recordDifferences(ctx context.Context, a *app, book string, ds []recon.Diff
 	now := a.now().UTC()
 	live := map[string]bool{}
 	var in []store.RecordInput
+	changed := 0
 	for _, d := range ds {
 		k := diffID(book, d)
 		live[k] = true
 		if s, ok := state[k]; ok && s.State == "open" {
+			// found again: count the sync, which is not a new difference
+			first, seen := s.FirstSeen, s.Seen
+			if first.IsZero() {
+				first = s.At
+			}
+			if seen == 0 {
+				seen = 1
+			}
+			raw, _ := json.Marshal(brokerDiffRec{State: "open", Episode: s.Episode, Book: book, Diff: s.Diff, At: now, Seen: seen + 1, FirstSeen: first, LastSeen: now})
+			in = append(in, store.RecordInput{Kind: recBrokerDiff, Key: k, Body: raw})
 			continue
 		}
 		h, err := rs.History(ctx, recBrokerDiff, k)
 		if err != nil {
 			return 0, err
 		}
-		raw, _ := json.Marshal(brokerDiffRec{State: "open", Episode: len(h), Book: book, Diff: d, At: now})
+		raw, _ := json.Marshal(brokerDiffRec{State: "open", Episode: len(h), Book: book, Diff: d, At: now, Seen: 1, FirstSeen: now, LastSeen: now})
 		in = append(in, store.RecordInput{Kind: recBrokerDiff, Key: k, Body: raw})
+		changed++
 	}
 	for k, s := range state {
 		if s.State == "open" && !live[k] {
 			raw, _ := json.Marshal(brokerDiffRec{State: "cleared", Episode: s.Episode, Book: book, Diff: s.Diff, At: now})
 			in = append(in, store.RecordInput{Kind: recBrokerDiff, Key: k, Body: raw})
+			changed++
 		}
 	}
 	if len(in) == 0 {
 		return 0, nil
 	}
-	_, n, err := rs.Append(ctx, in...)
-	return n, err
+	if _, _, err := rs.Append(ctx, in...); err != nil {
+		return 0, err
+	}
+	return changed, nil
 }
 
 func brokerDifferences(ctx context.Context, a *app, args []string) error {

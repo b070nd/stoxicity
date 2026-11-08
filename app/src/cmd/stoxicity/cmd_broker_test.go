@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -126,6 +128,22 @@ func TestBrokerSyncRecordsDifferencesAndSuspendsNewRisk(t *testing.T) {
 		t.Fatalf("three open differences, once each:\n%s", r.out)
 	}
 	e.run(t, "broker", "differences", "main/pb").wantOut(t, "OPEN", "cash_mismatch", "unmapped_position")
+	// finding it again counts the sync: an alert turns urgent only after enough of them
+	_, db := workflowOf(t, e)
+	recs, err := db.Records("default").Current(context.Background(), "broker.difference", "")
+	db.Close()
+	if err != nil || len(recs) != 3 {
+		t.Fatalf("records %d: %v", len(recs), err)
+	}
+	for _, r := range recs {
+		var d brokerDiffRec
+		if err := json.Unmarshal(r.Body, &d); err != nil {
+			t.Fatal(err)
+		}
+		if d.Seen != 2 || d.FirstSeen.IsZero() || d.LastSeen.Before(d.FirstSeen) {
+			t.Errorf("%s: seen %d, first %v, last %v", r.Key, d.Seen, d.FirstSeen, d.LastSeen)
+		}
+	}
 
 	// explained: the differences clear, but resuming new risk is a person's act
 	writeBrokerFixture(t, e, nil)

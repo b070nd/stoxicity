@@ -394,6 +394,8 @@ func alertsConfig(ctx context.Context, a *app, args []string) error {
 			fmt.Fprintf(a.stdout, "  %-18s -> %s\n", r, orNone(strings.Join(ks, ", ")))
 		}
 		fmt.Fprintf(a.stdout, "  retries: %d attempts, first wait %d min, doubling\n  ex-date notice: %d days; review interval: %d days\n", cfg.MaxAttempts, cfg.RetryMinutes, cfg.DividendDays, cfg.ReviewDays)
+		fmt.Fprintf(a.stdout, "  urgent alerts: a critical alert is sent again every %s until answered; a broker difference on a real book is urgent after %d syncs over %d minutes, unless a working order explains it or the cash difference is within %s\n",
+			repeatText(cfg.RepeatHours), cfg.Syncs(), cfg.Minutes(), cfg.Tolerance())
 		fmt.Fprintln(a.stdout, "  The terminal interface and this command show every alert; channels carry copies. email and webhook leave this machine and are used only for the rules that list them.")
 		return nil
 	case "set":
@@ -408,6 +410,10 @@ func alertsConfig(ctx context.Context, a *app, args []string) error {
 		wait := fs.Int("retry-minutes", 0, "minutes before the first retry")
 		dd := fs.Int("dividend-days", 0, "days of notice before an ex-date")
 		rd := fs.Int("review-days", 0, "days a holding may go without a review")
+		rep := fs.Int("repeat-hours", 0, "hours an unanswered critical alert waits before it is sent again (0: once)")
+		syncs := fs.Int("broker-syncs", 0, "syncs that must find a broker difference before it is urgent")
+		mins := fs.Int("broker-minutes", 0, "minutes a broker difference must have stood before it is urgent")
+		tol := fs.String("cash-tolerance", "", "cash difference, in currency units, that is only rounding")
 		if rest, err := parseFlags(fs, args[1:]); err != nil {
 			return err
 		} else if len(rest) > 0 {
@@ -480,6 +486,18 @@ func alertsConfig(ctx context.Context, a *app, args []string) error {
 		if set["review-days"] {
 			cfg.ReviewDays = *rd
 		}
+		if set["repeat-hours"] {
+			cfg.RepeatHours = *rep
+		}
+		if set["broker-syncs"] {
+			cfg.BrokerSyncs = *syncs
+		}
+		if set["broker-minutes"] {
+			cfg.BrokerMinutes = *mins
+		}
+		if set["cash-tolerance"] {
+			cfg.CashTolerance = *tol
+		}
 		if err := ob.SetConfig(ctx, cfg); err != nil {
 			return usageErrorf("%v", err)
 		}
@@ -490,6 +508,13 @@ func alertsConfig(ctx context.Context, a *app, args []string) error {
 		return nil
 	}
 	return usageErrorf("unknown subcommand %q (show, set)", args[0])
+}
+
+func repeatText(h int) string {
+	if h <= 0 {
+		return "never (once only)"
+	}
+	return fmt.Sprintf("%d hours", h)
 }
 
 func orNone(s string) string {

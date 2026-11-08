@@ -12,9 +12,11 @@ import (
 
 	"github.com/b070nd/stoxicity/app/src/alerts"
 	"github.com/b070nd/stoxicity/app/src/income"
+	"github.com/b070nd/stoxicity/app/src/money"
 	"github.com/b070nd/stoxicity/app/src/order"
 	"github.com/b070nd/stoxicity/app/src/plan"
 	"github.com/b070nd/stoxicity/app/src/portfolio"
+	"github.com/b070nd/stoxicity/app/src/report"
 )
 
 // The record kinds the producers read, written by the commands of the same
@@ -22,6 +24,7 @@ import (
 const (
 	KindReviewLog  = "review.log"
 	KindBrokerDiff = "broker.difference"
+	KindBrokerSync = "broker.sync"
 )
 
 // AlertScan looks at the plans, books, income, broker differences and orders of
@@ -45,7 +48,7 @@ func (s Source) AlertScan(ctx context.Context, cfg alerts.Config) (alerts.Scan, 
 	run([]alerts.Rule{alerts.PlanRevision}, func() ([]alerts.Alert, error) { return s.planAlerts(ctx) })
 	run([]alerts.Rule{alerts.ReviewDue}, func() ([]alerts.Alert, error) { return s.reviewAlerts(ctx, cfg) })
 	run([]alerts.Rule{alerts.DividendExDate, alerts.IncomeMissing, alerts.IncomeDifference}, func() ([]alerts.Alert, error) { return s.incomeAlerts(ctx, cfg) })
-	run([]alerts.Rule{alerts.BrokerException}, func() ([]alerts.Alert, error) { return s.brokerAlerts(ctx) })
+	run([]alerts.Rule{alerts.BrokerException}, func() ([]alerts.Alert, error) { return s.brokerAlerts(ctx, cfg) })
 	run([]alerts.Rule{alerts.OrderUnknown}, func() ([]alerts.Alert, error) { return s.orderAlerts(ctx) })
 	return sc, errs
 }
@@ -282,17 +285,104 @@ type brokerDiff struct {
 		Broker  string `json:"broker"`
 		Hint    string `json:"hint"`
 	} `json:"difference"`
+	At        time.Time `json:"at"`
+	Seen      int       `json:"seen"`
+	FirstSeen time.Time `json:"first_seen"`
+	LastSeen  time.Time `json:"last_seen"`
 }
 
-func (s Source) brokerAlerts(ctx context.Context) ([]alerts.Alert, error) {
+// brokerSync is the record of one completed sync; LastClean is the last sync
+// that found nothing to differ.
+type brokerSync struct {
+	Book      string    `json:"book"`
+	At        time.Time `json:"at"`
+	LastClean time.Time `json:"last_clean"`
+}
+
+// settleWindow is how long after an order closed the cash and positions of a
+// ledger and a broker may disagree because one of them has not settled yet.
+const settleWindow = 48 * time.Hour
+
+// pendingActivity says whether a known open order, or one that closed within
+// the settlement window, explains a difference. A difference with an explanation
+// is shown but is not an incident.
+func pendingActivity(kind, subject string, views []order.View, book string, now time.Time) (string, bool) {
+	for _, v := range views {
+		if v.Terms.Book != book {
+			continue
+		}
+		cash := kind == "cash_mismatch"
+		if !cash && v.Terms.Security != subject {
+			continue
+		}
+		switch {
+		case v.State == order.Unknown:
+			return fmt.Sprintf("order %s is in an unknown state and has its own alert", v.ID), true
+		case !v.State.Closed():
+			return fmt.Sprintf("order %s is still working at the broker (%s)", v.ID, v.State), true
+		case (v.State == order.Filled || v.State == order.PartiallyFilled) && !v.Updated.IsZero() && now.Sub(v.Updated) < settleWindow:
+			return fmt.Sprintf("order %s was filled less than %d hours ago and may not have settled on both sides", v.ID, int(settleWindow/time.Hour)), true
+		}
+	}
+	return "", false
+}
+
+// withinTolerance reports whether a cash difference is no larger than the
+// rounding tolerance.
+func withinTolerance(local, brk string, tol money.Decimal) bool {
+	l, err1 := parseLeading(local)
+	b, err2 := parseLeading(brk)
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	d, err := l.Sub(b)
+	if err != nil {
+		return false
+	}
+	if d, err = d.Abs(); err != nil {
+		return false
+	}
+	return d.Cmp(tol) <= 0
+}
+
+// parseLeading reads the number of an amount such as "12.34 EUR".
+func parseLeading(s string) (money.Decimal, error) {
+	f := strings.Fields(s)
+	if len(f) == 0 {
+		return money.Decimal{}, fmt.Errorf("no number in %q", s)
+	}
+	return money.ParseDecimal(f[0])
+}
+
+func (s Source) brokerAlerts(ctx context.Context, cfg alerts.Config) ([]alerts.Alert, error) {
 	recs, err := s.records().Current(ctx, KindBrokerDiff, "")
 	if err != nil {
 		return nil, err
 	}
-	names, err := s.bookNames(ctx)
+	books, err := s.Books(ctx)
 	if err != nil {
 		return nil, err
 	}
+	byID := map[string]report.BookRef{}
+	for _, b := range books {
+		byID[b.ID] = b
+	}
+	syncs, err := s.records().Current(ctx, KindBrokerSync, "")
+	if err != nil {
+		return nil, err
+	}
+	lastClean := map[string]time.Time{}
+	lastSync := map[string]time.Time{}
+	for _, r := range syncs {
+		var y brokerSync
+		if err := json.Unmarshal(r.Body, &y); err != nil {
+			return nil, fmt.Errorf("broker sync %s does not decode: %w", r.Key, err)
+		}
+		lastClean[y.Book], lastSync[y.Book] = y.LastClean, y.At
+	}
+	var views []order.View
+	loaded := false
+	now := s.now().UTC()
 	var out []alerts.Alert
 	for _, r := range recs {
 		var d brokerDiff
@@ -302,15 +392,74 @@ func (s Source) brokerAlerts(ctx context.Context) ([]alerts.Alert, error) {
 		if d.State != "open" {
 			continue
 		}
-		book := names[d.Book]
-		if book == "" {
-			book = d.Book
+		b := byID[d.Book]
+		name := b.Ref()
+		if b.ID == "" {
+			name = d.Book
+		}
+		seen, first, last := d.Seen, d.FirstSeen, d.LastSeen
+		if seen == 0 {
+			seen, first, last = 1, d.At, d.At
+		}
+		// Whether this is an incident: live money, found again and again over
+		// time, not explained by an order in flight or by rounding.
+		var why []string
+		critical := true
+		if b.Env != string(portfolio.Real) {
+			critical = false
+			why = append(why, "the book is a paper book, so nothing real is at risk")
+		}
+		if critical && seen < cfg.Syncs() {
+			critical = false
+			why = append(why, fmt.Sprintf("found by %d of %d syncs so far", seen, cfg.Syncs()))
+		}
+		if critical && last.Sub(first) < time.Duration(cfg.Minutes())*time.Minute {
+			critical = false
+			why = append(why, fmt.Sprintf("has stood for %d of %d minutes so far", int(last.Sub(first)/time.Minute), cfg.Minutes()))
+		}
+		if critical && d.Diff.Kind == "cash_mismatch" && withinTolerance(d.Diff.Local, d.Diff.Broker, cfg.Tolerance()) {
+			critical = false
+			why = append(why, "the cash difference is within the rounding tolerance")
+		}
+		if critical {
+			if !loaded {
+				svc, err := s.OrderService(ctx)
+				if err != nil {
+					return nil, err
+				}
+				if views, err = svc.Views(ctx, ""); err != nil {
+					return nil, err
+				}
+				loaded = true
+			}
+			if reason, ok := pendingActivity(d.Diff.Kind, d.Diff.Subject, views, d.Book, now); ok {
+				critical = false
+				why = append(why, reason)
+			}
+		}
+		rev := fmt.Sprintf("e%d", d.Episode)
+		if critical {
+			rev += ".urgent"
+		}
+		clean0 := "never"
+		if t := lastClean[d.Book]; !t.IsZero() {
+			clean0 = t.UTC().Format(time.RFC3339)
+		}
+		next := "Compare with the broker statement, then book the missing trade, fee or deposit, or ask the broker. Nothing here changes either side."
+		if d.Diff.Hint != "" {
+			next = d.Diff.Hint
+		}
+		var note string
+		if critical {
+			note = fmt.Sprintf("\n- Why this is urgent: real money, found by %d syncs over %d minutes, no order in flight explains it.", seen, int(last.Sub(first)/time.Minute))
+		} else if len(why) > 0 {
+			note = "\n- Not urgent because: " + strings.Join(why, "; ") + "."
 		}
 		out = append(out, alerts.Alert{
-			Rule: alerts.BrokerException, Subject: clean(d.Book) + "/" + digest(r.Key), Revision: fmt.Sprintf("e%d", d.Episode),
-			Title: fmt.Sprintf("Broker difference in %s: %s %s", book, strings.ReplaceAll(d.Diff.Kind, "_", " "), d.Diff.Subject),
-			Body: fmt.Sprintf("- Book: %s\n- Kind: %s\n- Subject: %s\n- Here: %s\n- At the broker: %s\n- %s\n\nNothing was changed on either side. `broker differences` lists it.",
-				book, d.Diff.Kind, d.Diff.Subject, d.Diff.Local, d.Diff.Broker, d.Diff.Hint),
+			Rule: alerts.BrokerException, Subject: clean(d.Book) + "/" + digest(r.Key), Revision: rev, Critical: critical,
+			Title: fmt.Sprintf("Broker difference in %s: %s %s", name, strings.ReplaceAll(d.Diff.Kind, "_", " "), d.Diff.Subject),
+			Body: fmt.Sprintf("- Book: %s (%s)\n- Account: %s\n- Kind: %s\n- Subject: %s\n- Here: %s\n- At the broker: %s\n- Last sync that matched: %s\n- Next: %s%s\n\nNothing was changed on either side. `broker differences` lists it.",
+				name, orDash(b.Env), orDash(b.Account), d.Diff.Kind, d.Diff.Subject, d.Diff.Local, d.Diff.Broker, clean0, next, note),
 			Link: "/book/" + d.Book,
 		})
 	}
@@ -327,11 +476,17 @@ func (s Source) orderAlerts(ctx context.Context) ([]alerts.Alert, error) {
 		if r.State != string(order.Unknown) {
 			continue
 		}
+		// An order that exists only in a paper book risks nothing real.
+		live := r.Env == string(portfolio.Real)
+		kind := "paper"
+		if live {
+			kind = "real"
+		}
 		out = append(out, alerts.Alert{
-			Rule: alerts.OrderUnknown, Subject: clean(r.ID), Revision: "unknown",
+			Rule: alerts.OrderUnknown, Subject: clean(r.ID), Revision: "unknown", Critical: live,
 			Title: fmt.Sprintf("Order %s is in an unknown state: %s %s %s", r.ID, r.Side, r.Qty, r.Security),
-			Body: fmt.Sprintf("- Order: %s (%s book %s)\n- %s %s %s, filled %s\n- The log and the world may disagree: the program does not know whether the broker has this order.\n\nThe program will not send it again. `order recover` lists the orders that need reconciliation; settle this one with `order resolve` or, for a broker-bound book, `broker reconcile`.",
-				r.ID, r.Env, nameOr(r.BookName, r.Book), r.Side, r.Qty, r.Security, r.Filled),
+			Body: fmt.Sprintf("- Order: %s (%s book %s)\n- Money: %s\n- %s %s %s, filled %s\n- The log and the world may disagree: the program does not know whether the broker has this order.\n\nThe program will not send it again. `order recover` lists the orders that need reconciliation; settle this one with `order resolve` or, for a broker-bound book, `broker reconcile`.",
+				r.ID, r.Env, nameOr(r.BookName, r.Book), kind, r.Side, r.Qty, r.Security, r.Filled),
 			Link: "/order/" + r.ID,
 		})
 	}

@@ -134,6 +134,35 @@ type Raised struct {
 	Reopened   []string // keys of alerts whose situation came back before they were sent
 	Superseded []string // keys of earlier revisions replaced
 	Withdrawn  []string // keys of alerts whose situation ended before they were sent
+	Reminded   []string // keys of critical alerts sent again because nobody answered
+}
+
+func sortedKeys(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// answered lists the alerts the user accepted or rejected.
+func (o Outbox) answered(ctx context.Context) (map[string]bool, error) {
+	rr, err := o.RS.All(ctx, KindResponse, "")
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]bool{}
+	for _, r := range rr {
+		var x Response
+		if err := json.Unmarshal(r.Body, &x); err != nil {
+			return nil, fmt.Errorf("answer %s does not decode: %w", r.Key, err)
+		}
+		if x.Kind == "accepted" || x.Kind == "rejected" {
+			out[x.Alert] = true
+		}
+	}
+	return out, nil
 }
 
 func ruleSet(m map[Rule]bool) []Rule {
@@ -211,6 +240,29 @@ func (o Outbox) Raise(ctx context.Context, cfg Config, sc Scan) (Raised, error) 
 		res.New = append(res.New, a)
 		for _, ch := range cfg.ChannelsFor(a.Rule) {
 			set(Delivery{Alert: a.Key(), Channel: ch, Rule: a.Rule, Group: a.Group(), State: Pending})
+		}
+	}
+
+	// a critical alert that is still true and unanswered is sent again on the
+	// configured schedule, never more often, and never once it is answered
+	if cfg.RepeatHours > 0 {
+		answered, err := o.answered(ctx)
+		if err != nil {
+			return res, err
+		}
+		for _, k := range sortedKeys(present) {
+			e, ok := evs[k]
+			if !ok || !e.Critical || !e.Rule.Condition() || answered[k] {
+				continue
+			}
+			for _, d := range sortedDeliveries(dls, k) {
+				if d.State == Sent && now.Sub(d.At) >= time.Duration(cfg.RepeatHours)*time.Hour {
+					d.State, d.Reason, d.Next = Pending, "reminder: still unanswered", time.Time{}
+					d.Reminder++
+					set(d)
+					res.Reminded = append(res.Reminded, k)
+				}
+			}
 		}
 	}
 
@@ -435,7 +487,7 @@ func (o Outbox) Deliver(ctx context.Context, cfg Config, senders map[channel.Kin
 			out.Waiting = append(out.Waiting, line(d, note))
 			continue
 		}
-		if until, quiet := cfg.Quiet(now); quiet && !cfg.IsCritical(d.Rule) && !opt.Retry {
+		if until, quiet := cfg.Quiet(now); quiet && !(cfg.IsCritical(d.Rule) && ev.Critical) && !opt.Retry {
 			if d.State != Held || !d.Next.Equal(until) {
 				d.State, d.Next = Held, until
 				d.Reason = "quiet hours until " + until.Format(time.RFC3339)
@@ -449,6 +501,10 @@ func (o Outbox) Deliver(ctx context.Context, cfg Config, senders map[channel.Kin
 
 		repeat := d.State == Uncertain
 		n := o.notification(ev, correctionOf(evs, dls, ev, d.Channel), repeat)
+		if d.Reminder > 0 {
+			n.Title = fmt.Sprintf("Reminder %d, not yet answered: %s", d.Reminder, strings.TrimPrefix(n.Title, "Correction: "))
+			n.Body += "\n\nThis alert was sent before and has not been answered (`alerts answer`)."
+		}
 		d.Attempts++
 		d.State, d.Reason, d.Next = Sending, "", time.Time{}
 		if err := o.put(ctx, d); err != nil {
@@ -509,7 +565,11 @@ func correctionOf(evs map[string]Alert, dls map[string]Delivery, a Alert, ch cha
 
 func (o Outbox) notification(a Alert, corrects *Alert, repeat bool) channel.Notification {
 	title, body := a.Title, a.Body
-	if corrects != nil {
+	switch {
+	case corrects != nil && a.Critical && !corrects.Critical:
+		title = "Now urgent: " + title
+		body += "\n\nThis replaces the earlier alert " + corrects.ID() + " (" + corrects.Revision + "), which was not urgent. Nothing else about the situation is new."
+	case corrects != nil:
 		title = "Correction: " + title
 		body += "\n\nThis replaces the earlier alert " + corrects.ID() + " (" + corrects.Revision + ")."
 	}

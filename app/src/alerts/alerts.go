@@ -44,6 +44,7 @@ import (
 	"time"
 
 	"github.com/b070nd/stoxicity/app/src/channel"
+	"github.com/b070nd/stoxicity/app/src/money"
 )
 
 // The record kinds.
@@ -100,6 +101,11 @@ type Alert struct {
 	// Corrects is the key of the earlier revision of the same fact this one
 	// replaces, set when it is raised.
 	Corrects string `json:"corrects,omitempty"`
+	// Critical is set by the producer when this alert is about unresolved live
+	// exposure. A rule listed as critical in the configuration goes through quiet
+	// hours only for an alert that is itself critical: a difference that is
+	// still explained by pending activity, or that concerns a paper book, does not.
+	Critical bool `json:"critical,omitempty"`
 }
 
 // Key identifies the fact and its revision.
@@ -177,6 +183,9 @@ type Delivery struct {
 	// the same content: the store leaves a record alone whose kind, key and
 	// content it already holds, and a state that comes back must still be new.
 	Seq int `json:"seq"`
+	// Reminder counts the times this delivery was sent again because a critical
+	// alert stayed unanswered; the first send is not a reminder.
+	Reminder int `json:"reminder,omitempty"`
 }
 
 // Key identifies the delivery.
@@ -201,13 +210,57 @@ type Config struct {
 	DividendDays int `json:"dividend_days"`
 	// ReviewDays is how long a holding goes without a review before one is due.
 	ReviewDays int `json:"review_days"`
+	// RepeatHours is how long a critical alert may stay unanswered before it is
+	// sent again as a reminder; zero sends it once.
+	RepeatHours int `json:"repeat_hours,omitempty"`
+	// BrokerSyncs and BrokerMinutes are the bounded reconciliation attempt: a
+	// difference with the broker is critical only after it has been found by this
+	// many syncs spread over this many minutes. Zero means the default.
+	BrokerSyncs   int `json:"broker_syncs,omitempty"`
+	BrokerMinutes int `json:"broker_minutes,omitempty"`
+	// CashTolerance is the rounding tolerance of a cash difference, in whole
+	// currency units (decimal text); empty means 1.
+	CashTolerance string `json:"cash_tolerance,omitempty"`
+}
+
+// Defaults of the escalation settings.
+const (
+	DefaultBrokerSyncs   = 2
+	DefaultBrokerMinutes = 30
+	DefaultCashTolerance = "1"
+)
+
+// Syncs is the number of syncs that must have found a difference before it is critical.
+func (c Config) Syncs() int {
+	if c.BrokerSyncs > 0 {
+		return c.BrokerSyncs
+	}
+	return DefaultBrokerSyncs
+}
+
+// Minutes is how long a difference must have stood before it is critical.
+func (c Config) Minutes() int {
+	if c.BrokerMinutes > 0 {
+		return c.BrokerMinutes
+	}
+	return DefaultBrokerMinutes
+}
+
+// Tolerance is the cash rounding tolerance in currency units.
+func (c Config) Tolerance() money.Decimal {
+	if c.CashTolerance != "" {
+		if d, err := money.ParseDecimal(c.CashTolerance); err == nil && d.Sign() >= 0 {
+			return d
+		}
+	}
+	return money.MustDecimal(DefaultCashTolerance)
 }
 
 // DefaultConfig is the starter configuration: no quiet hours, an unknown order
 // is critical, and alerts go to local files and the feed only.
 func DefaultConfig() Config {
 	return Config{
-		Zone: "UTC", Critical: []Rule{OrderUnknown},
+		Zone: "UTC", Critical: []Rule{OrderUnknown, BrokerException}, RepeatHours: 24,
 		Channels:    map[string][]channel.Kind{"*": {channel.File, channel.Feed}},
 		MaxAttempts: 5, RetryMinutes: 15, DividendDays: 7, ReviewDays: 91,
 	}
@@ -306,6 +359,17 @@ func (c Config) Validate() error {
 		return errors.New("alerts: the ex-date notice must be 0 to 60 days")
 	case c.ReviewDays < 7 || c.ReviewDays > 400:
 		return errors.New("alerts: the review interval must be 7 to 400 days")
+	case c.RepeatHours < 0 || c.RepeatHours > 24*30:
+		return errors.New("alerts: the reminder interval must be 0 to 720 hours")
+	case c.BrokerSyncs < 0 || c.BrokerSyncs > 20:
+		return errors.New("alerts: the number of syncs before a difference is critical must be 1 to 20")
+	case c.BrokerMinutes < 0 || c.BrokerMinutes > 24*60:
+		return errors.New("alerts: the time before a difference is critical must be 0 to 1440 minutes")
+	}
+	if c.CashTolerance != "" {
+		if d, err := money.ParseDecimal(c.CashTolerance); err != nil || d.Sign() < 0 {
+			return errors.New("alerts: the cash tolerance must be a number of currency units, zero or more")
+		}
 	}
 	return nil
 }

@@ -3,12 +3,15 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/b070nd/stoxicity/app/src/alerts"
 	"github.com/b070nd/stoxicity/app/src/store"
 )
 
@@ -247,4 +250,104 @@ func TestDailyReviewEndsWithTheJournal(t *testing.T) {
 	if err := json.Unmarshal([]byte(e.run(t, "daily", "-json").out), &d); err != nil || len(d.Sections) != 7 || d.Sections[len(d.Sections)-1].Title != "Journal: outcomes to write" {
 		t.Fatalf("%v %+v", err, d)
 	}
+}
+
+// A difference with the broker is urgent only for a real book, only after it
+// was found by several syncs over some time, and not when rounding or an order
+// in flight explains it. Each alert says why, and the urgent ones carry what a
+// person needs to act.
+func TestBrokerDifferenceIsUrgentOnlyForRealMoneyThatStaysUnexplained(t *testing.T) {
+	e := newTestEnv(t)
+	e.run(t, "portfolio", "book", "create", "-account", "U123", "-name", "live", "-env", "real", "-base", "USD").wantCode(t, exitOK)
+	e.run(t, "portfolio", "book", "create", "-account", "paper", "-name", "sim", "-env", "paper_local", "-base", "USD").wantCode(t, exitOK)
+	src, db := workflowOf(t, e)
+	ctx := context.Background()
+	books, err := src.Books(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := map[string]string{}
+	for _, b := range books {
+		ids[b.Name] = b.ID
+	}
+	ts := func(d time.Duration) string { return testNow.Add(-d).UTC().Format(time.RFC3339) }
+	put := func(key, book string, seen int, firstAgo time.Duration, subject, local, brk string) {
+		body := fmt.Sprintf(`{"state":"open","episode":0,"book":%q,"difference":{"kind":"cash_mismatch","subject":%q,"local":%q,"broker":%q,"hint":"compare with the statement"},"at":%q,"seen":%d,"first_seen":%q,"last_seen":%q}`,
+			book, subject, local, brk, ts(0), seen, ts(firstAgo), ts(0))
+		if _, _, err := db.Records("default").Append(ctx, recInput("broker.difference", key, body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	live, sim := ids["live"], ids["sim"]
+	put("a", live, 1, 0, "USD", "100.00", "90.00")              // found once
+	put("b", live, 3, 45*time.Minute, "EUR", "100.00", "90.00") // found again and again
+	put("c", live, 3, 45*time.Minute, "GBP", "100.00", "99.60") // rounding
+	put("d", sim, 5, 5*time.Hour, "CHF", "100.00", "90.00")     // paper money
+	put("e", live, 3, 10*time.Minute, "JPY", "100.00", "90.00") // too recent
+	sync := fmt.Sprintf(`{"book":%q,"at":%q,"differences":4,"last_clean":%q}`, live, ts(0), ts(26*time.Hour))
+	if _, _, err := db.Records("default").Append(ctx, recInput("broker.sync", live, sync)); err != nil {
+		t.Fatal(err)
+	}
+	cfg := alerts.DefaultConfig()
+	sc, errs := src.AlertScan(ctx, cfg)
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	urgent := map[string]bool{}
+	body := map[string]string{}
+	for _, a := range sc.Alerts {
+		if a.Rule == alerts.BrokerException {
+			urgent[a.Title] = a.Critical
+			body[a.Title] = a.Body
+		}
+	}
+	want := map[string]bool{"cash mismatch EUR": true, "cash mismatch USD": false, "cash mismatch GBP": false, "cash mismatch CHF": false, "cash mismatch JPY": false}
+	for sub, w := range want {
+		found := false
+		for title, c := range urgent {
+			if strings.HasSuffix(title, sub) {
+				found = true
+				if c != w {
+					t.Errorf("%s: urgent = %v, want %v\n%s", sub, c, w, body[title])
+				}
+			}
+		}
+		if !found {
+			t.Errorf("no alert for %s", sub)
+		}
+	}
+	for title, b := range body {
+		switch {
+		case strings.HasSuffix(title, "EUR"):
+			for _, w := range []string{"Account: U123", "Here: 100.00", "At the broker: 90.00", "Last sync that matched: " + ts(26*time.Hour), "Next: compare with the statement", "Why this is urgent"} {
+				if !strings.Contains(b, w) {
+					t.Errorf("urgent alert lacks %q:\n%s", w, b)
+				}
+			}
+		case strings.HasSuffix(title, "USD"):
+			if !strings.Contains(b, "found by 1 of 2 syncs") {
+				t.Errorf("USD: %s", b)
+			}
+		case strings.HasSuffix(title, "GBP"):
+			if !strings.Contains(b, "rounding tolerance") {
+				t.Errorf("GBP: %s", b)
+			}
+		case strings.HasSuffix(title, "CHF"):
+			if !strings.Contains(b, "paper book") {
+				t.Errorf("CHF: %s", b)
+			}
+		case strings.HasSuffix(title, "JPY"):
+			if !strings.Contains(b, "10 of 30 minutes") {
+				t.Errorf("JPY: %s", b)
+			}
+		}
+	}
+}
+
+func TestAlertsConfigSetsTheEscalationRules(t *testing.T) {
+	e := newTestEnv(t)
+	e.run(t, "alerts", "config", "set", "-repeat-hours", "-1").wantCode(t, exitUsage)
+	e.run(t, "alerts", "config", "set", "-cash-tolerance", "abc").wantCode(t, exitUsage)
+	e.run(t, "alerts", "config", "set", "-repeat-hours", "6", "-broker-syncs", "3", "-broker-minutes", "45", "-cash-tolerance", "2.50").wantCode(t, exitOK)
+	e.run(t, "alerts", "config", "show").wantOut(t, "every 6 hours", "after 3 syncs over 45 minutes", "within 2.5")
 }
