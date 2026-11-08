@@ -23,6 +23,7 @@ import (
 	"github.com/b070nd/stoxicity/app/src/income"
 	"github.com/b070nd/stoxicity/app/src/instrument"
 	"github.com/b070nd/stoxicity/app/src/money"
+	"github.com/b070nd/stoxicity/app/src/ops"
 	"github.com/b070nd/stoxicity/app/src/order"
 	"github.com/b070nd/stoxicity/app/src/plan"
 	"github.com/b070nd/stoxicity/app/src/portfolio"
@@ -45,6 +46,9 @@ type Source struct {
 	DB     *store.DB
 	Tenant string
 	Now    func() time.Time
+	// DataDir is the data folder. When it was restored from a backup and the
+	// broker has not been reconciled since, new orders are refused (ops.Suspension).
+	DataDir string
 }
 
 func (s Source) now() time.Time {
@@ -116,7 +120,11 @@ func (s Source) Gate(ctx context.Context) (*order.Gate, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &order.Gate{Tier: t, Broker: tier.PermissionsOf(t).BrokerSubmission, Suspended: tier.Suspended(sig)}, nil
+	susp := tier.Suspended(sig)
+	if r := ops.Suspension(s.DataDir); r != "" {
+		susp = append(susp, r)
+	}
+	return &order.Gate{Tier: t, Broker: tier.PermissionsOf(t).BrokerSubmission, Suspended: susp}, nil
 }
 
 // OrderService is the order workflow with the limits of the active policy and

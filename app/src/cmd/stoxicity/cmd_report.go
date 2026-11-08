@@ -112,7 +112,7 @@ func workflowSource(a *app) (workflow.Source, error) {
 	if err != nil {
 		return workflow.Source{}, err
 	}
-	return workflow.Source{DB: db, Tenant: a.tenantID, Now: a.now}, nil
+	return workflow.Source{DB: db, Tenant: a.tenantID, Now: a.now, DataDir: a.dataDir()}, nil
 }
 
 func buildReport(ctx context.Context, a *app, book, day string) (report.Report, error) {

@@ -73,7 +73,7 @@ Channels are built from the same variables as for watches (`STOXICITY_FILE_DIR`,
 
 ## Limits
 
-- Nothing runs `alerts scan` for you. Run it from your scheduler (for example `alerts scan -deliver`); service setup comes with operations (US-027).
+- Nothing runs `alerts scan` for you. `ops service launchd|systemd` writes a timer definition for `alerts scan -deliver` every 15 minutes; you install it.
 - The terminal interface does not yet have an alerts or journal screen.
 - Delivery to email and webhook is covered by the channel tests, not by a live send in this story. The file and feed channels are exercised for real in the tests.
-- Two processes delivering at the same moment are not serialised: both might send. The state records show it as two attempts, and the second is not marked as the first.
+- Two deliveries of one tenant are kept apart by a job lease (docs/operations.md): the second says another delivery is running and sends nothing. The lease is advisory and runs out after ten minutes if the first dies.

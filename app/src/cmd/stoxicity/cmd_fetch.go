@@ -130,6 +130,9 @@ func (a *app) sourcesToPoll(ids []string) ([]model.Source, error) {
 
 // cmdFetch polls the sources once, prints what each one found and exits.
 func cmdFetch(ctx context.Context, a *app, args []string) error {
+	if err := a.guardDisk(0); err != nil {
+		return fmt.Errorf("nothing was fetched: %w", err)
+	}
 	srcs, err := a.sourcesToPoll(args)
 	if err != nil {
 		return err

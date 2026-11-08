@@ -10,6 +10,7 @@ import (
 
 	"github.com/b070nd/stoxicity/app/src/alerts"
 	"github.com/b070nd/stoxicity/app/src/channel"
+	"github.com/b070nd/stoxicity/app/src/ops"
 )
 
 // cmdAlerts finds the things the user should hear about, keeps them once, and
@@ -246,6 +247,17 @@ func alertsDeliver(ctx context.Context, a *app, args []string) error {
 }
 
 func deliverAlerts(ctx context.Context, a *app, ob alerts.Outbox, cfg alerts.Config, opt alerts.DeliverOptions, asJSON bool) error {
+	// One delivery at a time per tenant. A lease that is not renewed runs out,
+	// so a delivery that died does not block the next for more than ten minutes.
+	lease, err := a.leases().Acquire("alerts-deliver-"+a.tenantID, holder(), 10*time.Minute)
+	if err != nil {
+		var held *ops.ErrHeld
+		if errors.As(err, &held) {
+			return fmt.Errorf("another delivery is running (%s) until %s; nothing was sent from here", held.Holder, held.Until.UTC().Format(time.RFC3339))
+		}
+		return err
+	}
+	defer lease.Release()
 	// only the channels some alert still waits for are built, so a channel nobody
 	// uses is never asked for its settings
 	rows, err := ob.Status(ctx, true)

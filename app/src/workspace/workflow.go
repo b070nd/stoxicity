@@ -12,7 +12,7 @@ import (
 var _ tui.Workflow = (*Workspace)(nil)
 
 func (w *Workspace) source() workflow.Source {
-	return workflow.Source{DB: w.db, Tenant: w.tenant.ID, Now: w.now}
+	return workflow.Source{DB: w.db, Tenant: w.tenant.ID, Now: w.now, DataDir: w.dataDir}
 }
 
 // PolicyStatus is the policy in force and what its activation changed.

@@ -52,6 +52,7 @@ type Workspace struct {
 	cfg     config.Config
 	reg     sources.Registry
 	db      *store.DB
+	dataDir string
 	ts      store.TenantStore
 	tenant  tenant.Tenant
 	read    *reader.Reader
@@ -162,7 +163,7 @@ func Open(opts Options) (*Workspace, error) {
 	}
 	zone := cfg.Location()
 	w := &Workspace{
-		cfg: cfg, reg: reg, db: db, ts: db.Tenant(t.ID), tenant: t,
+		cfg: cfg, reg: reg, db: db, dataDir: dataDir, ts: db.Tenant(t.ID), tenant: t,
 		watches: watch.FSStore{Dir: filepath.Join(tenantsDir, t.ID, "watches")},
 		now:     now, zone: zone, byID: map[string]watch.Watch{}, baseDir: base,
 	}

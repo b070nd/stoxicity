@@ -329,8 +329,17 @@ func Inventory() []Capability {
 		Blocker:  "Scan must be run by a scheduler; no TUI screen for alerts or journal; thesis invalidation, policy breach, missing data and dividend declared/paid events are not detected; email and webhook delivery tested through the channel tests only, never a live send; two processes delivering at once are not serialised",
 	})
 
+	caps = append(caps, Capability{
+		ID: "ops-recovery", Name: "Multi-database recovery drills and operations", Scope: Portfolio, Story: "US-027",
+		Levels: map[Dimension]Level{
+			Implemented: Yes, FixtureVerified: Yes, SourceVerified: NotApplicable,
+			AccountVerified: NotApplicable, InvestmentEvaluated: NotApplicable,
+		},
+		Evidence: map[Dimension]string{Implemented: "src/ops/restore.go", FixtureVerified: "src/ops/ops_test.go"},
+		Blocker:  "Drills run on a fixture and a padded 262 MiB fixture only; no real pending migration is exercised; leases are advisory and used by two jobs; the coherence check fingerprints commits and does not lock; broker reconciliation after a restore is verified against a fixture broker only; disk/data-size limits only; Unix only; the recovery point depends on the backup schedule and is not measured",
+	})
+
 	caps = append(caps,
-		planned("ops-recovery", "Multi-database recovery drills and operations", Portfolio, "US-027", "backup.sh covers single databases only"),
 		planned("release-acceptance", "Release documentation and end-to-end acceptance", Portfolio, "US-028", "needs every other story"),
 	)
 	return caps
