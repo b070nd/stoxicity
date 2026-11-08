@@ -101,6 +101,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	mux.HandleFunc("/fund/archives/1000001/000100000126000007/q.htm", func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, acmeCover) })
 	// The SEC's index of the filings of Monday 2 November: two wanted, one not.
 	mux.HandleFunc("/Archives/edgar/daily-index/2026/QTR4/master.20261102.idx", func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, dailyIndex) })
+	mux.HandleFunc("/ecb/daily.xml", func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, ecbDaily) })
 	mux.HandleFunc("/polygon/splits", func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, `{"results":[]}`) })
 	mux.HandleFunc("/polygon/", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, `{"results":[{"T":"ACME","t":1700000000000,"o":10,"h":12,"l":9.5,"c":11.5,"v":1000},{"T":"GLOB","o":20,"h":19,"l":21,"c":20,"v":5},{"T":"NOTLISTED","o":1,"h":2,"l":1,"c":2,"v":1}]}`)
@@ -179,6 +180,14 @@ func runWith(t *testing.T, opts runOptions, args ...string) result {
 	code := run(context.Background(), args, &out, &errOut, opts)
 	return result{code: code, out: out.String(), errOut: errOut.String()}
 }
+
+// ecbDaily is an invented document in the shape of the ECB's reference rates.
+const ecbDaily = `<?xml version="1.0" encoding="UTF-8"?>
+<gesmes:Envelope xmlns:gesmes="http://www.gesmes.org/xml/2002-08-01" xmlns="http://www.ecb.int/vocabulary/2002-08-01/eurofxref">
+<gesmes:subject>Reference rates</gesmes:subject>
+<Cube><Cube time="2026-11-06"><Cube currency="USD" rate="1.0850"/><Cube currency="GBP" rate="0.8412"/><Cube currency="IDR" rate="17000.5"/></Cube>
+<Cube time="2026-11-05"><Cube currency="USD" rate="1.0900"/></Cube></Cube>
+</gesmes:Envelope>`
 
 const acmeFacts = `{"cik":1000001,"facts":{"us-gaap":{"Revenues":{"units":{"USD":[
  {"start":"2024-01-01","end":"2024-12-31","val":100,"accn":"0001000001-25-000001","form":"10-K","filed":"2025-02-20"},

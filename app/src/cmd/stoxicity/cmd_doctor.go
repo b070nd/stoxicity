@@ -2,14 +2,18 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/b070nd/stoxicity/app/src/httpx"
+	"github.com/b070nd/stoxicity/app/src/readiness"
+	"github.com/b070nd/stoxicity/app/src/store"
 )
 
 // Levels of a doctor line.
@@ -23,36 +27,168 @@ const layaTimeout = 3 * time.Second
 
 // doctor prints one line per check and counts the failures.
 type doctor struct {
-	a     *app
-	fails int
+	a      *app
+	fails  int
+	quiet  bool // collect the checks without printing them (JSON output)
+	checks []readiness.Check
+	schema readiness.Schema
 }
 
+// report records one check. The state follows the level unless the check says
+// better: a passed probe is verified, a failed one failed, and a warning about
+// something that was not looked at is unknown.
 func (d *doctor) report(level, name, format string, args ...any) {
+	st := readiness.StateVerified
+	detail := oneLine(fmt.Sprintf(format, args...))
+	switch level {
+	case levelFail:
+		st = readiness.StateFailed
+	case levelWarn:
+		st = readiness.StateStale
+		if strings.HasPrefix(detail, "not checked") {
+			st = readiness.StateUnknown
+		}
+	}
+	d.reportState(level, st, name, "%s", detail)
+}
+
+func (d *doctor) reportState(level string, st readiness.State, name, format string, args ...any) {
 	if level == levelFail {
 		d.fails++
 	}
-	fmt.Fprintf(d.a.stdout, "%-4s  %-14s %s\n", level, name, oneLine(fmt.Sprintf(format, args...)))
+	detail := oneLine(fmt.Sprintf(format, args...))
+	d.checks = append(d.checks, readiness.Check{Name: name, Level: level, State: st, Detail: detail})
+	if !d.quiet {
+		fmt.Fprintf(d.a.stdout, "%-4s  %-14s %s\n", level, name, detail)
+	}
 }
 
 // cmdDoctor checks the installation. It returns an error if any check fails.
 func cmdDoctor(ctx context.Context, a *app, args []string) error {
-	if len(args) > 0 {
-		return usageErrorf("takes no arguments")
+	fs := newFlags("doctor")
+	scopeFlag := fs.String("scope", "", "also list the capabilities of a scope: research, portfolio or broker")
+	asJSON := fs.Bool("json", false, "print the report as JSON (scope defaults to research)")
+	rest, err := parseFlags(fs, args)
+	if err != nil {
+		return err
 	}
-	d := &doctor{a: a}
+	if len(rest) > 0 {
+		return usageErrorf("takes no arguments, only -scope and -json")
+	}
+	var scope readiness.Scope
+	if *scopeFlag != "" || *asJSON {
+		name := *scopeFlag
+		if name == "" {
+			name = string(readiness.Research)
+		}
+		if scope, err = readiness.ParseScope(name); err != nil {
+			return usageErrorf("%v", err)
+		}
+	}
+	// Inspecting the installation must not create or migrate the databases; the
+	// schema check below reads them without opening them for writing.
+	a.noStore = true
+	d := &doctor{a: a, quiet: *asJSON}
 	d.config()
 	d.timezone()
 	d.dataDir()
 	d.envFiles()
 	d.sources()
 	d.tenants()
+	d.schemaCheck(ctx)
 	d.contact()
 	d.laya(ctx)
+	if *asJSON {
+		enc := json.NewEncoder(a.stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(readiness.Build(version, scope, d.checks, d.schema)); err != nil {
+			return err
+		}
+		if d.fails > 0 {
+			return errReported
+		}
+		return nil
+	}
+	if scope != "" {
+		writeCapabilities(a, scope)
+	}
 	if d.fails > 0 {
 		fmt.Fprintf(a.stdout, "\n%d checks failed\n", d.fails)
 		return errReported
 	}
 	return nil
+}
+
+// schemaCheck compares the schema of the databases on disk with the newest one
+// this binary knows, without creating, migrating or writing anything. A
+// database that is behind is migrated, with no way back, by the first command
+// that opens it, so that is said before it happens.
+func (d *doctor) schemaCheck(ctx context.Context) {
+	if d.a.cfgErr != nil {
+		d.report(levelWarn, "schema", "not checked: the configuration did not load")
+		return
+	}
+	known, err := store.KnownSchema()
+	if err != nil {
+		d.report(levelFail, "schema", "%v", err)
+		return
+	}
+	d.schema.KnownBase, d.schema.KnownTenant = known.Base, known.Tenant
+	base, err := store.ReadSchema(ctx, filepath.Join(d.a.dataDir(), "base.db"))
+	if err != nil {
+		d.report(levelFail, "schema", "base.db: %v", err)
+		return
+	}
+	d.schema.BaseExists, d.schema.AppliedBase = base.Exists, base.Applied
+	switch {
+	case !base.Exists:
+		d.reportState(levelOK, readiness.StateImplemented, "schema", "base.db is not created yet; the first run creates it at schema %d", known.Base)
+	case base.Applied > known.Base:
+		d.report(levelFail, "schema", "base.db is at schema %d, newer than this binary (%d); do not open it with this binary", base.Applied, known.Base)
+	case base.Applied < known.Base:
+		d.schema.PendingBase = known.Base - base.Applied
+		d.reportState(levelWarn, readiness.StateStale, "schema", "base.db is at schema %d and this binary is at %d; the first command that opens it migrates it and there is no way back: run ./backup.sh backup and ./backup.sh verify first", base.Applied, known.Base)
+	default:
+		d.report(levelOK, "schema", "base.db is at schema %d", base.Applied)
+	}
+}
+
+// writeCapabilities prints the readiness of one scope as a table. The five
+// dimensions stay separate columns and nothing is summed into a score.
+func writeCapabilities(a *app, scope readiness.Scope) {
+	caps := readiness.InScope(readiness.Inventory(), scope)
+	t := cliTable{Header: []string{"capability", "story"}}
+	for _, dim := range readiness.Dimensions {
+		t.Header = append(t.Header, string(dim))
+	}
+	t.Header = append(t.Header, "blocker")
+	for _, c := range caps {
+		row := []cliCell{plain(c.ID), plain(c.Story)}
+		for _, dim := range readiness.Dimensions {
+			l := c.Level(dim)
+			st := cliPlain
+			switch l {
+			case readiness.Yes:
+				st = cliGreen
+			case readiness.No:
+				st = cliRed
+			case readiness.Unknown:
+				st = cliYellow
+			case readiness.NotApplicable:
+				st = cliDim
+			}
+			row = append(row, styled(string(l), st))
+		}
+		row = append(row, plain(c.Blocker))
+		t.Rows = append(t.Rows, row)
+	}
+	fmt.Fprintf(a.stdout, "\ncapabilities, scope %s (a yes names the file that supports it; unknown means nobody recorded an answer)\n", scope)
+	t.write(a.stdout, useColor(a.stdout))
+	gaps := readiness.Gaps()
+	fmt.Fprintf(a.stdout, "\nknown gaps\n")
+	for _, g := range gaps {
+		fmt.Fprintf(a.stdout, "  %s (%s): %s\n", g.ID, g.Story, g.Summary)
+	}
 }
 
 func (d *doctor) config() {

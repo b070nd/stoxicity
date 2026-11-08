@@ -1,10 +1,14 @@
 package main
 
 import (
+	"database/sql"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/b070nd/stoxicity/app/src/readiness"
 )
 
 // line returns the output line that contains name, or "".
@@ -119,4 +123,104 @@ func TestDoctorChecksLayaOnlyWhenEnabled(t *testing.T) {
 	if l := r.line("laya"); l != "" {
 		t.Errorf("laya checked while disabled: %q", l)
 	}
+}
+
+func TestDoctorSchemaOfAFreshInstallation(t *testing.T) {
+	e := newTestEnv(t)
+	writeEnvLocal(t, e.dir, 0o600)
+	r := e.run(t, "doctor")
+	r.wantCode(t, exitOK)
+	if l := r.line("schema"); !strings.HasPrefix(l, "OK") || !strings.Contains(l, "not created yet") {
+		t.Errorf("schema line is %q", l)
+	}
+	if _, err := os.Stat(filepath.Join(e.dir, "data", "base.db")); err == nil {
+		t.Error("doctor created base.db")
+	}
+}
+
+func TestDoctorWarnsBeforeAMigrationAndTouchesNothing(t *testing.T) {
+	e := newTestEnv(t)
+	writeEnvLocal(t, e.dir, 0o600)
+	dbPath := filepath.Join(e.dir, "data", "base.db")
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_ms INTEGER NOT NULL);
+		INSERT INTO schema_migrations VALUES (18, 'x', 0)`); err != nil {
+		t.Fatal(err)
+	}
+	raw.Close()
+	before, _ := os.ReadFile(dbPath)
+
+	r := e.run(t, "doctor")
+	r.wantCode(t, exitOK)
+	l := r.line("schema")
+	if !strings.HasPrefix(l, "WARN") || !strings.Contains(l, "schema 18") || !strings.Contains(l, "backup.sh backup") {
+		t.Errorf("schema line is %q", l)
+	}
+	after, _ := os.ReadFile(dbPath)
+	if string(before) != string(after) {
+		t.Error("doctor changed the database it only reads")
+	}
+}
+
+func TestDoctorRefusesADatabaseNewerThanTheBinary(t *testing.T) {
+	e := newTestEnv(t)
+	writeEnvLocal(t, e.dir, 0o600)
+	dbPath := filepath.Join(e.dir, "data", "base.db")
+	os.MkdirAll(filepath.Dir(dbPath), 0o755)
+	raw, _ := sql.Open("sqlite", dbPath)
+	raw.Exec(`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_ms INTEGER NOT NULL);
+		INSERT INTO schema_migrations VALUES (9999, 'x', 0)`)
+	raw.Close()
+	r := e.run(t, "doctor")
+	r.wantCode(t, exitError)
+	if l := r.line("schema"); !strings.HasPrefix(l, "FAIL") || !strings.Contains(l, "newer than this binary") {
+		t.Errorf("schema line is %q", l)
+	}
+}
+
+func TestDoctorJSONReport(t *testing.T) {
+	e := newTestEnv(t)
+	writeEnvLocal(t, e.dir, 0o600)
+	r := e.run(t, "doctor", "-json", "-scope", "portfolio")
+	r.wantCode(t, exitOK)
+	var rep readiness.Report
+	if err := json.Unmarshal([]byte(r.out), &rep); err != nil {
+		t.Fatalf("not JSON: %v\n%s", err, r.out)
+	}
+	if rep.Schema != readiness.ReportSchema || rep.Scope != readiness.Portfolio {
+		t.Errorf("header %q %q", rep.Schema, rep.Scope)
+	}
+	if len(rep.Checks) == 0 || len(rep.Capabilities) == 0 || len(rep.Gaps) == 0 {
+		t.Errorf("empty sections: %d checks, %d capabilities, %d gaps", len(rep.Checks), len(rep.Capabilities), len(rep.Gaps))
+	}
+	if rep.Database.KnownBase < 23 {
+		t.Errorf("known base schema %d", rep.Database.KnownBase)
+	}
+	for _, c := range rep.Capabilities {
+		if c.Scope != readiness.Portfolio {
+			t.Errorf("%s is in scope %s", c.ID, c.Scope)
+		}
+	}
+	// The machine-readable report carries no plain-text check lines.
+	if strings.Contains(r.out, "OK    ") {
+		t.Error("text lines mixed into the JSON")
+	}
+}
+
+func TestDoctorScopeTable(t *testing.T) {
+	e := newTestEnv(t)
+	writeEnvLocal(t, e.dir, 0o600)
+	r := e.run(t, "doctor", "-scope", "broker")
+	r.wantCode(t, exitOK)
+	r.wantOut(t, "capabilities, scope broker", "ibkr-submit", "investment_evaluated", "known gaps")
+	r.wantNotOut(t, "money-primitives")
+
+	bad := e.run(t, "doctor", "-scope", "everything")
+	bad.wantCode(t, exitUsage)
 }

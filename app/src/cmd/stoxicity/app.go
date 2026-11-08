@@ -33,6 +33,7 @@ import (
 	"github.com/b070nd/stoxicity/app/src/marketdata"
 	"github.com/b070nd/stoxicity/app/src/model"
 	"github.com/b070nd/stoxicity/app/src/pipeline"
+	"github.com/b070nd/stoxicity/app/src/policy"
 	"github.com/b070nd/stoxicity/app/src/refdata"
 	"github.com/b070nd/stoxicity/app/src/sources"
 	"github.com/b070nd/stoxicity/app/src/stockfeeds"
@@ -120,6 +121,9 @@ type app struct {
 	log      *slog.Logger
 
 	db *store.DB
+	// noStore refuses to open the database. A command that only inspects the
+	// installation sets it, because opening creates and migrates the files.
+	noStore bool
 
 	// The second scorer is built on first use, and its failure reported once.
 	enr     pipeline.Enricher
@@ -374,10 +378,17 @@ func (a *app) requireTenant() (tenant.Tenant, error) {
 	return t, nil
 }
 
+// errStoreOff is the answer of store() to a command that must not touch the
+// database files.
+var errStoreOff = errors.New("this command does not open the database")
+
 // store opens the database on first use.
 func (a *app) store() (*store.DB, error) {
 	if a.db != nil {
 		return a.db, nil
+	}
+	if a.noStore {
+		return nil, errStoreOff
 	}
 	db, err := store.Open(a.dataDir())
 	if err != nil {
@@ -385,6 +396,18 @@ func (a *app) store() (*store.DB, error) {
 	}
 	a.db = db
 	return db, nil
+}
+
+// policyStore is the selected tenant's policy store. The tenant must exist.
+func (a *app) policyStore() (policy.Store, error) {
+	if _, err := a.requireTenant(); err != nil {
+		return nil, err
+	}
+	db, err := a.store()
+	if err != nil {
+		return nil, err
+	}
+	return db.Policies(a.tenantID), nil
 }
 
 // visible lists the sources the selected tenant may see.
