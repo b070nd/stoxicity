@@ -229,8 +229,17 @@ func Inventory() []Capability {
 		Blocker:  "Evidence items are your sourced attestations; broker health signals are set by hand until the IBKR adapters exist",
 	})
 
+	caps = append(caps, Capability{
+		ID: "ibkr-readonly", Name: "IBKR connection and read-only reconciliation", Scope: Broker, Story: "US-017",
+		Levels: map[Dimension]Level{
+			Implemented: Yes, FixtureVerified: Yes, SourceVerified: NotApplicable,
+			AccountVerified: NotApplicable, InvestmentEvaluated: NotApplicable,
+		},
+		Evidence: map[Dimension]string{Implemented: "src/broker/recon/recon.go", FixtureVerified: "src/broker/ibkr/ibkr_test.go"},
+		Blocker:  "adapter shapes are recalled, not re-verified: run broker status and sync against an IBKR paper account and compare with docs/broker.md; needs the account, entity, permissions and entitlements",
+	})
+
 	caps = append(caps,
-		planned("ibkr-readonly", "IBKR connection and read-only reconciliation", Broker, "US-017", "needs an IBKR account and the supported retail session flow, reverified"),
 		planned("ibkr-submit", "Confirmed IBKR order preview and submission", Broker, "US-018", "needs read-only sync, tiers and current execution-grade quotes"),
 		planned("order-monitoring", "Order monitoring, cancel and replace", Broker, "US-019", "needs confirmed submission"),
 		planned("event-strategy", "Separate time-bounded event strategy", Portfolio, "US-020", "needs scorecards, paper engine and tiers"),
