@@ -239,7 +239,8 @@ than it is, and `eval` prints the sampled labels' precision and recall apart.
 - **Settings.** `.env` and `.env.local` are found by walking up from the current
   directory; `config.yaml` and `sources.yaml` in `app/config`. See
   [docs/configuration.md](docs/configuration.md).
-- **Where data goes.** `data/` next to `.env` (set `STOXICITY_DATA_DIR` or
+- **Where data goes.** Keep it outside the source folder: set `STOXICITY_DATA_DIR` and
+  `STOXICITY_BACKUP_DIR` in `.env.local` ([docs/data-location.md](docs/data-location.md)). Without them it is `data/` next to `.env` (set `STOXICITY_DATA_DIR` or
   `data_dir` to move it): `base.db` is the shared base, `tenants/<id>.db` holds
   each tenant's hits and labels. It is git-ignored.
 - **Network.** `fetch` and `run` refuse to start without `STOXICITY_CONTACT`
