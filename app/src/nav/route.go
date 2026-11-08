@@ -57,6 +57,18 @@ const (
 	Watches   Kind = "watches"
 	// Label is the queue of articles to judge; it belongs to no watch.
 	Label Kind = "label"
+	// The daily workflow. None of these belongs to a watch: they describe the
+	// tenant's plans, books, income, orders and policy. Arg of a list is a
+	// filter, as for Companies; Arg of a detail is the plan (pl_x or pl_x.rN),
+	// the book (account/name) or the order.
+	Plans     Kind = "plans"
+	Plan      Kind = "plan"
+	Portfolio Kind = "portfolio"
+	Book      Kind = "book"
+	Income    Kind = "income"
+	Orders    Kind = "orders"
+	Order     Kind = "order"
+	Policy    Kind = "policy"
 )
 
 // Route is a parsed location. Arg is the ticker, topic ID, domain or day for
@@ -70,12 +82,38 @@ type Route struct {
 
 // Scoped reports whether the screen shows one watch's data. Sources and
 // Watches do not.
-func (r Route) Scoped() bool { return r.Kind != Sources && r.Kind != Watches && r.Kind != Label }
+func (r Route) Scoped() bool {
+	switch r.Kind {
+	case Sources, Watches, Label, Plans, Plan, Portfolio, Book, Income, Orders, Order, Policy:
+		return false
+	}
+	return true
+}
+
+// Workflow reports whether the screen is one of the daily workflow: plans,
+// books, income, orders and policy.
+func (r Route) Workflow() bool {
+	switch r.Kind {
+	case Plans, Plan, Portfolio, Book, Income, Orders, Order, Policy:
+		return true
+	}
+	return false
+}
+
+// IsWorkflowList reports whether the kind is a list of the daily workflow, whose
+// route argument is a filter.
+func IsWorkflowList(k Kind) bool {
+	switch k {
+	case Plans, Portfolio, Income, Orders:
+		return true
+	}
+	return false
+}
 
 // Section reports whether the route is a top-level list that starts a new trail.
 func (r Route) Section() bool {
 	switch r.Kind {
-	case Home, Stocks, Companies, Exchanges, Topics, Domains, Sources, Watches, Label, Search:
+	case Home, Stocks, Companies, Exchanges, Topics, Domains, Sources, Watches, Label, Search, Plans, Portfolio, Income, Orders, Policy:
 		return true
 	}
 	return false
@@ -92,6 +130,12 @@ func (r Route) Parent() (Route, bool) {
 		return Route{Kind: Domains, Watch: r.Watch}, true
 	case Exchange:
 		return Route{Kind: Exchanges, Watch: r.Watch}, true
+	case Plan:
+		return Route{Kind: Plans}, true
+	case Book:
+		return Route{Kind: Portfolio}, true
+	case Order:
+		return Route{Kind: Orders}, true
 	}
 	return Route{}, false
 }
@@ -115,6 +159,16 @@ func (r Route) Label() string {
 		return "Watches"
 	case Label:
 		return "Label"
+	case Plans:
+		return withFilter("Plan", r.Arg)
+	case Portfolio:
+		return withFilter("Portfolio", r.Arg)
+	case Income:
+		return withFilter("Income", r.Arg)
+	case Orders:
+		return withFilter("Orders", r.Arg)
+	case Policy:
+		return "Policy"
 	case Search:
 		return "Search: " + r.Arg
 	case Companies:
@@ -125,6 +179,13 @@ func (r Route) Label() string {
 	default:
 		return r.Arg
 	}
+}
+
+func withFilter(name, q string) string {
+	if q == "" {
+		return name
+	}
+	return name + ": " + q
 }
 
 // String writes the route as a path, with the /w/<watch> prefix when it has one.
@@ -148,6 +209,13 @@ func (r Route) String() string {
 			return prefix + "/companies"
 		}
 		return prefix + "/companies?q=" + url.QueryEscape(r.Arg)
+	case Plans, Portfolio, Income, Orders:
+		if r.Arg == "" {
+			return "/" + string(r.Kind)
+		}
+		return "/" + string(r.Kind) + "?q=" + url.QueryEscape(r.Arg)
+	case Policy:
+		return "/policy"
 	default:
 		return prefix + "/" + string(r.Kind) + "/" + r.Arg
 	}
@@ -189,6 +257,16 @@ func parsePath(s, path, query string) (Route, error) {
 			return Route{}, fmt.Errorf("nav: %q takes no argument", s)
 		}
 		return Route{Kind: Kind(head)}, nil
+	case Policy:
+		if hasArg {
+			return Route{}, fmt.Errorf("nav: %q takes no argument", s)
+		}
+		return Route{Kind: Policy}, nil
+	case Plan, Book, Order:
+		if !hasArg || arg == "" {
+			return Route{}, fmt.Errorf("nav: %q needs an argument", s)
+		}
+		return Route{Kind: Kind(head), Arg: arg}, nil
 	case Stock, Topic, Domain, Exchange:
 		if !hasArg || arg == "" {
 			return Route{}, fmt.Errorf("nav: %q needs an argument", s)
@@ -199,7 +277,7 @@ func parsePath(s, path, query string) (Route, error) {
 			return Route{}, fmt.Errorf("nav: %q: day must be YYYY-MM-DD", s)
 		}
 		return Route{Kind: Day, Arg: arg}, nil
-	case Search, Companies:
+	case Search, Companies, Plans, Portfolio, Income, Orders:
 		if hasArg {
 			return Route{}, fmt.Errorf("nav: %q takes no path argument", s)
 		}

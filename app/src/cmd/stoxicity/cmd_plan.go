@@ -319,13 +319,9 @@ func planGenerate(ctx context.Context, a *app, args []string) error {
 }
 
 func planRef(s string) (string, int, error) {
-	id, rv, ok := strings.Cut(s, ".r")
-	if !ok {
-		return s, 0, nil
-	}
-	var n int
-	if _, err := fmt.Sscanf(rv, "%d", &n); err != nil || n < 1 {
-		return "", 0, usageErrorf("%q is not a plan reference (pl_xxxx or pl_xxxx.r2)", s)
+	id, n, err := plan.ParseRef(s)
+	if err != nil {
+		return "", 0, usageErrorf("%v", err)
 	}
 	return id, n, nil
 }

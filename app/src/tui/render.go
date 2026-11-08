@@ -140,6 +140,9 @@ var screenTabs = []struct {
 	{"Sources", "o", []nav.Kind{nav.Sources}},
 	{"Watches", "w", []nav.Kind{nav.Watches}},
 	{"Label", "a", []nav.Kind{nav.Label}},
+	{"Plan", "p", []nav.Kind{nav.Plans, nav.Plan, nav.Policy}},
+	{"Portfolio", "f", []nav.Kind{nav.Portfolio, nav.Book, nav.Orders, nav.Order}},
+	{"Income", "m", []nav.Kind{nav.Income}},
 }
 
 // stocksQuery is what the s key and the Stocks tab open: every stock, those in
@@ -338,7 +341,7 @@ func (m *Model) bodyLines() []string {
 
 func (m *Model) filterLine() string {
 	switch m.mode {
-	case modeFilter, modeTag, modeMember, modeJump:
+	case modeFilter, modeTag, modeMember, modeJump, modeConfirm:
 		return m.prompt.Line()
 	}
 	return m.keyBar()

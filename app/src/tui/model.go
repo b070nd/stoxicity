@@ -37,6 +37,8 @@ const (
 	modeTag    // typing tags for a stock
 	modeMember // typing list names for a stock
 	modeJump   // typing the start of a ticker or name to jump to in the catalogue
+	// modeConfirm: typing the ID of an order to confirm it.
+	modeConfirm
 )
 
 // Model is the Bubble Tea model of the interface. All of its state is plain
@@ -120,6 +122,8 @@ type Model struct {
 	queue    []labels.Pick
 	progress labels.Progress
 	sources  []status.Source
+	// wf is what the workflow screens were last built from.
+	wf *WorkflowData
 
 	detail  *model.Article
 	mode    mode
@@ -151,7 +155,13 @@ type (
 		progress    labels.Progress
 		shared      bool
 		truncated   bool
+		wf          *WorkflowData
 		err         error
+	}
+	// confirmedMsg is the answer to an order confirmation.
+	confirmedMsg struct {
+		id  string
+		err error
 	}
 	tickMsg  time.Time
 	clockMsg time.Time // the screen is drawn again
@@ -231,7 +241,7 @@ func needsShared(k nav.Kind) bool {
 	case nav.Day, nav.Search, nav.Sources, nav.Watches, nav.Label:
 		return false
 	}
-	return true
+	return !(nav.Route{Kind: k}).Workflow()
 }
 
 // loadCmd fetches what the current screen is built from, and for a stock the
@@ -305,6 +315,8 @@ func (m *Model) loadWindow(force bool) tea.Cmd {
 			if out.queue, err = be.LabelQueue(c, labelQueueSize); err == nil {
 				out.progress, err = be.LabelProgress(c)
 			}
+		case nav.Plans, nav.Plan, nav.Portfolio, nav.Book, nav.Income, nav.Orders, nav.Order, nav.Policy:
+			out.wf, err = loadWorkflow(c, be, r, be.Now().In(zone).Format(time.DateOnly))
 		case nav.Day:
 			var day time.Time
 			day, err = time.ParseInLocation(time.DateOnly, r.Arg, zone)
@@ -362,7 +374,7 @@ func (m *Model) rebuild() {
 		Params: p, Watchlist: m.be.Watchlist(), Topics: m.be.TopicNames(),
 		Name: m.be.CompanyName, Verdicts: m.verdicts, Sources: m.sources,
 		Watches: m.watches, WatchID: m.stack.Watch(), Now: m.be.Now(), Truncated: m.truncated,
-		Queue: m.queue, Progress: m.progress,
+		Queue: m.queue, Progress: m.progress, WF: m.wf,
 		Universe: m.be.Universe(), Following: m.be.Following, Feeds: m.be.StockFeeds, Insiders: m.be.Insiders, Quotes: m.be.Quotes(), Numbers: m.be.Numbers(),
 	}
 	if ex, ok := m.be.(Explainer); ok {

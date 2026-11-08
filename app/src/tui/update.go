@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"maps"
 	"net/url"
@@ -75,6 +76,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case seenMsg:
 		return m, m.watchesCmd()
+	case confirmedMsg:
+		if msg.err != nil {
+			m.fail("%v", msg.err)
+			break
+		}
+		m.ok("%s confirmed. %s", msg.id, confirmedNote)
+		return m, m.loadCmd(true)
 	case editedMsg:
 		if msg.err != nil {
 			m.fail("%v", msg.err)
@@ -125,6 +133,9 @@ func (m *Model) loaded(msg loadedMsg) tea.Cmd {
 		return nil
 	}
 	m.verdicts = msg.verdicts
+	if msg.wf != nil {
+		m.wf = msg.wf
+	}
 	if m.stack.Current().Kind == nav.Label {
 		m.queue, m.progress = msg.queue, msg.progress
 	}
@@ -134,15 +145,15 @@ func (m *Model) loaded(msg loadedMsg) tea.Cmd {
 	switch {
 	case msg.shared:
 		m.shared, m.sharedWatch, m.sharedOK = msg.arts, m.stack.Watch(), true
-	case m.stack.Current().Kind == nav.Sources, m.stack.Current().Kind == nav.Label:
+	case m.stack.Current().Kind == nav.Sources, m.stack.Current().Kind == nav.Label, m.stack.Current().Workflow():
 	case m.stack.Current().Kind != nav.Watches:
 		m.routeArts, m.truncated = msg.arts, msg.truncated
 	}
 	m.refreshed = m.be.Now()
-	if !m.failed || !strings.HasPrefix(m.status, "watch ") {
+	if (!m.failed || !strings.HasPrefix(m.status, "watch ")) && !strings.HasSuffix(m.status, confirmedNote) {
 		m.status, m.failed = "", false
 	}
-	m.diffNext = true
+	m.diffNext = !m.stack.Current().Workflow() // "new or changed" is news; it would hide a confirmation
 	m.rebuild()
 	if w := m.stack.Watch(); w != "" && m.stack.Current().Scoped() {
 		be, ctx := m.be, m.ctx
@@ -226,7 +237,7 @@ func (m *Model) showLoading() {
 // key handles a key press.
 func (m *Model) key(k tea.KeyPressMsg) tea.Cmd {
 	switch m.mode {
-	case modeFilter, modeTag, modeMember, modeJump:
+	case modeFilter, modeTag, modeMember, modeJump, modeConfirm:
 		return m.promptKey(k)
 	case modeHelp:
 		m.mode = modeList
@@ -283,6 +294,12 @@ func (m *Model) key(k tea.KeyPressMsg) tea.Cmd {
 		return m.goTo(nav.Route{Kind: nav.Watches})
 	case GoLabel:
 		return m.goTo(nav.Route{Kind: nav.Label})
+	case GoPlans:
+		return m.goTo(nav.Route{Kind: nav.Plans})
+	case GoPortfolio:
+		return m.goTo(nav.Route{Kind: nav.Portfolio})
+	case GoIncome:
+		return m.goTo(nav.Route{Kind: nav.Income})
 	case GoHome:
 		return m.goTo(nav.Route{Kind: nav.Home})
 	case GoStocks:
@@ -418,6 +435,8 @@ func (m *Model) promptKey(k tea.KeyPressMsg) tea.Cmd {
 		return m.filterEvent(ev)
 	case modeJump:
 		return m.jumpEvent(ev, k)
+	case modeConfirm:
+		return m.confirmEvent(ev)
 	}
 	return m.editEvent(ev)
 }
@@ -427,6 +446,18 @@ func (m *Model) promptKey(k tea.KeyPressMsg) tea.Cmd {
 // elsewhere enter runs the query as a search.
 func (m *Model) filterEvent(ev PromptEvent) tea.Cmd {
 	companies := m.stack.Current().Kind == nav.Companies
+	if k := m.stack.Current().Kind; nav.IsWorkflowList(k) {
+		switch ev {
+		case Cancelled:
+			m.mode = modeList
+		case Submitted:
+			q := strings.TrimSpace(m.prompt.Text())
+			m.prompt.Remember()
+			m.mode = modeList
+			return m.goTo(nav.Route{Kind: k, Arg: q})
+		}
+		return nil
+	}
 	switch ev {
 	case Cancelled:
 		m.mode = modeList
@@ -699,6 +730,9 @@ func (m *Model) openRow() tea.Cmd {
 	switch {
 	case row.Article != nil:
 		m.detail = row.Article
+	case strings.HasPrefix(row.Key, "confirm:"):
+		id, _, _ := strings.Cut(strings.TrimPrefix(row.Key, "confirm:"), "#")
+		return m.startConfirm(id)
 	case row.Go != nil:
 		if row.Go.Kind == nav.Companies {
 			m.group = "" // the group opened is the query's now, not x's
@@ -823,4 +857,44 @@ func (m *Model) openTicker(n int) tea.Cmd {
 	}
 	m.detail = nil
 	return m.goTo(nav.Route{Kind: nav.Stock, Arg: a.Tickers[n-1]})
+}
+
+// startConfirm opens the prompt that asks for the order's ID: confirming is an
+// act the person performs by writing the ID out, not by pressing a key.
+// confirmedNote ends the status after a confirmation: the reload that follows
+// must not wipe the one thing the person needs to read.
+const confirmedNote = "Nothing was sent."
+
+func (m *Model) startConfirm(id string) tea.Cmd {
+	if _, ok := m.be.(Workflow); !ok {
+		m.fail("this backend cannot confirm orders")
+		return nil
+	}
+	m.target, m.mode = id, modeConfirm
+	m.prompt.Open("confirm", " Type "+id+" to confirm it (nothing is sent): ", "enter confirms · esc cancels", "", false)
+	return nil
+}
+
+// confirmEvent acts on the confirmation prompt.
+func (m *Model) confirmEvent(ev PromptEvent) tea.Cmd {
+	switch ev {
+	case Cancelled:
+		m.mode = modeList
+		m.ok("not confirmed")
+	case Submitted:
+		typed, id := m.prompt.Text(), m.target
+		m.mode = modeList
+		wf, ok := m.be.(Workflow)
+		if !ok {
+			m.fail("this backend cannot confirm orders")
+			return nil
+		}
+		ctx := m.ctx
+		return func() tea.Msg {
+			c, cancel := context.WithTimeout(ctx, loadTimeout)
+			defer cancel()
+			return confirmedMsg{id: id, err: wf.ConfirmOrder(c, id, typed)}
+		}
+	}
+	return nil
 }

@@ -188,6 +188,9 @@ type Data struct {
 	// Calendar is the exchange calendar the schedule screens read; the zero value
 	// is the recurring rules alone.
 	Calendar exchange.Calendar
+	// WF is what the plan, portfolio, income, order and policy screens are built
+	// from; nil until loaded.
+	WF *WorkflowData
 }
 
 func (d Data) name(t string) string {
@@ -244,6 +247,9 @@ func build(r nav.Route, d Data) Screen {
 		return buildWatches(d)
 	case nav.Label:
 		return buildLabel(d)
+	}
+	if r.Workflow() {
+		return buildWorkflow(r, d)
 	}
 	return Screen{Title: r.Label(), Notice: "no such screen"}
 }

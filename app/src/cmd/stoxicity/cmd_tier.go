@@ -135,15 +135,11 @@ func policyTier(ctx context.Context, a *app) (int, bool, error) {
 
 // tierGate is what orders are checked against.
 func tierGate(ctx context.Context, a *app) (*order.Gate, error) {
-	t, _, err := policyTier(ctx, a)
+	src, err := workflowSource(a)
 	if err != nil {
 		return nil, err
 	}
-	sig, err := loadSignals(ctx, a)
-	if err != nil {
-		return nil, err
-	}
-	return &order.Gate{Tier: t, Broker: tier.PermissionsOf(t).BrokerSubmission, Suspended: tier.Suspended(sig)}, nil
+	return src.Gate(ctx)
 }
 
 // sessionsObserved counts the weekdays from the first transaction in any book

@@ -41,8 +41,11 @@ const (
 	UseExchange    Action = "use-exchange" // narrow every screen to the exchange on this screen
 	GoDomains      Action = "domains"
 	GoSources      Action = "sources"
-	GoLabel        Action = "label"    // the queue of articles to judge
-	OpenURL        Action = "open-url" // the selected article in the browser
+	GoLabel        Action = "label"     // the queue of articles to judge
+	GoPlans        Action = "plans"     // Plan: what to do, and the policy and tier it runs under
+	GoPortfolio    Action = "portfolio" // Portfolio: books, cash, orders
+	GoIncome       Action = "income"    // Income: declared payouts, entitlements, what was received
+	OpenURL        Action = "open-url"  // the selected article in the browser
 	Up             Action = "up"
 	Down           Action = "down"
 	PageUp         Action = "page-up"
@@ -123,7 +126,7 @@ func (b Binding) Applies(c Context) bool {
 	}
 	switch b.Needs {
 	case OnRow:
-		return c.HasRow && (c.Row.Article != nil || c.Row.Go != nil || c.Row.HasWatch)
+		return c.HasRow && (c.Row.Article != nil || c.Row.Go != nil || c.Row.HasWatch || strings.HasPrefix(c.Row.Key, "confirm:"))
 	case OnArticle:
 		return c.Article
 	case OnStock:
@@ -180,7 +183,7 @@ var DefaultKeys = []Binding{
 	{Keys: []string{"ctrl+tab"}, Action: NextWatch, Help: "next watch"},
 	{Keys: []string{"ctrl+shift+tab"}, Action: PrevWatch, Help: "previous watch"},
 	{Keys: []string{"v"}, Action: ToggleRelevant, Help: "toggle relevant-only news", Bar: "relevant"},
-	{Keys: []string{"f"}, Action: ToggleFacets, Help: "expand or collapse catalogue facets", Bar: "facets", Screens: []nav.Kind{nav.Companies}},
+	{Keys: []string{"="}, Action: ToggleFacets, Help: "expand or collapse catalogue facets", Bar: "facets", Screens: []nav.Kind{nav.Companies}},
 	{Keys: []string{"1", "2", "3", "4", "5", "6", "7", "8", "9"}, Action: JumpWatch, Help: "watch n (in an article: its stock n)", Detail: true},
 	{Keys: []string{"right", "enter"}, Action: Open, Help: "open the row", Bar: "open", Needs: OnRow, Detail: true},
 	{Keys: []string{"left", "esc", "backspace"}, Action: Back, Help: "back up the hierarchy", Bar: "back", Detail: true},
@@ -194,6 +197,9 @@ var DefaultKeys = []Binding{
 	{Keys: []string{"o"}, Action: GoSources, Help: "Sources: their health"},
 	{Keys: []string{"w"}, Action: GoWatches, Help: "Watches: manage them"},
 	{Keys: []string{"a"}, Action: GoLabel, Help: "Label: judge what the lens doubts"},
+	{Keys: []string{"p"}, Action: GoPlans, Help: "Plan: proposals, reviews, policy"},
+	{Keys: []string{"f"}, Action: GoPortfolio, Help: "Portfolio: books, cash, orders"},
+	{Keys: []string{"m"}, Action: GoIncome, Help: "Income: payouts owed and received"},
 	{Keys: []string{"/"}, Action: FocusFilter, Help: "filter", Bar: "filter"},
 	{Keys: []string{"j"}, Action: Jump, Help: "catalogue: jump to a ticker or name", Bar: "jump", Screens: []nav.Kind{nav.Companies}},
 	{Keys: []string{">"}, Action: SortNext, Help: "sort by the next column", Bar: "sort", Needs: OnColumns},

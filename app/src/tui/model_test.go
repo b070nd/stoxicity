@@ -1125,7 +1125,7 @@ func TestListPromptCreatesAListAndCompaniesCanBeFilteredByIt(t *testing.T) {
 	h.press("l")
 	h.typeText("picks")
 	h.press("enter")
-	h.press("f")
+	h.press("=")
 	h.mustContain("NVDA lists +picks", "lists: picks 1")
 	h.m.goTo(nav.Route{Kind: nav.Companies, Arg: "list:picks"})
 	h.run(h.m.loadCmd(false))

@@ -229,3 +229,17 @@ func (r Repo) Move(ctx context.Context, rv Revision, to State, by, note string, 
 	}
 	return ev, nil
 }
+
+// ParseRef reads "pl_xxxx" or "pl_xxxx.r2": the plan and the revision, zero
+// meaning the latest.
+func ParseRef(s string) (string, int, error) {
+	id, rv, ok := strings.Cut(s, ".r")
+	if !ok {
+		return s, 0, nil
+	}
+	var n int
+	if _, err := fmt.Sscanf(rv, "%d", &n); err != nil || n < 1 {
+		return "", 0, fmt.Errorf("%q is not a plan reference (pl_xxxx or pl_xxxx.r2)", s)
+	}
+	return id, n, nil
+}

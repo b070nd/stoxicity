@@ -240,3 +240,26 @@ func TestExchangeSitsUnderExchanges(t *testing.T) {
 		t.Error("the list takes no argument")
 	}
 }
+
+func TestWorkflowRoutesRoundTripAndBelongToNoWatch(t *testing.T) {
+	for _, s := range []string{"/plans", "/plans?q=sleeve%3Aevent", "/plan/pl_abc.r2", "/portfolio", "/book/main/core", "/income", "/income?q=status%3Aentitled", "/orders", "/order/ord_1", "/policy"} {
+		r, err := Parse(s)
+		if err != nil {
+			t.Fatalf("Parse(%q): %v", s, err)
+		}
+		if got := r.String(); got != s {
+			t.Errorf("round trip: %q -> %q", s, got)
+		}
+		if r.Scoped() || !r.Workflow() {
+			t.Errorf("%q must belong to no watch and be a workflow screen", s)
+		}
+	}
+	for _, s := range []string{"/plan", "/book", "/order", "/policy/x", "/w/a/plans", "/plans/x"} {
+		if _, err := Parse(s); err == nil {
+			t.Errorf("Parse(%q): expected an error", s)
+		}
+	}
+	if p, ok := (Route{Kind: Order, Arg: "o"}).Parent(); !ok || p.Kind != Orders {
+		t.Errorf("parent of an order: %+v", p)
+	}
+}

@@ -71,26 +71,11 @@ func (a *app) orders() (store.Orders, error) {
 
 // orderService reads the account limits from the active policy.
 func orderService(ctx context.Context, a *app) (order.Service, error) {
-	ords, err := a.orders()
+	src, err := workflowSource(a)
 	if err != nil {
 		return order.Service{}, err
 	}
-	svc := order.Service{Store: ords}
-	if svc.Gate, err = tierGate(ctx, a); err != nil {
-		return svc, err
-	}
-	db, err := a.store()
-	if err != nil {
-		return svc, err
-	}
-	rec, active, err := db.Policies(a.tenantID).AsOf(ctx, time.Time{})
-	if err != nil {
-		return svc, err
-	}
-	if active {
-		svc.Limits = order.Limits{MaxTradesPerMonth: rec.Policy.Preferences.MaxTradesPerMonth, MaxCostBurden: rec.Policy.Constraints.MaxCostBurden}
-	}
-	return svc, nil
+	return src.OrderService(ctx)
 }
 
 // findOrder returns an order's view and the reference of its book.

@@ -309,8 +309,17 @@ func Inventory() []Capability {
 		Blocker:  "Exports are built from stored records only and checked on fixtures; no real book has been exported or reconciled with a statement, and the command family was never used against a live account",
 	})
 
+	caps = append(caps, Capability{
+		ID: "plan-tui", Name: "Plan, Portfolio and Income TUI", Scope: Portfolio, Story: "US-025",
+		Levels: map[Dimension]Level{
+			Implemented: Yes, FixtureVerified: Yes, SourceVerified: NotApplicable,
+			AccountVerified: NotApplicable, InvestmentEvaluated: NotApplicable,
+		},
+		Evidence: map[Dimension]string{Implemented: "src/tui/workflow.go", FixtureVerified: "src/tui/workflow_test.go"},
+		Blocker:  "Checked in a terminal against a scratch fixture workspace only; no real data, no payouts, no open plan; no what-if, no policy editor and no broker-connected confirmation in the interface",
+	})
+
 	caps = append(caps,
-		planned("plan-tui", "Plan, Portfolio and Income TUI", Portfolio, "US-025", "needs the CLI layer"),
 		planned("alerts-journal", "Plan alerts and decision journal", Portfolio, "US-026", "needs plan revisions and the TUI"),
 		planned("ops-recovery", "Multi-database recovery drills and operations", Portfolio, "US-027", "backup.sh covers single databases only"),
 		planned("release-acceptance", "Release documentation and end-to-end acceptance", Portfolio, "US-028", "needs every other story"),
