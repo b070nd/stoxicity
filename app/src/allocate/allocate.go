@@ -102,10 +102,16 @@ type Limits struct {
 
 // Request is one allocation problem.
 type Request struct {
-	Base       money.Currency
-	Cash       int64 // settled, spendable cash before the reserve, minor units
-	Holdings   []Holding
-	Candidates []Candidate
+	Base money.Currency
+	Cash int64 // settled, spendable cash before the reserve, minor units
+	// OtherCash is cash held in other currencies, in base minor units at the
+	// rates supplied. It counts toward equity, so the caps are measured on what
+	// you own, but it is not spent and is not credited against the reserve.
+	OtherCash int64
+	// OtherCashNotes say which foreign cash could not be valued (no rate).
+	OtherCashNotes []string
+	Holdings       []Holding
+	Candidates     []Candidate
 	// Rates are base units per one unit of a foreign currency.
 	Rates  map[money.Currency]money.Decimal
 	Limits Limits
@@ -383,7 +389,11 @@ func minorText(minor int64, cur money.Currency) string {
 func Allocate(r Request) Plan {
 	p := Plan{Lines: []Line{}, Skipped: []Skip{}, Binding: []string{}, Unknown: []string{}, Breaches: []string{}, Explanation: []string{}}
 	e := r.exposures()
-	equity := r.Cash + e.total
+	equity := r.Cash + r.OtherCash + e.total
+	p.Unknown = append(p.Unknown, r.OtherCashNotes...)
+	if r.OtherCash != 0 {
+		p.Explanation = append(p.Explanation, fmt.Sprintf("%s of cash in other currencies counts toward equity so the caps are measured on what you own; it is not spent here and is not credited against the reserve", minorText(r.OtherCash, r.Base)))
+	}
 	p.Equity = equity
 	reserve := frac(r.Limits.CashReserve, equity)
 	spend := r.Cash - reserve

@@ -15,6 +15,7 @@ import (
 	"github.com/b070nd/stoxicity/app/src/distribution"
 	"github.com/b070nd/stoxicity/app/src/money"
 	"github.com/b070nd/stoxicity/app/src/plan"
+	"github.com/b070nd/stoxicity/app/src/review"
 	"github.com/b070nd/stoxicity/app/src/strategy"
 )
 
@@ -583,18 +584,32 @@ func currentManifest(ctx context.Context, a *app, rv plan.Revision) (plan.Manife
 		return cur, err
 	}
 	cur.Ledger = l.Projection().Fingerprint()
-	if rv.Card.Strategy != strategy.CoreID {
+	if rv.Card.Strategy != strategy.CoreID && rv.Card.Strategy != review.ID {
 		return cur, nil // a fund's facts are a file the run was given; its expiry covers it
 	}
 	rs, err := a.records()
 	if err != nil {
 		return cur, err
 	}
-	cfg, _, err := loadConfig(ctx, rs)
-	if err != nil {
-		return cur, err
+	if rv.Card.Strategy == review.ID {
+		rc, _, err := loadReviewConfig(ctx, rs)
+		if err != nil {
+			return cur, err
+		}
+		cur.Config = rc.Hash()
+		if cur.Decisions, err = decisionsHash(ctx, rs, rv.Card.Security, time.Time{}); err != nil {
+			return cur, err
+		}
+		if rv.Manifest.Scorecard == "" {
+			return cur, nil // a fund: no scorecard or assumptions were read
+		}
+	} else {
+		cfg, _, err := loadConfig(ctx, rs)
+		if err != nil {
+			return cur, err
+		}
+		cur.Config = cfg.Hash()
 	}
-	cur.Config = cfg.Hash()
 	// The scorecard is read as of the plan's own day, so an unchanged scorecard
 	// has the same hash. Anything recorded after the plan was generated, even if
 	// dated later, is information the plan did not have.

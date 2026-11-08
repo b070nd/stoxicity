@@ -279,3 +279,24 @@ func TestNothingSpendableAboveTheReserve(t *testing.T) {
 		t.Fatalf("%+v", p)
 	}
 }
+
+func TestCashInOtherCurrenciesCountsTowardEquityButIsNotSpent(t *testing.T) {
+	r := req(100_000, stock("A", "ia", "tech", "50", 1))
+	r.OtherCash = 100_000 // 1,000.00 EUR held as USD
+	p := Allocate(r)
+	// equity doubles, so the 25% issuer cap is 500.00 EUR instead of 250.00 EUR; the spendable cash is unchanged
+	if p.Equity != 200_000 || p.Spendable != 100_000-frac(dec("0.20"), 200_000) {
+		t.Fatalf("%+v", p)
+	}
+	if !strings.Contains(strings.Join(p.Explanation, "|"), "cash in other currencies counts toward equity") {
+		t.Errorf("%v", p.Explanation)
+	}
+	if p.CashAfter < 0 || p.TotalSpend > 100_000 {
+		t.Fatalf("the foreign cash was spent: %+v", p)
+	}
+	// cash that could not be valued is said, not guessed
+	r.OtherCash, r.OtherCashNotes = 0, []string{"cash in CHF has no rate to EUR: equity is understated by it"}
+	if p = Allocate(r); !strings.Contains(strings.Join(p.Unknown, "|"), "cash in CHF has no rate") {
+		t.Errorf("%v", p.Unknown)
+	}
+}

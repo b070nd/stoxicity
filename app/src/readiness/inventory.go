@@ -189,8 +189,17 @@ func Inventory() []Capability {
 		Blocker:  "a plan holds no evidence-relationship graph beyond the scorecard notes; price, fees and rates are covered by expiry only; concurrent moves are not serialized; the card is a record, nothing here authorizes an order",
 	})
 
+	caps = append(caps, Capability{
+		ID: "hold-exit", Name: "Hold, reduce and sell rules with an overdue-aware review lifecycle", Scope: Portfolio, Story: "US-013",
+		Levels: map[Dimension]Level{
+			Implemented: Yes, FixtureVerified: Yes, SourceVerified: NotApplicable,
+			AccountVerified: NotApplicable, InvestmentEvaluated: NotApplicable,
+		},
+		Evidence: map[Dimension]string{Implemented: "src/review", FixtureVerified: "src/review/review_test.go"},
+		Blocker:  "thresholds are unvalidated and start unreviewed; rule 6 (rebalance) has no target weights; no costs or taxes are weighed; no sector or fund look-through; event sleeve does not exist yet",
+	})
+
 	caps = append(caps,
-		planned("hold-exit", "Hold, reduce and sell rules with review lifecycle", Portfolio, "US-013", "needs plan snapshots"),
 		planned("reservations-intents", "Shared reservations and order-intent state machine", Portfolio, "US-014", "needs ledger and plans"),
 		planned("paper-engine", "Local paper engine with conservative fills", Portfolio, "US-015", "needs intents, income and exit rules"),
 		planned("tiers", "Tier progression and suspension", Portfolio, "US-016", "needs policy, exit rules and the paper engine"),

@@ -394,7 +394,8 @@ func gatherAllocation(ctx context.Context, a *app, g allocParams) (*allocGathere
 	lim := allocate.Limits{MaxIssuer: cons.MaxIssuer, MaxSector: cons.MaxSector, MaxFund: cons.MaxFund, MaxForeign: cons.MaxCurrency, MaxCountry: cons.MaxCountry,
 		CashReserve: pol.Finances.CashReserve, MinPosition: minPos, MaxCostBurden: cons.MaxCostBurden,
 		ExcludedSectors: pol.Preferences.ExcludedSectors, ExcludedIssuers: pol.Preferences.ExcludedIssuers}
-	req := allocate.Request{Base: base, Cash: proj.Available(base), Holdings: holdings, Candidates: cands, Rates: rt, Limits: lim, Fees: fees, Contribution: contribution}
+	other, otherNotes := foreignCash(proj, base, rt)
+	req := allocate.Request{OtherCash: other, OtherCashNotes: otherNotes, Base: base, Cash: proj.Available(base), Holdings: holdings, Candidates: cands, Rates: rt, Limits: lim, Fees: fees, Contribution: contribution}
 	heldQ, freeQ := map[string]string{}, map[string]string{}
 	for _, pos := range proj.Positions() {
 		heldQ[pos.Security] = pos.Qty.String()
@@ -558,4 +559,39 @@ func minorText(minor int64, cur money.Currency) string {
 		return fmt.Sprint(minor)
 	}
 	return a.String()
+}
+
+// foreignCash values the cash held in currencies other than the base at the
+// supplied rates. Cash in a currency with no rate is left out and said so.
+func foreignCash(proj *portfolio.Projection, base money.Currency, rates map[money.Currency]money.Decimal) (int64, []string) {
+	var total int64
+	var notes []string
+	for _, cur := range proj.Currencies() {
+		if cur == base {
+			continue
+		}
+		minor := proj.Cash(cur) + proj.Unsettled(cur)
+		if minor == 0 || !cur.Valid() {
+			continue
+		}
+		rate, ok := rates[cur]
+		if !ok {
+			notes = append(notes, fmt.Sprintf("cash in %s has no rate to %s: equity is understated by it", cur, base))
+			continue
+		}
+		amt, err := money.FromMinor(minor, cur)
+		if err != nil {
+			continue
+		}
+		d, err := amt.Decimal().Mul(rate, 8, money.HalfEven)
+		if err != nil {
+			continue
+		}
+		v, err := money.NewAmount(d, base, money.HalfEven)
+		if err != nil {
+			continue
+		}
+		total += v.Minor()
+	}
+	return total, notes
 }

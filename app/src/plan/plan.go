@@ -233,7 +233,9 @@ type Manifest struct {
 	Payouts     int    `json:"payouts"`
 	Fees        string `json:"fees,omitempty"`
 	Rates       string `json:"rates,omitempty"`
-	Ledger      string `json:"ledger"`
+	// Decisions hashes the recorded thesis, instruction and review log a review read.
+	Decisions string `json:"decisions,omitempty"`
+	Ledger    string `json:"ledger"`
 }
 
 // Hash of the manifest.
@@ -256,6 +258,7 @@ func (m Manifest) Changed(cur Manifest) []string {
 	add("dividend observations", m.Payouts != cur.Payouts)
 	add("fee schedule", m.Fees != cur.Fees)
 	add("exchange rates", m.Rates != cur.Rates)
+	add("recorded decisions", m.Decisions != cur.Decisions)
 	add("book", m.Ledger != cur.Ledger)
 	return out
 }
