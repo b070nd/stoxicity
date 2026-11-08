@@ -1,0 +1,70 @@
+name: Bug report
+description: Report a problem with stoxicity.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Do not report security issues here. Use the private security advisory link on the issue chooser page.
+
+        Do not paste tokens, API keys, webhook URLs, broker account numbers or real portfolio data. Replace them with placeholders such as `<token>` or `<account>`.
+
+  - type: input
+    id: version
+    attributes:
+      label: stoxicity version
+      description: Output of `stoxicity version`.
+      placeholder: "e.g. dev-12286d5"
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      description: OS name, version, and architecture.
+      placeholder: "e.g. macOS 14.5 arm64"
+    validations:
+      required: true
+
+  - type: textarea
+    id: ran
+    attributes:
+      label: What you ran
+      description: The exact command, with secrets removed.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What you expected to happen.
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What happened instead. Include error messages if any.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Relevant log output. Remove tokens, account numbers and personal data before pasting.
+      render: text
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I removed tokens, account numbers and personal financial data from this report.
+          required: true
+        - label: I searched existing issues and did not find a duplicate.
+          required: true
