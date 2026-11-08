@@ -56,6 +56,7 @@ func (a *app) records() (store.Records, error) {
 	if err != nil {
 		return store.Records{}, err
 	}
+	db.SetClock(a.now) // recorded times and "now" are one clock
 	return db.Records(a.tenantID), nil
 }
 

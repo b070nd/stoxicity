@@ -59,6 +59,7 @@ func (a *app) portfolios() (store.Portfolios, error) {
 	if err != nil {
 		return store.Portfolios{}, err
 	}
+	db.SetClock(a.now) // recorded times and "now" are one clock
 	return db.Portfolios(a.tenantID), nil
 }
 

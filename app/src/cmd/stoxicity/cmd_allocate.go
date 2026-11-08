@@ -14,6 +14,9 @@ import (
 	"github.com/b070nd/stoxicity/app/src/distribution"
 	"github.com/b070nd/stoxicity/app/src/instrument"
 	"github.com/b070nd/stoxicity/app/src/money"
+	"github.com/b070nd/stoxicity/app/src/policy"
+	"github.com/b070nd/stoxicity/app/src/portfolio"
+	"github.com/b070nd/stoxicity/app/src/store"
 	"github.com/b070nd/stoxicity/app/src/strategy"
 )
 
@@ -128,64 +131,74 @@ func yes(s string, def bool) bool {
 	return def
 }
 
-func allocatePlan(ctx context.Context, a *app, args []string) error {
-	fs := newFlags("allocate plan")
-	candFile := fs.String("candidates", "", "CSV of the securities to consider (allocate example)")
-	feeFile := fs.String("fees", "", "JSON fee schedule with its source")
-	asOf := fs.String("as-of", "", "the day, YYYY-MM-DD; default today")
-	contrib := fs.String("contribution", "", `the regular contribution, e.g. "50.00 EUR", to say how many a purchase takes`)
-	rates := fs.String("rates", "", "base units per one unit of a foreign currency, e.g. USD=0.92")
-	compare := fs.Bool("compare", false, "plan the fund, stocks and cash options side by side")
-	asJSON := fs.Bool("json", false, "print as JSON")
-	book, err := parseBookFlags(fs, args)
-	if err != nil {
-		return err
-	}
-	if book == "" || *candFile == "" {
-		return usageErrorf("usage: allocate plan BOOK -candidates FILE -fees FILE [-as-of DAY] [-contribution A] [-rates USD=0.92] [-compare] [-json]")
-	}
-	day := a.now().UTC().Format(time.DateOnly)
-	if *asOf != "" {
-		day = *asOf
-	}
-	dayT, err := time.Parse(time.DateOnly, day)
-	if err != nil {
-		return usageErrorf("-as-of must be YYYY-MM-DD")
-	}
-	known := dayT.Add(24*time.Hour - time.Nanosecond)
+// allocParams is what a plan needs from the command line.
+type allocParams struct {
+	Book, CandFile, FeeFile, Rates, Contribution string
+	Day                                          string
+	// PolicyAt and LedgerAt pin the policy and the book to a moment; the zero time means now.
+	PolicyAt, LedgerAt time.Time
+}
 
+// allocGathered is a plan request with the inputs it was built from, so a plan
+// snapshot can name them.
+type allocGathered struct {
+	Req       allocate.Request
+	Plan      allocate.Plan
+	Skipped   []allocate.Skip
+	Base      money.Currency
+	Policy    policy.Record
+	Names     map[string]instrument.Security
+	Proposals map[string]*strategy.Proposal
+	Funds     map[string]strategy.FundAssessment
+	Prices    map[string]*strategy.Price
+	Sectors   map[string]string
+	Config    strategy.Config
+	Ledger    string
+	BookID    string
+	Known     time.Time
+	// HeldQty and FreeQty are the shares held and the shares not reserved for open sell orders.
+	HeldQty, FreeQty map[string]string
+}
+
+func gatherAllocation(ctx context.Context, a *app, g allocParams) (*allocGathered, error) {
+	dayT, err := time.Parse(time.DateOnly, g.Day)
+	if err != nil {
+		return nil, usageErrorf("-as-of must be YYYY-MM-DD")
+	}
+	day := g.Day
+	known := dayT.Add(24*time.Hour - time.Nanosecond)
 	db, err := a.store()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if _, err := a.requireTenant(); err != nil {
-		return err
+		return nil, err
 	}
-	rec, active, err := db.Policies(a.tenantID).AsOf(ctx, time.Time{})
+	rec, active, err := db.Policies(a.tenantID).AsOf(ctx, g.PolicyAt)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if !active {
-		return errors.New("no investment policy is active: allocation needs your limits (stoxicity policy example / check / activate)")
+		return nil, errors.New("no investment policy is active: allocation needs your limits (stoxicity policy example / check / activate)")
 	}
 	pol := rec.Policy
 	base := pol.BaseCurrency
-	fees, err := readFees(*feeFile, base)
+	fees, err := readFees(g.FeeFile, base)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	rt, err := parseRates(*rates, base)
+	rt, err := parseRates(g.Rates, base)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	var contribution int64
-	if *contrib != "" {
-		am, err := money.ParseAmount(*contrib)
+	if g.Contribution != "" {
+		am, err := money.ParseAmount(g.Contribution)
 		if err != nil {
-			return usageErrorf("-contribution: %v", err)
+			return nil, usageErrorf("-contribution: %v", err)
 		}
 		if contribution, err = minorOf(am, base); err != nil {
-			return usageErrorf("-contribution: %v", err)
+			return nil, usageErrorf("-contribution: %v", err)
 		}
 	}
 	fracDefault := false
@@ -194,30 +207,35 @@ func allocatePlan(ctx context.Context, a *app, args []string) error {
 	}
 	minPos, err := minorOf(pol.Constraints.MinPosition, base)
 	if err != nil {
-		return fmt.Errorf("policy min_position: %w", err)
+		return nil, fmt.Errorf("policy min_position: %w", err)
 	}
 
 	ps, err := a.portfolios()
 	if err != nil {
-		return err
+		return nil, err
 	}
-	l, err := ps.Ledger(ctx, book)
+	var l *portfolio.Ledger
+	if g.LedgerAt.IsZero() {
+		l, err = ps.Ledger(ctx, g.Book)
+	} else {
+		l, err = ps.LedgerAsOf(ctx, g.Book, g.LedgerAt, store.ByRecorded)
+	}
 	if err != nil {
-		return err
+		return nil, err
 	}
 	proj := l.Projection()
-	f, err := os.Open(*candFile)
+	f, err := os.Open(g.CandFile)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	rows, err := csvtable.Read(f, []string{"security"}, []string{"mic", "ticker", "sector", "price", "price_day", "fractional", "step", "min_qty", "tradable", "facts"})
 	f.Close()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	reg, err := loadRegistry(ctx, a)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	names := securityNames(reg)
 	issuers := map[string]instrument.Issuer{}
@@ -226,11 +244,11 @@ func allocatePlan(ctx context.Context, a *app, args []string) error {
 	}
 	rs, err := a.records()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	cfg, _, err := loadConfig(ctx, rs)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	type resolved struct {
@@ -242,11 +260,15 @@ func allocatePlan(ctx context.Context, a *app, args []string) error {
 		currency money.Currency
 	}
 	byID := map[string]*resolved{}
+	props := map[string]*strategy.Proposal{}
+	funds := map[string]strategy.FundAssessment{}
+	prices := map[string]*strategy.Price{}
+	sectors := map[string]string{}
 	var order []string
 	for _, row := range rows {
 		sec, ok := names[row["security"]]
 		if !ok {
-			return fmt.Errorf("line %s: %q is not in the instrument register", row["_line"], row["security"])
+			return nil, fmt.Errorf("line %s: %q is not in the instrument register", row["_line"], row["security"])
 		}
 		r := &resolved{sec: sec, sector: row["sector"], row: row, kind: "stock"}
 		if sec.Kind == instrument.KindETF {
@@ -256,17 +278,17 @@ func allocatePlan(ctx context.Context, a *app, args []string) error {
 		case row["price"] != "":
 			am, err := money.ParseAmount(row["price"])
 			if err != nil {
-				return fmt.Errorf("line %s: price: %w", row["_line"], err)
+				return nil, fmt.Errorf("line %s: price: %w", row["_line"], err)
 			}
 			v, _ := money.ParseDecimal(strings.Fields(row["price"])[0])
 			if row["price_day"] == "" {
-				return fmt.Errorf("line %s: a supplied price needs price_day", row["_line"])
+				return nil, fmt.Errorf("line %s: a supplied price needs price_day", row["_line"])
 			}
 			r.price = &strategy.Price{Value: v, Currency: am.Currency(), Day: row["price_day"], Source: "supplied"}
 		case row["mic"] != "" && row["ticker"] != "":
 			pr, _, err := storedPrice(ctx, a, db, row["mic"], row["ticker"], day, known, cfg.MaxPriceAgeDays)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			r.price = pr
 		}
@@ -274,6 +296,7 @@ func allocatePlan(ctx context.Context, a *app, args []string) error {
 			r.currency = r.price.Currency
 		}
 		byID[sec.ID] = r
+		prices[sec.ID], sectors[sec.ID] = r.price, r.sector
 		order = append(order, sec.ID)
 	}
 
@@ -313,9 +336,10 @@ func allocatePlan(ctx context.Context, a *app, args []string) error {
 			}
 			var ff strategy.FundFacts
 			if err := readJSONFile(r.row["facts"], &ff); err != nil {
-				return err
+				return nil, err
 			}
 			as := strategy.AssessFund(ff, strategy.DefaultFundConfig(), day)
+			funds[id] = as
 			if !as.Eligible || !as.Broad {
 				skipped = append(skipped, allocate.Skip{Security: id, Reason: "not an eligible broad core fund: " + strings.Join(as.Reasons, "; ")})
 				continue
@@ -329,21 +353,22 @@ func allocatePlan(ctx context.Context, a *app, args []string) error {
 		}
 		card, err := loadCard(ctx, rs, id, known, 5)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		as, err := loadAssumptions(ctx, rs, id)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		obs, err := db.DistributionObservations(ctx, []string{id}, known)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		in := strategy.Input{Security: id, AsOf: day, Card: card, Payouts: distribution.Resolve(obs, time.Time{}), Assumptions: as, Config: cfg, Held: heldQty[id], Price: r.price}
 		p, err := strategy.Evaluate(in)
 		if err != nil {
-			return err
+			return nil, err
 		}
+		props[id] = &p
 		if p.Action != strategy.Buy && p.Action != strategy.Add {
 			skipped = append(skipped, allocate.Skip{Security: id, Reason: fmt.Sprintf("the strategy says %s: %s", p.Action, firstOr(p.Reasons, "no purchase proposed"))})
 			continue
@@ -370,6 +395,44 @@ func allocatePlan(ctx context.Context, a *app, args []string) error {
 		CashReserve: pol.Finances.CashReserve, MinPosition: minPos, MaxCostBurden: cons.MaxCostBurden,
 		ExcludedSectors: pol.Preferences.ExcludedSectors, ExcludedIssuers: pol.Preferences.ExcludedIssuers}
 	req := allocate.Request{Base: base, Cash: proj.Available(base), Holdings: holdings, Candidates: cands, Rates: rt, Limits: lim, Fees: fees, Contribution: contribution}
+	heldQ, freeQ := map[string]string{}, map[string]string{}
+	for _, pos := range proj.Positions() {
+		heldQ[pos.Security] = pos.Qty.String()
+		if f, err := pos.Qty.Sub(proj.ReservedShares(pos.Security, "")); err == nil {
+			freeQ[pos.Security] = f.String()
+		}
+	}
+	return &allocGathered{HeldQty: heldQ, FreeQty: freeQ, Req: req, Skipped: skipped, Base: base, Policy: rec, Names: names, Proposals: props, Funds: funds, Prices: prices, Sectors: sectors, Config: cfg, Ledger: proj.Fingerprint(), BookID: l.Book.ID, Known: known}, nil
+}
+
+func allocatePlan(ctx context.Context, a *app, args []string) error {
+	fs := newFlags("allocate plan")
+	candFile := fs.String("candidates", "", "CSV of the securities to consider (allocate example)")
+	feeFile := fs.String("fees", "", "JSON fee schedule with its source")
+	asOf := fs.String("as-of", "", "the day, YYYY-MM-DD; default today")
+	contrib := fs.String("contribution", "", `the regular contribution, e.g. "50.00 EUR", to say how many a purchase takes`)
+	rates := fs.String("rates", "", "base units per one unit of a foreign currency, e.g. USD=0.92")
+	compare := fs.Bool("compare", false, "plan the fund, stocks and cash options side by side")
+	asJSON := fs.Bool("json", false, "print as JSON")
+	book, err := parseBookFlags(fs, args)
+	if err != nil {
+		return err
+	}
+	if book == "" || *candFile == "" {
+		return usageErrorf("usage: allocate plan BOOK -candidates FILE -fees FILE [-as-of DAY] [-contribution A] [-rates USD=0.92] [-compare] [-json]")
+	}
+	day := a.now().UTC().Format(time.DateOnly)
+	if *asOf != "" {
+		day = *asOf
+	}
+	if _, err := time.Parse(time.DateOnly, day); err != nil {
+		return usageErrorf("-as-of must be YYYY-MM-DD")
+	}
+	gt, err := gatherAllocation(ctx, a, allocParams{Book: book, CandFile: *candFile, FeeFile: *feeFile, Rates: *rates, Contribution: *contrib, Day: day})
+	if err != nil {
+		return err
+	}
+	req, skipped, base := gt.Req, gt.Skipped, gt.Base
 	if *compare {
 		opts := allocate.Compare(req)
 		if *asJSON {

@@ -54,6 +54,15 @@ func (h *handle) close() error {
 	return errors.Join(h.r.Close(), h.w.Close())
 }
 
+// SetClock replaces the clock the store stamps recorded times with. The
+// command line passes its own so that "recorded at" and "now" are one clock;
+// call it right after Open, before any other use.
+func (db *DB) SetClock(now func() time.Time) {
+	if now != nil {
+		db.now = now
+	}
+}
+
 // Open opens (creating it if needed) the store rooted at dir and migrates the
 // base database. It fails if the base database was written by a newer binary.
 func Open(dir string) (*DB, error) {

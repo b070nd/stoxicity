@@ -179,8 +179,17 @@ func Inventory() []Capability {
 		Blocker:  "fees come from a schedule you enter and are not checked against a broker; the sector and issuer cap interpretations await your confirmation; a fund is not looked through; no sale is ever proposed here",
 	})
 
+	caps = append(caps, Capability{
+		ID: "plan-snapshots", Name: "Immutable plan snapshots with manifest, lifecycle, revision diff and staleness", Scope: Portfolio, Story: "US-012",
+		Levels: map[Dimension]Level{
+			Implemented: Yes, FixtureVerified: Yes, SourceVerified: NotApplicable,
+			AccountVerified: NotApplicable, InvestmentEvaluated: NotApplicable,
+		},
+		Evidence: map[Dimension]string{Implemented: "src/plan", FixtureVerified: "src/plan/plan_test.go"},
+		Blocker:  "a plan holds no evidence-relationship graph beyond the scorecard notes; price, fees and rates are covered by expiry only; concurrent moves are not serialized; the card is a record, nothing here authorizes an order",
+	})
+
 	caps = append(caps,
-		planned("plan-snapshots", "Immutable plan snapshots and explanations", Portfolio, "US-012", "needs allocator, income and valuation"),
 		planned("hold-exit", "Hold, reduce and sell rules with review lifecycle", Portfolio, "US-013", "needs plan snapshots"),
 		planned("reservations-intents", "Shared reservations and order-intent state machine", Portfolio, "US-014", "needs ledger and plans"),
 		planned("paper-engine", "Local paper engine with conservative fills", Portfolio, "US-015", "needs intents, income and exit rules"),
