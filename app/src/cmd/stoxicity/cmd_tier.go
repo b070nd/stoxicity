@@ -143,7 +143,7 @@ func tierGate(ctx context.Context, a *app) (*order.Gate, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &order.Gate{Tier: t, Suspended: tier.Suspended(sig)}, nil
+	return &order.Gate{Tier: t, Broker: tier.PermissionsOf(t).BrokerSubmission, Suspended: tier.Suspended(sig)}, nil
 }
 
 // sessionsObserved counts the weekdays from the first transaction in any book

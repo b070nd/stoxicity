@@ -60,17 +60,29 @@ func (s Service) Confirm(ctx context.Context, book, id, by string, acked []strin
 	return s.run(ctx, book, func(c Context) ([]Event, error) { return Confirm(c, id, by, acked, ttl) })
 }
 
+// ConfirmBound records the go-ahead for a draft together with what a broker was
+// shown, so that only that can be sent.
+func (s Service) ConfirmBound(ctx context.Context, book, id, by string, acked []string, ttl time.Duration, b Binding) error {
+	return s.run(ctx, book, func(c Context) ([]Event, error) { return ConfirmBound(c, id, by, acked, ttl, b) })
+}
+
 // Submit writes the intent to send, calls send, and writes the answer. The two
 // writes are separate transactions on purpose: the external call is never made
 // inside one, and never made before the first is durable. Whatever happens to the
 // process after the first write, the order is submitting or later, and an order
 // that has been sent once is never sent again.
 func (s Service) Submit(ctx context.Context, book, id, by string, send Sender) error {
+	return s.SubmitBound(ctx, book, id, by, "", send)
+}
+
+// SubmitBound is Submit for an order that goes to a broker: payload is what
+// would be sent now and must be what the confirmation covers.
+func (s Service) SubmitBound(ctx context.Context, book, id, by, payload string, send Sender) error {
 	var sub Submission
 	if err := s.run(ctx, book, func(c Context) ([]Event, error) {
 		var evs []Event
 		var err error
-		sub, evs, err = BeginSubmit(c, id, by)
+		sub, evs, err = BeginSubmitBound(c, id, by, payload)
 		return evs, err
 	}); err != nil {
 		return err

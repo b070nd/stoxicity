@@ -1,10 +1,10 @@
 # Orders: intent, hold, confirmation and state
 
-`stoxicity order` keeps the **local record of an order**. It does not talk to a broker. The only sender
-that exists is the local paper engine's acknowledgement; a `real` or `paper_broker` book can be drafted,
-confirmed and tracked, but `order submit` refuses with the reason, because no broker adapter is connected
-(IBKR comes with US-017 to US-019). You place such an order yourself and record what happened with
-`order report`.
+`stoxicity order` keeps the **local record of an order**. The only sender in this file's scope is the local
+paper engine's acknowledgement. A `real` or `paper_broker` book can be drafted, confirmed and tracked here; whether
+it can also be sent is the business of [broker.md](broker.md): it needs a configured and bound broker, the `trading`
+mode, tier 2, new orders enabled, and a confirmation made against a broker preview. Otherwise `order submit`
+refuses with the reason, and you place the order yourself and record what happened with `order report`.
 
 ## The order is a log
 

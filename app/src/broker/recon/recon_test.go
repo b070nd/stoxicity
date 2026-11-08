@@ -18,7 +18,6 @@ func view(id string, st order.State, filled string) order.View {
 func local() Local {
 	return Local{
 		Cash:       map[money.Currency]int64{"USD": 100000},
-		Settled:    map[money.Currency]int64{"USD": 100000},
 		Held:       map[string]money.Decimal{"sec_a": d("5")},
 		SecurityOf: map[int64]string{111: "sec_a"},
 	}
@@ -136,6 +135,28 @@ func TestSentOrderThatTheBrokerDoesNotListIsFlagged(t *testing.T) {
 	l := local()
 	l.Orders = []order.View{view("ord_1", order.Open, "0")}
 	if r := Compare(l, snap()); kinds(r)[MissingAtBroker] != 1 {
+		t.Fatalf("%+v", r)
+	}
+}
+
+func TestACorrectedExecutionIsADifferenceNotAnOverwrite(t *testing.T) {
+	l := local()
+	ov := view("ord_1", order.Open, "4")
+	ov.BrokerRef, ov.AckedAt = "1001", time.Now()
+	l.Orders = []order.View{ov}
+	booked := order.Fill{ID: "ibkr:e1", Qty: d("4"), Price: d("19.5"), Fee: 100}
+	l.Fills = map[string]order.Fill{"ibkr:e1": booked}
+	s := snap()
+	s.Open = []broker.OpenOrder{{ID: "1001", Ref: "ord_1", Conid: 111, Side: "buy", Qty: d("10"), Filled: d("4"), Limit: d("20"), Status: "Submitted"}}
+	x := broker.Execution{ID: "e1", Ref: "ord_1", Conid: 111, Side: "buy", Qty: d("4"), Price: d("19.5"), Commission: 100, Currency: "USD"}
+	s.Executions = []broker.Execution{x}
+	if r := Compare(l, s); len(r.Facts) != 0 || len(r.Differences) != 0 {
+		t.Fatalf("an execution booked as reported is nothing new: %+v", r)
+	}
+	x.Commission = 135
+	s.Executions = []broker.Execution{x}
+	r := Compare(l, s)
+	if len(r.Facts) != 0 || kinds(r)[ExecutionCorrected] != 1 {
 		t.Fatalf("%+v", r)
 	}
 }

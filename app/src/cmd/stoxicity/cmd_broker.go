@@ -70,7 +70,7 @@ type brokerSyncRec struct {
 // orders this program sent, through the same reports as any other source.
 func cmdBroker(ctx context.Context, a *app, args []string) error {
 	if len(args) == 0 {
-		return usageErrorf("expected: config | mode | bind | status | sync | differences | contracts | fixture")
+		return usageErrorf("expected: config | mode | bind | status | sync | differences | preview | limits | contracts | fixture")
 	}
 	switch args[0] {
 	case "config":
@@ -85,12 +85,16 @@ func cmdBroker(ctx context.Context, a *app, args []string) error {
 		return brokerSync(ctx, a, args[1:])
 	case "differences":
 		return brokerDifferences(ctx, a, args[1:])
+	case "preview":
+		return brokerPreview(ctx, a, args[1:])
+	case "limits":
+		return brokerLimitsCmd(ctx, a, args[1:])
 	case "contracts":
 		return brokerContracts(ctx, a, args[1:])
 	case "fixture":
 		return brokerFixture(a, args[1:])
 	}
-	return usageErrorf("unknown subcommand %q (config, mode, bind, status, sync, differences, contracts, fixture)", args[0])
+	return usageErrorf("unknown subcommand %q (config, mode, bind, status, sync, differences, preview, limits, contracts, fixture)", args[0])
 }
 
 func loadBrokerConfig(ctx context.Context, a *app) (brokerConfig, bool, error) {
@@ -215,7 +219,7 @@ func brokerConfigCmd(ctx context.Context, a *app, args []string) error {
 func brokerMode(ctx context.Context, a *app, args []string) error {
 	fs := newFlags("broker mode")
 	by := fs.String("by", "", "who is changing it")
-	rest, err := parseFlags(fs, args)
+	rest, err := parseMixed(fs, args)
 	if err != nil {
 		return err
 	}
@@ -484,16 +488,31 @@ func localSide(ctx context.Context, a *app, b portfolio.Book) (recon.Local, erro
 		return recon.Local{}, err
 	}
 	p := l.Projection()
-	loc := recon.Local{Cash: map[money.Currency]int64{}, Settled: map[money.Currency]int64{}, Held: map[string]money.Decimal{}}
+	loc := recon.Local{Cash: map[money.Currency]int64{}, Held: map[string]money.Decimal{}}
 	for _, cur := range p.Currencies() {
 		loc.Cash[cur] = p.Cash(cur) + p.Unsettled(cur)
-		loc.Settled[cur] = p.Cash(cur)
 	}
 	for _, x := range p.Positions() {
 		loc.Held[x.Security] = x.Qty
 	}
 	if loc.Orders, err = paperViews(ctx, a, b); err != nil {
 		return loc, err
+	}
+	ords, err := a.orders()
+	if err != nil {
+		return loc, err
+	}
+	logs, err := ords.Logs(ctx, b.Account)
+	if err != nil {
+		return loc, err
+	}
+	loc.Fills = map[string]order.Fill{}
+	for _, log := range logs {
+		for _, e := range log {
+			if e.Kind == order.FillEv && e.Fill != nil {
+				loc.Fills[e.Fill.ID] = *e.Fill
+			}
+		}
 	}
 	if loc.SecurityOf, err = conidMap(ctx, a); err != nil {
 		return loc, err

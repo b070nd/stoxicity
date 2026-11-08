@@ -239,9 +239,27 @@ func Inventory() []Capability {
 		Blocker:  "adapter shapes are recalled, not re-verified: run broker status and sync against an IBKR paper account and compare with docs/broker.md; needs the account, entity, permissions and entitlements",
 	})
 
+	caps = append(caps, Capability{
+		ID: "ibkr-submit", Name: "Confirmed IBKR order preview and submission", Scope: Broker, Story: "US-018",
+		Levels: map[Dimension]Level{
+			Implemented: Yes, FixtureVerified: Yes, SourceVerified: NotApplicable,
+			AccountVerified: NotApplicable, InvestmentEvaluated: NotApplicable,
+		},
+		Evidence: map[Dimension]string{Implemented: "src/cmd/stoxicity/cmd_brokerorder.go", FixtureVerified: "src/cmd/stoxicity/cmd_brokerorder_test.go"},
+		Blocker:  "needs a real paper account: confirm the order, whatif and reply shapes and the collar, quote and funds semantics against the current gateway documentation; limits are unreviewed illustrations until you review them",
+	})
+
+	caps = append(caps, Capability{
+		ID: "order-monitoring", Name: "Order monitoring, cancel and replace", Scope: Broker, Story: "US-019",
+		Levels: map[Dimension]Level{
+			Implemented: Yes, FixtureVerified: Yes, SourceVerified: NotApplicable,
+			AccountVerified: NotApplicable, InvestmentEvaluated: NotApplicable,
+		},
+		Evidence: map[Dimension]string{Implemented: "src/broker/recon/recon.go", FixtureVerified: "src/cmd/stoxicity/cmd_brokerorder_test.go"},
+		Blocker:  "no in-place replace exists by design (cancel and draft again); real executions, corrections and cancel races not yet seen from a real account",
+	})
+
 	caps = append(caps,
-		planned("ibkr-submit", "Confirmed IBKR order preview and submission", Broker, "US-018", "needs read-only sync, tiers and current execution-grade quotes"),
-		planned("order-monitoring", "Order monitoring, cancel and replace", Broker, "US-019", "needs confirmed submission"),
 		planned("event-strategy", "Separate time-bounded event strategy", Portfolio, "US-020", "needs scorecards, paper engine and tiers"),
 		planned("performance", "Performance, income and benchmark reporting", Portfolio, "US-021", "needs the ledger, income accounting and marks"),
 		planned("heldout-news-eval", "Held-out real-news evaluation", Research, "US-022", "needs an independently labelled real corpus"),

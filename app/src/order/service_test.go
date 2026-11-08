@@ -120,7 +120,7 @@ func (x *env) enable() {
 func (x *env) ready(tm order.Terms) string {
 	x.t.Helper()
 	id := x.draft(tm)
-	must(x.t, x.svc.Confirm(context.Background(), x.book.ID, id, "me", nil, 10*time.Minute))
+	must(x.t, x.svc.ConfirmBound(context.Background(), x.book.ID, id, "me", nil, 10*time.Minute, order.Binding{Payload: "p1"}))
 	return id
 }
 
@@ -277,10 +277,10 @@ func TestLifecycleWithPartialFillsAndNoCallBeforeDurableIntent(t *testing.T) {
 	// a confirmation needs every warning acknowledged by its exact text
 	id2, err := x.svc.Draft(ctx, x.book.ID, order.DraftRequest{Terms: x.terms(order.Buy, "1", "10", 0), Warnings: []string{"quote is delayed"}, By: "me", Valid: time.Hour})
 	must(t, err)
-	if err := x.svc.Confirm(ctx, x.book.ID, id2, "me", nil, time.Minute); err == nil || !strings.Contains(err.Error(), "not acknowledged") {
+	if err := x.svc.ConfirmBound(ctx, x.book.ID, id2, "me", nil, time.Minute, order.Binding{Payload: "p1"}); err == nil || !strings.Contains(err.Error(), "not acknowledged") {
 		t.Fatalf("%v", err)
 	}
-	must(t, x.svc.Confirm(ctx, x.book.ID, id2, "me", []string{"quote is delayed"}, time.Minute))
+	must(t, x.svc.ConfirmBound(ctx, x.book.ID, id2, "me", []string{"quote is delayed"}, time.Minute, order.Binding{Payload: "p1"}))
 	must(t, x.svc.Cancel(ctx, x.book.ID, id2, "me", nil))
 
 	sender := func(ctx context.Context, s order.Submission) (order.SendResult, error) {
@@ -288,12 +288,12 @@ func TestLifecycleWithPartialFillsAndNoCallBeforeDurableIntent(t *testing.T) {
 		return order.SendResult{}, nil
 	}
 	// not confirmed, not submittable
-	if err := x.svc.Submit(ctx, x.book.ID, id, "me", sender); err == nil || !strings.Contains(err.Error(), "only a confirmed order") {
+	if err := x.svc.SubmitBound(ctx, x.book.ID, id, "me", "p1", sender); err == nil || !strings.Contains(err.Error(), "only a confirmed order") {
 		t.Fatalf("%v", err)
 	}
-	must(t, x.svc.Confirm(ctx, x.book.ID, id, "me", nil, 10*time.Minute))
+	must(t, x.svc.ConfirmBound(ctx, x.book.ID, id, "me", nil, 10*time.Minute, order.Binding{Payload: "p1"}))
 	// new orders are off by default for a real book
-	if err := x.svc.Submit(ctx, x.book.ID, id, "me", sender); err == nil || !strings.Contains(err.Error(), "disabled") {
+	if err := x.svc.SubmitBound(ctx, x.book.ID, id, "me", "p1", sender); err == nil || !strings.Contains(err.Error(), "disabled") {
 		t.Fatalf("%v", err)
 	}
 	if v := x.view(id); v.State != order.Confirmed || v.Attempts != 0 {
@@ -303,10 +303,10 @@ func TestLifecycleWithPartialFillsAndNoCallBeforeDurableIntent(t *testing.T) {
 
 	// an expired confirmation is refused, then renewed
 	x.clock = x.clock.Add(11 * time.Minute)
-	if err := x.svc.Submit(ctx, x.book.ID, id, "me", sender); err == nil || !strings.Contains(err.Error(), "expired") {
+	if err := x.svc.SubmitBound(ctx, x.book.ID, id, "me", "p1", sender); err == nil || !strings.Contains(err.Error(), "expired") {
 		t.Fatalf("%v", err)
 	}
-	must(t, x.svc.Confirm(ctx, x.book.ID, id, "me", nil, 10*time.Minute))
+	must(t, x.svc.ConfirmBound(ctx, x.book.ID, id, "me", nil, 10*time.Minute, order.Binding{Payload: "p1"}))
 
 	var seen order.State
 	send := func(ctx context.Context, s order.Submission) (order.SendResult, error) {
@@ -317,7 +317,7 @@ func TestLifecycleWithPartialFillsAndNoCallBeforeDurableIntent(t *testing.T) {
 		}
 		return order.SendResult{Broker: "B-1"}, nil
 	}
-	must(t, x.svc.Submit(ctx, x.book.ID, id, "me", send))
+	must(t, x.svc.SubmitBound(ctx, x.book.ID, id, "me", "p1", send))
 	if seen != order.Submitting {
 		t.Fatalf("state at the time of the call: %s", seen)
 	}
@@ -325,7 +325,7 @@ func TestLifecycleWithPartialFillsAndNoCallBeforeDurableIntent(t *testing.T) {
 		t.Fatalf("%+v", v)
 	}
 	// an order that was sent is never sent again
-	if err := x.svc.Submit(ctx, x.book.ID, id, "me", sender); err == nil {
+	if err := x.svc.SubmitBound(ctx, x.book.ID, id, "me", "p1", sender); err == nil {
 		t.Fatal("resent")
 	}
 	x.invariants()
@@ -370,7 +370,7 @@ func TestFactsOutOfOrderGiveTheSameState(t *testing.T) {
 	// fill before the acknowledgement, acknowledgement afterwards
 	x := newEnv(t, portfolio.PaperLocal, 100000)
 	id := x.ready(x.terms(order.Buy, "10", "50", 0))
-	must(t, x.svc.Submit(ctx, x.book.ID, id, "me", func(context.Context, order.Submission) (order.SendResult, error) {
+	must(t, x.svc.SubmitBound(ctx, x.book.ID, id, "me", "p1", func(context.Context, order.Submission) (order.SendResult, error) {
 		return order.SendResult{}, errors.New("timeout")
 	}))
 	if v := x.view(id); v.State != order.Unknown {
@@ -390,7 +390,7 @@ func TestFactsOutOfOrderGiveTheSameState(t *testing.T) {
 	// cancel race: the cancel is requested, a fill arrives, then the cancellation
 	y := newEnv(t, portfolio.PaperLocal, 100000)
 	id = y.ready(y.terms(order.Buy, "10", "50", 0))
-	must(t, y.svc.Submit(ctx, y.book.ID, id, "me", func(context.Context, order.Submission) (order.SendResult, error) {
+	must(t, y.svc.SubmitBound(ctx, y.book.ID, id, "me", "p1", func(context.Context, order.Submission) (order.SendResult, error) {
 		return order.SendResult{Broker: "B-2"}, nil
 	}))
 	asked := 0
@@ -434,7 +434,7 @@ func TestCrashBetweenIntentAndAnswerIsNeverResent(t *testing.T) {
 	id := x.ready(x.terms(order.Buy, "10", "50", 0))
 	// the process writes the intent and ends before it learns the answer
 	must(t, x.db.Orders("default").Run(ctx, x.book.ID, func(c order.Context) ([]order.Event, error) {
-		_, evs, err := order.BeginSubmit(c, id, "me")
+		_, evs, err := order.BeginSubmitBound(c, id, "me", "p1")
 		return evs, err
 	}))
 	// a new process
@@ -449,7 +449,7 @@ func TestCrashBetweenIntentAndAnswerIsNeverResent(t *testing.T) {
 	if v.State != order.Unknown || v.Reservation == "" {
 		t.Fatalf("%+v", v)
 	}
-	if err := y.svc.Submit(ctx, y.book.ID, id, "me", func(context.Context, order.Submission) (order.SendResult, error) {
+	if err := y.svc.SubmitBound(ctx, y.book.ID, id, "me", "p1", func(context.Context, order.Submission) (order.SendResult, error) {
 		t.Fatal("resent")
 		return order.SendResult{}, nil
 	}); err == nil {
@@ -473,7 +473,7 @@ func TestOverfillAndUnpostableFillsNeedAPerson(t *testing.T) {
 	ctx := context.Background()
 	x := newEnv(t, portfolio.PaperLocal, 100000)
 	id := x.ready(x.terms(order.Buy, "10", "50", 0))
-	must(t, x.svc.Submit(ctx, x.book.ID, id, "me", func(context.Context, order.Submission) (order.SendResult, error) {
+	must(t, x.svc.SubmitBound(ctx, x.book.ID, id, "me", "p1", func(context.Context, order.Submission) (order.SendResult, error) {
 		return order.SendResult{Broker: "B"}, nil
 	}))
 	must(t, x.svc.Report(ctx, x.book.ID, id, fillOf("e1", "11", "50", 0)))
@@ -527,7 +527,7 @@ func TestSubmitRejectionReleasesTheHold(t *testing.T) {
 	ctx := context.Background()
 	x := newEnv(t, portfolio.PaperLocal, 100000)
 	id := x.ready(x.terms(order.Buy, "10", "50", 0))
-	must(t, x.svc.Submit(ctx, x.book.ID, id, "me", func(context.Context, order.Submission) (order.SendResult, error) {
+	must(t, x.svc.SubmitBound(ctx, x.book.ID, id, "me", "p1", func(context.Context, order.Submission) (order.SendResult, error) {
 		return order.SendResult{Rejected: true, Reason: "no permission for this market"}, nil
 	}))
 	v := x.view(id)
@@ -600,7 +600,7 @@ func TestConcurrentFillsAndCancelsKeepTheInvariants(t *testing.T) {
 	ctx := context.Background()
 	x := newEnv(t, portfolio.PaperLocal, 1000000)
 	id := x.ready(x.terms(order.Buy, "100", "10", 100))
-	must(t, x.svc.Submit(ctx, x.book.ID, id, "me", func(context.Context, order.Submission) (order.SendResult, error) {
+	must(t, x.svc.SubmitBound(ctx, x.book.ID, id, "me", "p1", func(context.Context, order.Submission) (order.SendResult, error) {
 		return order.SendResult{Broker: "B"}, nil
 	}))
 	// several processes report the same executions and a cancel at once
@@ -693,17 +693,67 @@ func TestGateLimitsNewRiskOnlyAndSparesPaperSalesAndCancels(t *testing.T) {
 		t.Fatalf("a sale was revoked: %+v", v)
 	}
 	// nothing can be confirmed or sent while suspended, but cancelling and selling go on
-	if err := x.svc.Confirm(ctx, x.book.ID, buy, "me", nil, time.Minute); err == nil {
+	if err := x.svc.ConfirmBound(ctx, x.book.ID, buy, "me", nil, time.Minute, order.Binding{Payload: "p1"}); err == nil {
 		t.Fatal("confirmed during a suspension")
 	}
 	send := func(context.Context, order.Submission) (order.SendResult, error) {
 		return order.SendResult{Broker: "B"}, nil
 	}
-	must(t, x.svc.Submit(ctx, x.book.ID, sell, "me", send))
+	// tier 1 prepares tickets for manual placement; sending needs tier 2
+	if err := x.svc.SubmitBound(ctx, x.book.ID, sell, "me", "p1", send); err == nil || !strings.Contains(err.Error(), "does not allow orders to be sent to a broker") {
+		t.Fatalf("%v", err)
+	}
+	g.Tier, g.Broker = 2, true
+	must(t, x.svc.SubmitBound(ctx, x.book.ID, sell, "me", "p1", send))
 	must(t, x.svc.Cancel(ctx, x.book.ID, buy, "me", nil))
 	x.invariants()
 	// a local paper book is not gated at all
 	p := newEnv(t, portfolio.PaperLocal, 100000)
 	p.svc.Gate = &order.Gate{Tier: 0, Suspended: []string{"manual: away"}}
 	p.draft(p.terms(order.Buy, "1", "10", 0))
+}
+
+func TestAConfirmationCoversOnlyWhatTheBrokerWasShown(t *testing.T) {
+	ctx := context.Background()
+	x := newEnv(t, portfolio.Real, 1000000)
+	x.enable()
+	send := func(context.Context, order.Submission) (order.SendResult, error) {
+		return order.SendResult{Broker: "B"}, nil
+	}
+
+	// a plain confirmation is a ticket for manual placement: it never reaches a broker
+	id := x.draft(x.terms(order.Buy, "1", "10", 0))
+	must(t, x.svc.Confirm(ctx, x.book.ID, id, "me", nil, time.Minute))
+	if err := x.svc.Submit(ctx, x.book.ID, id, "me", send); err == nil || !strings.Contains(err.Error(), "against a broker preview") {
+		t.Fatalf("%v", err)
+	}
+	if err := x.svc.SubmitBound(ctx, x.book.ID, id, "me", "p1", send); err == nil || !strings.Contains(err.Error(), "against a broker preview") {
+		t.Fatalf("%v", err)
+	}
+	if v := x.view(id); v.Attempts != 0 || v.State != order.Confirmed {
+		t.Fatalf("a refused submission left a trace: %+v", v)
+	}
+
+	// the broker's own warnings are acknowledged by exact text, like any other
+	id = x.draft(x.terms(order.Buy, "2", "10", 0))
+	b := order.Binding{Payload: "p1", Warnings: []string{"broker: price is outside the collar"}}
+	if err := x.svc.ConfirmBound(ctx, x.book.ID, id, "me", nil, time.Minute, b); err == nil || !strings.Contains(err.Error(), "not acknowledged") {
+		t.Fatalf("%v", err)
+	}
+	must(t, x.svc.ConfirmBound(ctx, x.book.ID, id, "me", []string{"broker: price is outside the collar"}, time.Minute, b))
+
+	// what would be sent now differs from what was shown: nothing is sent
+	if err := x.svc.SubmitBound(ctx, x.book.ID, id, "me", "p2", send); err == nil || !strings.Contains(err.Error(), "not what was confirmed") {
+		t.Fatalf("%v", err)
+	}
+	if v := x.view(id); v.Attempts != 0 || v.State != order.Confirmed {
+		t.Fatalf("%+v", v)
+	}
+	// and the same payload goes, once
+	x.svc.Gate = &order.Gate{Tier: 2, Broker: true}
+	must(t, x.svc.SubmitBound(ctx, x.book.ID, id, "me", "p1", send))
+	if err := x.svc.SubmitBound(ctx, x.book.ID, id, "me", "p1", send); err == nil {
+		t.Fatal("sent twice")
+	}
+	x.invariants()
 }

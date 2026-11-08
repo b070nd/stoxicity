@@ -69,7 +69,7 @@ overwritten on either side:
 
 | Difference | Meaning |
 | --- | --- |
-| `cash_mismatch`, `settled_cash_mismatch` | the ledger and the broker disagree on cash in a currency |
+| `cash_mismatch` | the ledger and the broker disagree on total cash in a currency (settled and unsettled together: settlement timing differs for a day or two after each trade) |
 | `position_mismatch` | shares held differ for a security |
 | `unmapped_position` | the broker holds a contract the instrument register does not know |
 | `foreign_order`, `foreign_execution` | the broker has an order or execution that this program did not send |
@@ -86,3 +86,79 @@ Clearing the signal is a person's act (`tier signal clear`), after the
 differences are explained. `maintenance` and `malformed` answers raise
 `broker_unhealthy`; pacing and an expired or competing session are reported and
 do not.
+
+## Preview, confirm and submit
+
+Sending an order is a chain of separate, recorded steps, and every step can say no.
+
+```bash
+stoxicity broker limits show|set|review     # quote age, collar, spread, preview validity
+stoxicity broker preview ORDER              # the checks and the broker's own preview; records them
+stoxicity order confirm ORDER -by NAME      # bound to the previewed payload; broker warnings need -ack "broker: ..."
+stoxicity broker mode trading -by NAME      # the explicit choice to allow sending
+stoxicity order control enable -env paper_broker -by NAME -reason TEXT
+stoxicity order submit ORDER -by NAME
+```
+
+`broker preview` checks, and shows each result:
+
+| Check | Fails when |
+| --- | --- |
+| contract | the security has no (or more than one) broker contract in the register, or the contract's currency is not the order's |
+| account | the account is not visible, or paper/live does not match the book's environment |
+| policy | the policy that governed the draft is no longer the active one |
+| plan | the plan is no longer accepted, has expired, or an input other than the book changed since it was generated |
+| hold | the order's hold is gone |
+| funds / shares | settled cash at the broker is below what the order can use, or the broker holds fewer shares than a sell |
+| quote, quote real time, quote age | there is no execution-grade quote: none available (no subscription), delayed or frozen, or older than the limit |
+| spread, collar | the market is not two-sided, too wide, or the limit reaches further past it than the collar allows |
+| preview | the broker refuses the order or its preview |
+
+If any check fails the order **cannot be confirmed for the broker**, and a quote
+that is missing is a reason, not a guess: submission is unavailable until an
+execution-grade quote exists.
+
+`order confirm` repeats the checks, then binds the confirmation to a **payload
+hash**: the exact request (account, contract, side, quantity, limit, TIF,
+client reference), the account's description, the contract, and the broker's
+warnings and commission. The broker's warnings must be acknowledged by exact text
+(`-ack "broker: ..."`). The confirmation lasts at most the preview validity
+(five minutes unless changed). `-ticket` confirms for placing by hand instead,
+which can never be sent from here.
+
+`order submit` runs the whole check again against the broker as it is **now**,
+recomputes the payload, and only then records `submit_started`. It refuses, without
+recording anything as sent, when:
+
+- the connection is `read_only` (the default), or the limits are unreviewed;
+- the tier is below 2, new risk is suspended, or new orders are disabled for the environment;
+- the confirmation expired, or the payload is not the one confirmed (the broker's warnings, the account, the contract or the terms changed);
+- any check above fails.
+
+The intent is durable **before** the broker is called, and an order that was
+sent once is never sent again, by this command or after a restart. If the answer
+is lost the order is `unknown`: it may be working at the broker. `broker sync`
+finds it by its client reference (the local order ID) and acknowledges it; an
+order the broker does not list needs `order resolve` after you have looked.
+
+When the broker answers with a question instead of placing the order, the
+program answers it only if the question is one of the warnings you acknowledged,
+word for word. Any other question leaves the order unknown and **unanswered**.
+A definite refusal from the broker rejects the order and releases its hold.
+
+Default, offline and test use never send: with no broker configured, or in
+`read_only`, nothing leaves this machine; the fixture broker is a file.
+
+## Monitoring, cancel and replace
+
+- **Partial fills, fills before the acknowledgement, fills during a cancellation, duplicate messages.** `broker sync` applies each execution by its ID (`ibkr:<execution_id>`) through the order engine, which accepts facts in any order and any number of times. Each partial fill consumes the hold and holds the rest; a fill that arrives after a cancel request is kept and noted.
+- **Fee and execution corrections.** If the broker later reports an execution already booked with a different quantity, price or commission, the booked fill is **not** changed. It becomes an `execution_corrected` difference (and suspends new risk) until a person reads the statement and corrects the ledger by reversal and re-entry.
+- **Cancel.** `order cancel` asks the broker only in `trading` mode, and an order is not cancelled until the broker reports it cancelled. Until then it is `cancel_requested`, its hold stays and a fill may still arrive. When the cancellation is reported, only the part of the hold that was not used is released.
+- **Replace.** There is **no replace command**. Changing an order means cancelling it and drafting a new one, which needs a new preview, a new confirmation and new checks, so a replacement can never increase risk without a fresh confirmation.
+- **Restart.** `order recover` marks an order caught mid-submission as unknown and switches the broker environments' new orders off; `broker sync` then reconciles against the broker. Re-enabling new orders is a manual act.
+- **Disabling.** `order control disable` stops new orders for an environment at any time; cancelling and selling are never blocked by it.
+
+Verified against fixtures: lost answers, refusals, unanswered questions, stale,
+delayed and missing quotes, changed policy and funds, tier gating, duplicate and
+corrected executions, partial fills during a cancel. Not verified: any of this
+against a real gateway or account.

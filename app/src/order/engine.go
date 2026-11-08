@@ -43,6 +43,8 @@ func DefaultControl(env portfolio.Env) Control {
 // an unhealthy or demoted account can always reduce risk.
 type Gate struct {
 	Tier int
+	// Broker says the tier allows an order to be sent to a broker (tier 2 and up).
+	Broker bool
 	// Suspended lists the reasons new risk is suspended; empty means it is not.
 	Suspended []string
 }
@@ -286,6 +288,19 @@ func checkLimits(c Context, vs []View, t Terms) error {
 // Confirm records the explicit go-ahead for the exact terms of a draft. Every
 // warning the draft carries must be acknowledged by its exact text.
 func Confirm(c Context, id, by string, acked []string, ttl time.Duration) ([]Event, error) {
+	return ConfirmBound(c, id, by, acked, ttl, Binding{})
+}
+
+// Binding ties a confirmation to what a broker was shown. Warnings are the
+// broker's own and are acknowledged like any other, by exact text.
+type Binding struct {
+	Payload  string
+	Warnings []string
+}
+
+// ConfirmBound is Confirm for an order that may be sent to a broker: the
+// confirmation also covers the payload, and the warnings the broker gave.
+func ConfirmBound(c Context, id, by string, acked []string, ttl time.Duration, b Binding) ([]Event, error) {
 	v, _, err := c.view(id)
 	if err != nil {
 		return nil, err
@@ -313,7 +328,7 @@ func Confirm(c Context, id, by string, acked []string, ttl time.Duration) ([]Eve
 		have[a] = true
 	}
 	var missing []string
-	for _, w := range v.Warnings {
+	for _, w := range append(append([]string(nil), v.Warnings...), b.Warnings...) {
 		if !have[w] {
 			missing = append(missing, w)
 		}
@@ -326,7 +341,7 @@ func Confirm(c Context, id, by string, acked []string, ttl time.Duration) ([]Eve
 		exp = v.Expires
 	}
 	e := c.ev(id, ConfirmedEv, by)
-	e.Hash, e.Expires, e.Acked = ConfirmHash(v.TermsHash, v.Reservation), exp, acked
+	e.Hash, e.Expires, e.Acked, e.Payload = ConfirmHash(v.TermsHash, v.Reservation), exp, acked, b.Payload
 	return []Event{e}, nil
 }
 
@@ -344,6 +359,14 @@ type Submission struct {
 // before any external call. If the process ends after this event the order is
 // submitting: nothing is known about the outside and nothing is sent again.
 func BeginSubmit(c Context, id, by string) (Submission, []Event, error) {
+	return BeginSubmitBound(c, id, by, "")
+}
+
+// BeginSubmitBound is BeginSubmit for an order that goes to a broker. The
+// payload is what is about to be sent, recomputed just now; it must be the one
+// the confirmation covers. An order that is not local paper only leaves with a
+// payload, and only when the tier allows broker submission.
+func BeginSubmitBound(c Context, id, by, payload string) (Submission, []Event, error) {
 	v, _, err := c.view(id)
 	if err != nil {
 		return Submission{}, nil, err
@@ -360,6 +383,17 @@ func BeginSubmit(c Context, id, by string) (Submission, []Event, error) {
 	}
 	if cf.Hash != ConfirmHash(v.TermsHash, v.Reservation) {
 		return Submission{}, nil, fmt.Errorf("order: the confirmation of %s no longer matches its terms and hold: confirm it again", id)
+	}
+	if v.Terms.Env != portfolio.PaperLocal {
+		if payload == "" || cf.Payload == "" {
+			return Submission{}, nil, fmt.Errorf("order: %s can only be sent to a broker on a confirmation made against a broker preview: confirm it again", id)
+		}
+		if c.Gate != nil && !c.Gate.Broker {
+			return Submission{}, nil, fmt.Errorf("order: tier %d does not allow orders to be sent to a broker (tier 2 and up)", c.Gate.Tier)
+		}
+	}
+	if cf.Payload != payload {
+		return Submission{}, nil, fmt.Errorf("order: what would be sent for %s is not what was confirmed (the broker's view changed): preview and confirm it again", id)
 	}
 	held := false
 	for _, r := range c.Ledger.Projection().Reservations() {

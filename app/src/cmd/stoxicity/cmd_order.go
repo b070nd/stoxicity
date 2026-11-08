@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/b070nd/stoxicity/app/src/broker"
 	"sort"
 	"strings"
 	"time"
@@ -417,6 +418,7 @@ func orderConfirm(ctx context.Context, a *app, args []string) error {
 	fs := newFlags("order confirm")
 	by := fs.String("by", "", "who is confirming")
 	ttl := fs.String("ttl", "15m", "how long the confirmation stays valid")
+	ticket := fs.Bool("ticket", false, "confirm only as a ticket for placing by hand, even when a broker is connected")
 	var acks listFlag
 	fs.Var(&acks, "ack", "a warning acknowledged, exactly as shown (repeatable)")
 	id, err := parseBookFlags(fs, args)
@@ -424,7 +426,7 @@ func orderConfirm(ctx context.Context, a *app, args []string) error {
 		return err
 	}
 	if id == "" || *by == "" {
-		return usageErrorf("usage: order confirm ORDER -by NAME [-ack WARNING]... [-ttl 15m]")
+		return usageErrorf("usage: order confirm ORDER -by NAME [-ack WARNING]... [-ttl 15m] [-ticket]")
 	}
 	d, err := time.ParseDuration(*ttl)
 	if err != nil || d <= 0 {
@@ -437,6 +439,30 @@ func orderConfirm(ctx context.Context, a *app, args []string) error {
 	svc, err := orderService(ctx, a)
 	if err != nil {
 		return err
+	}
+	if br, cfg, b, account, bound, err := brokerOrderContext(ctx, a, v); err != nil {
+		return err
+	} else if bound && !*ticket {
+		pf, err := runPreflight(ctx, a, br, cfg, b, account, v, false)
+		if err != nil {
+			return err
+		}
+		if len(pf.failures()) > 0 {
+			pf.print(a)
+			return pf.failureError(id)
+		}
+		if pf.Valid < d {
+			d = pf.Valid
+		}
+		// the checks above are the validation the draft's warning says is missing
+		acked := append(append([]string(nil), acks...), quoteWarning)
+		if err := svc.ConfirmBound(ctx, v.Terms.Book, id, *by, acked, d, order.Binding{Payload: pf.Payload, Warnings: pf.Warnings}); err != nil {
+			return err
+		}
+		fmt.Fprintf(a.stdout, "%s confirmed by %s for the broker: exactly these terms (hash %s) and this payload (%s), valid %s. A change in the broker's view of the order, the account, the plan or the funds invalidates it. Nothing was sent.\n", id, *by, v.TermsHash, pf.Payload[:12], d)
+		return nil
+	} else if !bound && v.Terms.Env != portfolio.PaperLocal {
+		fmt.Fprintln(a.stdout, "no broker account is bound to this book: this is a ticket for placing by hand, and it cannot be sent from here.")
 	}
 	if err := svc.Confirm(ctx, v.Terms.Book, id, *by, acks, d); err != nil {
 		return err
@@ -467,7 +493,7 @@ func orderSubmit(ctx context.Context, a *app, args []string) error {
 		return err
 	}
 	if v.Terms.Env != portfolio.PaperLocal {
-		return fmt.Errorf("no broker is connected for %s orders: nothing can be sent, and %s stays %s. Place the order yourself, then record what happened with order report", v.Terms.Env, id, v.State)
+		return submitToBroker(ctx, a, v, *by)
 	}
 	svc, err := orderService(ctx, a)
 	if err != nil {
@@ -501,6 +527,18 @@ func orderCancel(ctx context.Context, a *app, args []string) error {
 	var ask order.Canceller
 	if v.Terms.Env == portfolio.PaperLocal {
 		ask = func(context.Context, string, string) error { return nil }
+	} else if br, cfg, _, account, bound, err := brokerOrderContext(ctx, a, v); err != nil {
+		return err
+	} else if bound {
+		ask = func(ctx context.Context, _, ref string) error {
+			switch {
+			case cfg.Mode != broker.Trading:
+				return errors.New("the connection is read_only, so nothing was sent to the broker: cancel it at the broker yourself")
+			case ref == "":
+				return errors.New("the broker's order ID is not known yet: broker sync finds it")
+			}
+			return br.Cancel(ctx, account, ref)
+		}
 	}
 	if err := svc.Cancel(ctx, v.Terms.Book, id, *by, ask); err != nil {
 		return err
@@ -897,5 +935,55 @@ func orderRecover(ctx context.Context, a *app, args []string) error {
 		return nil
 	}
 	fmt.Fprintf(a.stdout, "%d order(s) need reconciliation, none will be sent again: %s\n", len(unknown), strings.Join(unknown, ", "))
+	return nil
+}
+
+// submitToBroker sends a confirmed order to the broker it is bound to. Every
+// check runs again now, against the broker as it is, and the payload is
+// compared with the one the confirmation covers before anything is recorded.
+func submitToBroker(ctx context.Context, a *app, v order.View, by string) error {
+	id := v.ID
+	if _, ok, err := loadBrokerConfig(ctx, a); err != nil {
+		return err
+	} else if !ok {
+		return fmt.Errorf("no broker is connected for %s orders: nothing can be sent, and %s stays %s. Place the order yourself, then record what happened with order report", v.Terms.Env, id, v.State)
+	}
+	br, cfg, b, account, bound, err := brokerOrderContext(ctx, a, v)
+	if err != nil {
+		return err
+	}
+	if !bound {
+		return fmt.Errorf("%s is not bound to a broker account: nothing can be sent, and %s stays %s (broker bind)", v.Terms.Book, id, v.State)
+	}
+	if v.Confirmation == nil {
+		return fmt.Errorf("%s is %s: confirm it against a broker preview first", id, v.State)
+	}
+	pf, err := runPreflight(ctx, a, br, cfg, b, account, v, true)
+	if err != nil {
+		return err
+	}
+	if len(pf.failures()) > 0 {
+		pf.print(a)
+		return pf.failureError(id)
+	}
+	svc, err := orderService(ctx, a)
+	if err != nil {
+		return err
+	}
+	if err := svc.SubmitBound(ctx, v.Terms.Book, id, by, pf.Payload, brokerSender(br, pf.Request, v.Confirmation.Acked)); err != nil {
+		return err
+	}
+	nv, err := findOrder(ctx, a, id)
+	if err != nil {
+		return err
+	}
+	switch nv.State {
+	case order.Unknown:
+		fmt.Fprintf(a.stdout, "%s: the outcome is UNKNOWN (%s). It will not be sent again. Ask the broker with broker sync %s: an order the broker lists under this reference is acknowledged; one it does not list needs order resolve after you have looked.\n", id, strings.Join(nv.Why, "; "), v.Terms.Book)
+	case order.Rejected:
+		fmt.Fprintf(a.stdout, "%s was refused by the broker (%s); what it held was released.\n", id, strings.Join(nv.Why, "; "))
+	default:
+		fmt.Fprintf(a.stdout, "%s sent to account %s and acknowledged (broker order %s). Fills and the end of the order come from broker sync.\n", id, broker.Redact(account), nv.BrokerRef)
+	}
 	return nil
 }

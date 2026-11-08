@@ -122,8 +122,8 @@ func TestBrokerSyncRecordsDifferencesAndSuspendsNewRisk(t *testing.T) {
 	// the same differences are not written twice
 	e.run(t, "broker", "sync", "main/pb").wantOut(t, "cash_mismatch")
 	r = e.run(t, "broker", "differences", "-json")
-	if n := strings.Count(r.out, `"state": "open"`); n != 4 {
-		t.Fatalf("four open differences, once each:\n%s", r.out)
+	if n := strings.Count(r.out, `"state": "open"`); n != 3 {
+		t.Fatalf("three open differences, once each:\n%s", r.out)
 	}
 	e.run(t, "broker", "differences", "main/pb").wantOut(t, "OPEN", "cash_mismatch", "unmapped_position")
 

@@ -232,6 +232,10 @@ type Event struct {
 
 	Hash  string   `json:"hash,omitempty"`  // ConfirmedEv: the confirmation hash
 	Acked []string `json:"acked,omitempty"` // ConfirmedEv: warnings acknowledged
+	// Payload, on a confirmation, is the hash of what a broker was shown for
+	// these terms (account, contract, quote, preview): the confirmation covers
+	// that and nothing else.
+	Payload string `json:"payload,omitempty"`
 
 	Attempt int    `json:"attempt,omitempty"` // SubmitStarted
 	Broker  string `json:"broker,omitempty"`  // Acknowledged: the broker's reference
@@ -246,6 +250,7 @@ type Confirmation struct {
 	Expires time.Time
 	By      string
 	Acked   []string
+	Payload string
 }
 
 // View is an order as the log says it is.
@@ -346,7 +351,7 @@ func Fold(events []Event) (View, error) {
 				v.Reservation = ""
 			}
 		case ConfirmedEv:
-			v.Confirmation = &Confirmation{Hash: e.Hash, At: e.At, Expires: e.Expires, By: e.By, Acked: e.Acked}
+			v.Confirmation = &Confirmation{Hash: e.Hash, At: e.At, Expires: e.Expires, By: e.By, Acked: e.Acked, Payload: e.Payload}
 		case RevokedEv:
 			v.Confirmation = nil
 		case SubmitStarted:

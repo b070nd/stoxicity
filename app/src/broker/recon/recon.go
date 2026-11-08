@@ -28,7 +28,6 @@ type Kind string
 // The differences that can be found.
 const (
 	CashMismatch         Kind = "cash_mismatch"
-	SettledMismatch      Kind = "settled_cash_mismatch"
 	PositionMismatch     Kind = "position_mismatch"
 	UnmappedPosition     Kind = "unmapped_position" // the broker holds a contract the instrument register does not know
 	ForeignOrder         Kind = "foreign_order"     // the broker has an open order this program did not send
@@ -38,6 +37,7 @@ const (
 	ForeignExecution     Kind = "foreign_execution"
 	ExecutionTermsDiffer Kind = "execution_terms_differ"
 	UnmappedExecution    Kind = "unmapped_execution"
+	ExecutionCorrected   Kind = "execution_corrected" // the broker now reports an execution we booked differently
 )
 
 // Difference is one thing that does not match, in words a person can act on.
@@ -65,14 +65,17 @@ type Fact struct {
 
 // Local is this program's side for one book.
 type Local struct {
-	// Cash is the total cash by currency (settled and unsettled); Settled is
-	// the settled part.
-	Cash    map[money.Currency]int64
-	Settled map[money.Currency]int64
+	// Cash is the total cash by currency, settled and unsettled. Settlement
+	// timing differs between a ledger and a broker for a day or two after every
+	// trade, so only the total is compared.
+	Cash map[money.Currency]int64
 	// Held is the shares held, by security.
 	Held map[string]money.Decimal
 	// Orders are the orders of the book.
 	Orders []order.View
+	// Fills are the fills already recorded, by fill ID (ibkr:<execution>), so a
+	// correction of one that was already booked is noticed.
+	Fills map[string]order.Fill
 	// SecurityOf maps a broker contract to a security of the instrument register.
 	SecurityOf map[int64]string
 }
@@ -106,10 +109,6 @@ func Compare(l Local, s Snapshot) Result {
 		if lc := l.Cash[b.Currency]; lc != b.Cash {
 			diff(Difference{CashMismatch, string(b.Currency), minor(lc, b.Currency), minor(b.Cash, b.Currency),
 				"compare with the broker statement; a missing deposit, fee or dividend is the usual cause. Nothing was changed."})
-		}
-		if ls := l.Settled[b.Currency]; ls != b.Settled {
-			diff(Difference{SettledMismatch, string(b.Currency), minor(ls, b.Currency), minor(b.Settled, b.Currency),
-				"settled and total cash can differ by trades that have not settled; check the settlement dates. Nothing was changed."})
 		}
 	}
 	for cur, lc := range l.Cash {
@@ -191,6 +190,15 @@ func Compare(l Local, s Snapshot) Result {
 			diff(Difference{ExecutionTermsDiffer, "execution " + x.ID, v.ID, err.Error(), "the amount could not be computed. Not applied."})
 			continue
 		}
+		if old, ok := l.Fills["ibkr:"+x.ID]; ok {
+			if old.Qty.Cmp(x.Qty) != 0 || old.Price.Cmp(x.Price) != 0 || old.Fee != x.Commission {
+				diff(Difference{ExecutionCorrected, "execution " + x.ID,
+					fmt.Sprintf("%s at %s, fee %s", old.Qty, old.Price, minor(old.Fee, v.Terms.Currency)),
+					fmt.Sprintf("%s at %s, fee %s", x.Qty, x.Price, minor(x.Commission, x.Currency)),
+					"the broker corrected an execution that is already booked. The booked fill is not changed: read the statement, then reverse and re-enter it in the ledger."})
+			}
+			continue
+		}
 		res.Facts = append(res.Facts, Fact{Order: v.ID, Note: fmt.Sprintf("execution %s: %s at %s", x.ID, x.Qty, x.Price), Reported: order.Reported{
 			Kind: order.FillEv,
 			Fill: &order.Fill{ID: "ibkr:" + x.ID, Qty: x.Qty, Price: x.Price, Gross: gross, Fee: x.Commission, At: x.At},
@@ -244,10 +252,19 @@ func orderFacts(v order.View, o broker.OpenOrder, secOf map[int64]string, res *R
 	}
 	switch strings.ToLower(o.Status) {
 	case "cancelled", "apicancelled":
+		if v.State == order.Cancelled {
+			return out
+		}
 		out = append(out, Fact{v.ID, order.Reported{Kind: order.CancelledEv, Key: "ibkr:cancelled:" + o.ID, Broker: o.ID}, "the broker reports the order cancelled"})
 	case "inactive", "rejected":
+		if v.State == order.Rejected {
+			return out
+		}
 		out = append(out, Fact{v.ID, order.Reported{Kind: order.RejectedEv, Key: "ibkr:rejected:" + o.ID, Broker: o.ID, Reason: "the broker reports the order " + o.Status}, "the broker reports the order " + o.Status})
 	default:
+		if v.BrokerRef == o.ID && !v.AckedAt.IsZero() {
+			return out // already known
+		}
 		out = append(out, Fact{v.ID, order.Reported{Kind: order.Acknowledged, Key: "ibkr:ack:" + o.ID, Broker: o.ID}, "the broker lists the order as " + o.Status})
 	}
 	return out
