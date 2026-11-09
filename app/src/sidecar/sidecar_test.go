@@ -32,7 +32,7 @@ func spec(t *testing.T, body string) (Spec, string) {
 	}, dir
 }
 
-const serving = `echo $$ > "$DIR/parent"; sleep 300 & echo $! > "$DIR/child"; touch "$DIR/ready"; echo started; wait`
+const serving = `echo $$ > "$DIR/parent"; sleep 300 & echo $! > "$DIR/child"; echo started; touch "$DIR/ready"; wait`
 
 func alive(t *testing.T, file string) bool {
 	t.Helper()

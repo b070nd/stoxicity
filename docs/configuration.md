@@ -24,7 +24,7 @@ read. The loader is described in `app/src/envfile/envfile.go`.
 |---|---|---|---|
 | `STOXICITY_TENANT` | `.env` | no | Tenant to open by default |
 | `STOXICITY_TIMEZONE` | `.env` | no | Time zone for days and digest times (`Europe/Berlin`) |
-| `STOXICITY_DATA_DIR` | `.env` | no | Database and runtime state |
+| `STOXICITY_DATA_DIR` | `.env.local` | no | Database and runtime state. Keep it **outside the source folder** with an absolute path, e.g. `/Users/you/.stoxicity/data` (default: `data/` beside `.env`); see [data-location.md](data-location.md) |
 | `STOXICITY_LOG_LEVEL` | `.env` | no | `debug`, `info`, `warn`, `error` |
 | `STOXICITY_LAYA_URL` | `.env` | no | laya-serve address |
 | `STOXICITY_LAYA_COMMAND` | `.env.local` | no | program that starts laya-serve (a path on your machine) |
@@ -39,7 +39,7 @@ read. The loader is described in `app/src/envfile/envfile.go`.
 | `STOXICITY_WEBHOOK_URL` | `.env.local` | **yes** | Webhook channel: the https address notifications are posted to (the URL carries the secret) |
 | `STOXICITY_POLYGON_KEY` or `MASSIVE_API_KEY` | `.env.local` | **yes** | API key of Polygon.io, now called Massive, for daily candles (`company.quotes`); the first name wins; unset: no prices |
 | `STOXICITY_LAYA_API_KEY` | `.env.local` | **yes** | laya-serve key, sent as a Bearer token; must equal the sidecar's `LAYA_API_KEY` |
-| `STOXICITY_BACKUP_DIR` | `.env` | no | Where `ops backup` writes (default `backups/` beside `data/`); see [docs/operations.md](operations.md) |
+| `STOXICITY_BACKUP_DIR` | `.env.local` | no | Where `ops backup` and `backup.sh` write. Keep it outside the source folder too, e.g. `/Users/you/.stoxicity/backups` (default `backups/` beside `.env`); see [docs/operations.md](operations.md) and [data-location.md](data-location.md) |
 | `STOXICITY_MIN_FREE_MB` | `.env` | no | Free disk space the data folder's filesystem must keep, in whole megabytes; `fetch` and `ops backup` are refused below it. Unset: no limit |
 | `STOXICITY_MAX_DATA_MB` | `.env` | no | The most the data folder may hold, in whole megabytes; the same refusals. Unset: no limit |
 | `STOXICITY_LIVE_CONTRACT` | shell | no | Set to `1` (with `STOXICITY_CONTACT`) to run the opt-in live contract test of the ECB reader; ordinary test runs never touch the network |

@@ -973,9 +973,10 @@ func TestSaveTenThousand(t *testing.T) {
 	}
 	t.Logf("Save took %v", time.Since(start))
 	// Each article is also written to the append-only observation table; the
-	// limit is for a guard against an order of magnitude, under the race detector.
-	if d := time.Since(start); d > 10*time.Second {
-		t.Errorf("Save of %d articles took %v, want under 10s", len(as), d)
+	// limit is for a guard against an order of magnitude. Under the race detector
+	// it takes about 6s on a laptop and 15s on a shared CI runner.
+	if d := time.Since(start); d > 60*time.Second {
+		t.Errorf("Save of %d articles took %v, want under 60s", len(as), d)
 	}
 	got, err := db.Range(context.Background(), t0, t0.Add(24*time.Hour))
 	if err != nil || len(got) != len(as) {

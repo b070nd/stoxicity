@@ -1,0 +1,3 @@
+#!/bin/sh
+# Blocks a commit that would add real data, credentials or build output.
+exec "$(git rev-parse --show-toplevel)/.githooks/guard-no-data.sh" staged

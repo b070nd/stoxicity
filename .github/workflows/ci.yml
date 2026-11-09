@@ -20,3 +20,25 @@ jobs:
         run: test -z "$(gofmt -l app)"
       - run: make vet build
       - run: cd app && go test -race ./...
+
+  # Real data (databases, statements, prices, credentials, build output) must never
+  # reach this repository. The hooks in .githooks stop it on the machine; this is
+  # the net for a push that skipped them.
+  no-data:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: No real data in what was pushed
+        env:
+          BEFORE: ${{ github.event.before }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ -n "$BASE" ]; then
+            .githooks/guard-no-data.sh range HEAD --not "$BASE"
+          elif [ -n "$BEFORE" ] && [ "$BEFORE" != 0000000000000000000000000000000000000000 ]; then
+            .githooks/guard-no-data.sh range HEAD --not "$BEFORE"
+          else
+            .githooks/guard-no-data.sh range HEAD
+          fi

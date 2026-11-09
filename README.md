@@ -47,6 +47,11 @@ tags and the company filters): [docs/universe.md](docs/universe.md). The product
 
 macOS and Linux only; Windows is out of scope.
 
+**Keeping real data off GitHub.** Databases, statements, prices, policy and broker files, credentials
+and built binaries are git-ignored, and `.githooks/` refuses to commit or push them (`make hooks` turns
+the hooks on once per clone; `make guard` checks everything not yet pushed; CI runs the same check).
+Invented fixtures belong under `testdata/`; a deliberate exception is listed in `.githooks/allow`.
+
 ## Screens
 
 Every screen has a route, and the breadcrumb bar shows the trail:
@@ -234,7 +239,8 @@ than it is, and `eval` prints the sampled labels' precision and recall apart.
 - **Settings.** `.env` and `.env.local` are found by walking up from the current
   directory; `config.yaml` and `sources.yaml` in `app/config`. See
   [docs/configuration.md](docs/configuration.md).
-- **Where data goes.** `data/` next to `.env` (set `STOXICITY_DATA_DIR` or
+- **Where data goes.** Keep it outside the source folder: set `STOXICITY_DATA_DIR` and
+  `STOXICITY_BACKUP_DIR` in `.env.local` ([docs/data-location.md](docs/data-location.md)). Without them it is `data/` next to `.env` (set `STOXICITY_DATA_DIR` or
   `data_dir` to move it): `base.db` is the shared base, `tenants/<id>.db` holds
   each tenant's hits and labels. It is git-ignored.
 - **Network.** `fetch` and `run` refuse to start without `STOXICITY_CONTACT`

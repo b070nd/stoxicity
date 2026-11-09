@@ -4,7 +4,7 @@
 # and it checks every copy it makes: the integrity check passes, and the row count
 # of every table matches the source.
 #
-#   ./backup.sh backup  [data-dir] [backup-root]   copy to <backup-root>/<UTC time>/   (defaults: data, backups)
+#   ./backup.sh backup  [data-dir] [backup-root]   copy to <backup-root>/<UTC time>/   (defaults: STOXICITY_DATA_DIR and STOXICITY_BACKUP_DIR from the environment, .env.local or .env; else data, backups)
 #   ./backup.sh verify  <backup-dir>               checksums, integrity check and row counts
 #   ./backup.sh restore <backup-dir> [data-dir]    verify, then put the backup in place
 #
@@ -15,6 +15,21 @@
 set -eu
 
 die() { echo "backup.sh: $*" >&2; exit 1; }
+
+here=$(cd "$(dirname "$0")" && pwd)
+# setting NAME: the environment, then .env.local, then .env (the program's own order).
+# A relative value starts at this folder, as in the program. Nothing is sourced.
+setting() {
+  eval "v=\${$1:-}"
+  if [ -z "$v" ]; then
+    for f in "$here/.env.local" "$here/.env"; do
+      [ -f "$f" ] || continue
+      v=$(sed -n "s/^$1=//p" "$f" | tail -1 | sed -e 's/^["'"'"']//' -e 's/["'"'"']$//')
+      [ -n "$v" ] && break
+    done
+  fi
+  case "$v" in "") return 0;; /*) printf '%s' "$v";; *) printf '%s/%s' "$here" "$v";; esac
+}
 command -v sqlite3 >/dev/null 2>&1 || die "sqlite3 is needed"
 command -v shasum >/dev/null 2>&1 || die "shasum is needed"
 
@@ -34,8 +49,10 @@ check_db() { # check_db <db>: the integrity check says ok
 mode=${1:-}
 case "$mode" in
 backup)
-  data=${2:-data}
-  root=${3:-backups}
+  data=${2:-$(setting STOXICITY_DATA_DIR)}
+  data=${data:-data}
+  root=${3:-$(setting STOXICITY_BACKUP_DIR)}
+  root=${root:-backups}
   [ -d "$data" ] || die "no data folder $data"
   stamp=$(date -u +%Y%m%dT%H%M%SZ)
   dest=$root/$stamp
@@ -66,7 +83,8 @@ verify)
   ;;
 restore)
   b=${2:-}
-  data=${3:-data}
+  data=${3:-$(setting STOXICITY_DATA_DIR)}
+  data=${data:-data}
   [ -d "$b" ] || die "usage: ./backup.sh restore <backup-dir> [data-dir]"
   "$0" verify "$b"
   if pgrep -x stoxicity >/dev/null 2>&1 || pgrep -x stoxicity-tui >/dev/null 2>&1; then
