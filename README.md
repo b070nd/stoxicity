@@ -1,256 +1,245 @@
-# stoxicity
+<h1 align="center">stoxicity</h1>
 
-A news aggregator for long-term stock investors, covering news from 2026-11-01.
-It reads only sources worth a Peter Lynch / Warren Buffett style investor's time
-and answers:
+<p align="center">
+  <b>News and portfolio research for long-term stock investors.</b><br>
+  Reads the sources worth your time, tells you what to look at, and keeps your decisions honest.
+</p>
 
-- which stocks to look at (discovery)
-- which themes are gaining coverage (trends)
-- which domains produce how much relevant news each day (domains)
+<p align="center">
+  <a href="https://github.com/b070nd/stoxicity/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/b070nd/stoxicity/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
+  <img alt="Go 1.27" src="https://img.shields.io/badge/go-1.27-00ADD8.svg">
+  <img alt="macOS and Linux" src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey.svg">
+</p>
 
-News is filtered with a Google-style query (`"free cash flow" -rumor ticker:AAPL site:sec.gov`).
+stoxicity is a command line program and a full-screen terminal interface that run on your own
+machine. It collects filings, central-bank releases and company feeds into one local database, scores
+them for a Peter Lynch or Warren Buffett style investor, and answers three questions:
 
-The layout follows [cvewatch](https://github.com/b070nd/cvewatch): a CLI, a
-separate full-screen TUI binary, and YAML configuration.
+- **Which stocks should I look at?** (discovery)
+- **Which themes are gaining coverage?** (trends)
+- **Which sources produce how much relevant news each day?** (domains)
 
-**Status.** The CLI and the full-screen interface work end to end for research
-(fetch, score, search, stocks, topics) and, since the production programme of
-2026-11-08, for a personal portfolio on exact money: instruments, FX and prices,
-dividend observations, an immutable ledger, income, scorecards, a core strategy,
-allocation, plans, reviews, orders, a paper engine, tiers, a broker seam (fixtures
-and an unverified Client Portal adapter), an event sleeve, performance, held-out
-and walk-forward evaluation, reports, alerts, a decision journal and operations.
-**Nothing here has been checked against a real broker account, and no strategy has
-a track record**: read [docs/acceptance.md](docs/acceptance.md) for what is built,
-what was tested, and what only you or time can supply before anything is relied on.
-`stoxicity doctor -scope portfolio` prints the same as a table.
+Beyond the news it can keep a personal portfolio on exact money, turn research into a written plan,
+and rehearse every trade on paper before anything near a broker. Your data stays in files on your disk.
 
-The design decisions, with sources, are in
-[docs/research/bleeding-edge-design.md](docs/research/bleeding-edge-design.md).
-Read its "Unverified" section before relying on any of it.
+> **Early software, read this first.** The research side works end to end on live sources. The
+> portfolio, planning and broker parts are built and tested against fixtures, but **nothing has been
+> checked against a real broker account and no strategy has a track record.** The program starts at
+> *tier 0*: paper only, no real orders. This is a research tool, not financial advice. What is
+> verified and what is not is written down in [docs/acceptance.md](docs/acceptance.md).
 
-## Before you fetch anything
+## Why you might like it
 
-1. Put your email address in `.env.local` as `STOXICITY_CONTACT` (copy
-   `.env.local.example` on a fresh checkout). It goes into the User-Agent; the
-   SEC blocks clients that do not identify themselves.
-2. Settings (time zone `Europe/Berlin`, mail server, paths) are in `.env`, which
-   is safe to commit. Credentials go only in `.env.local`, which is git-ignored.
-   See [docs/configuration.md](docs/configuration.md).
-3. Every source in `sources.yaml` states its licence; only `redistributable`
-   sources are shown to every tenant.
+- **Primary sources first.** SEC EDGAR filings and press releases, the Fed, ECB, Bank of England, SNB,
+  EBA, BLS and more. 24 sources are configured and 19 are on by default, each with its stated licence.
+- **A query language you already know.** `"free cash flow" -rumor ticker:AAPL site:sec.gov`.
+- **Local and private.** One embedded SQLite database per install, no account and no cloud service.
+  Pure Go: single binaries, no C toolchain.
+- **Honest numbers.** Money is exact. A ratio that cannot be computed says why instead of showing a
+  guess, and a missing price is never filled in.
+- **Built to refuse.** Real orders are off until you raise the tier. A confirmation you type is bound to
+  the exact order terms. A restore holds new orders back until the broker is reconciled.
+- **Keeps your data off GitHub.** Git hooks and a CI check refuse to commit or push databases,
+  statements, prices, credentials and built binaries.
 
-How fetchers and the SEC EDGAR reader are meant to work:
-[docs/fetchers.md](docs/fetchers.md). The full-screen interface and its keys:
-[docs/tui.md](docs/tui.md). The stock universe (every ticker, profiles, lists,
-tags and the company filters): [docs/universe.md](docs/universe.md). The production plan's foundations: [docs/readiness.md](docs/readiness.md) (doctor, exact money) and [docs/policy.md](docs/policy.md) (the investment policy) and [docs/instruments.md](docs/instruments.md) (securities, listings, and what each data source could supply) [docs/fx-prices.md](docs/fx-prices.md) (exchange rates and prices, and when they are refused) and [docs/dividends.md](docs/dividends.md) (dividend and distribution observations, calendar and history quality) and [docs/portfolio.md](docs/portfolio.md) (accounts and the immutable ledger: real and paper books, lots, unsettled cash, reversals, statement reconciliation) and [docs/income.md](docs/income.md) (dividend entitlement, accruals, withholding and the check that income is booked once) and [docs/scorecards.md](docs/scorecards.md) (sourced multi-year research scorecards, sector templates and why a ratio is blank) and [docs/strategy.md](docs/strategy.md) (valuation scenarios, the quality-income core strategy and the fund template) and [docs/allocation.md](docs/allocation.md) (turning proposals into quantities under your limits and a sourced fee schedule, or saying to wait) and [docs/plans.md](docs/plans.md) (immutable plan revisions with their exact inputs, a lifecycle, a revision diff and staleness) and [docs/review.md](docs/review.md) (hold, reduce or sell what you own by ordered rules, bounded by free shares, with an overdue review never shown as a fresh HOLD) and [docs/orders.md](docs/orders.md) (the local record of orders: exact terms, an atomic hold on the cash or shares, a confirmation bound to those terms, and a state machine that accepts facts in any order; nothing reaches a broker) and [docs/paper.md](docs/paper.md) (the local paper engine: conservative, seeded and reproducible fills from finished daily bars, with no same-bar or touch fills) and [docs/tiers.md](docs/tiers.md) (what each tier lets the program do, apart from your risk limits; sourced evidence and your recorded acceptance to raise it; health signals that suspend new risk without touching what you hold) and [docs/broker.md](docs/broker.md) (the broker connection, read-only by default: session, accounts, balances, positions, orders and executions compared with the ledger; differences recorded and never overwritten; order preview, confirmation bound to the payload, submission that never resends, cancel and fills; what is verified and what is not) and [docs/event-sleeve.md](docs/event-sleeve.md) (the separate, experimental event sleeve: an earnings follow-through template that only proposes paper candidates, shows every test, falls to research when a fact is unknown, and exits by a distinct time-stop or invalidation review) and [docs/performance.md](docs/performance.md) (what a book earned apart from deposits: gain by component that adds up, time- and money-weighted return with every IRR root, drawdown, and baselines replaying the same cash flows; nothing is filled in for a missing price) and [docs/heldout.md](docs/heldout.md) (news reading measured against independent labels on a licensed, source-linked corpus: disagreements recorded and settled by a third person, thresholds and labels frozen first, synthetic regressions kept apart, and no pass without external labels) and [docs/walkfwd.md](docs/walkfwd.md) (replay and walk-forward evaluation: frozen splits, a registry of every trial tried, conservative fills, clustered uncertainty and preregistered criteria; evaluated, experimental or insufficient_history) and [docs/report.md](docs/report.md) (exporting a book or a plan as Markdown or versioned JSON from stored records only: no secrets, no article text, nothing fetched or sent) and [docs/tui-workflow.md](docs/tui-workflow.md) (the Plan, Portfolio and Income sections of the terminal interface: plans and their full cards, books, income, orders and the policy; a confirmation you type, that sends nothing; what was checked in a terminal and what only by test)) and [docs/alerts-journal.md](docs/alerts-journal.md) (alerts raised once with a durable outbox where "sent" means a channel accepted it, quiet hours, corrections and restarts; the decision journal that keeps your reasons next to the thesis as it stood; the daily review)) and [docs/corrections.md](docs/corrections.md) (a corrected or retracted article, a revised figure or a thesis rule you recorded makes a new plan revision with its explanation, withdraws the confirmation of unsent orders, leaves sent orders alone and raises one alert) and [docs/acceptance.md](docs/acceptance.md) (the release matrix: every story and every end-to-end scenario with its result, what is verified against fixtures only, the external blockers, and the commands for each workflow) and [docs/operations.md](docs/operations.md) (redacted health and metrics, disk limits, job leases, coherent multi-database backups with manifests, rotation and a verified second copy, a restore that keeps what it replaces and holds back new orders until the broker is reconciled, service files, and drills with measured results).
+## Quick start
 
-macOS and Linux only; Windows is out of scope.
+You need Go 1.27 and `make`, on macOS or Linux (Windows is out of scope).
 
-**Keeping real data off GitHub.** Databases, statements, prices, policy and broker files, credentials
-and built binaries are git-ignored, and `.githooks/` refuses to commit or push them (`make hooks` turns
-the hooks on once per clone; `make guard` checks everything not yet pushed; CI runs the same check).
-Invented fixtures belong under `testdata/`; a deliberate exception is listed in `.githooks/allow`.
+```bash
+git clone https://github.com/b070nd/stoxicity.git
+cd stoxicity
 
-## Screens
+cp .env.local.example .env.local && chmod 600 .env.local
+# edit .env.local and set STOXICITY_CONTACT=you@example.com (see the note below)
 
-Every screen has a route, and the breadcrumb bar shows the trail:
-`Home › Topics › AI infrastructure › NVDA`.
+make build                      # bin/stoxicity and bin/stoxicity-tui
+./bin/stoxicity doctor          # OK / WARN / FAIL per check
+./bin/stoxicity fetch           # poll every enabled source once
+./bin/stoxicity stocks -days 7  # stocks in relevant news
+./bin/stoxicity-tui             # the full-screen interface
+```
 
-| route | screen |
+`STOXICITY_CONTACT` goes into the User-Agent of every request. The SEC blocks clients that do not
+identify themselves, so `fetch` and `run` refuse to start without it. A warning from `doctor` that the
+optional *laya* second-stage scorer is not running is fine: the rules score alone.
+
+The first `fetch` also loads the SEC and Nasdaq ticker lists, so tickers resolve to company names.
+Keep it running with `./bin/stoxicity run` to poll in the background.
+
+### What you get
+
+```text
+$ ./bin/stoxicity stocks -days 7
+Stocks, tenant default
+Window 2026-11-03 to 2026-11-09 (7 days, Europe/Berlin)
+1197 articles, 780 relevant (relevance at least 0.50)
+
+STOCK    WATCH  MENTIONS  MATERIALITY   TONE
+───────  ─────  ────────  ───────────  ─────
+OPTU                   4          3.0  +0.00
+AHR                    3          3.0  +0.00
+AIRS                   3          3.0  +0.00
+AXON                   3          3.0  +0.00
+```
+
+```text
+$ ./bin/stoxicity stock OPTU -days 7
+Stock OPTU - Optimum Communications, Inc., tenant default
+4 articles name OPTU, 4 relevant (relevance at least 0.50)
+
+Summary
+  - 10-Q/A - Optimum Communications, Inc. (sec.gov)
+  - Form 10-K/A filed by Optimum Communications, Inc. (CIK 0001702780), accession 0001702780-26-000071 (sec.gov)
+
+Timeline (relevant / total per day, with the top event)
+  2026-11-05 Thu  0 / 0
+  2026-11-06 Fri  4 / 4  13:01 results  sec.gov  materiality 3  10-K/A - Optimum Communications, Inc.
+```
+
+```text
+$ ./bin/stoxicity tier status
+tier 0: learn and build (no active policy: paper only)
+permission                                            allowed
+────────────────────────────────────────────────────  ───────
+paper trading and research                            yes
+a real portfolio managed by hand                      no
+orders submitted through a broker after confirmation  no
+a real event sleeve                                   no
+```
+
+(Outputs shortened. They come from a fresh clone and live sources, so yours will differ.)
+
+## The terminal interface
+
+`stoxicity-tui` reads what `fetch` and `run` stored. Every screen has a route, and the breadcrumb bar
+shows the trail: `Home › Topics › AI infrastructure › NVDA`. `tab` and `shift+tab` switch between
+watches without leaving the screen you are on. Keys and screens: [docs/tui.md](docs/tui.md).
+
+| Route | Screen |
 |---|---|
 | `/` | today's digest, tag cloud, 14-day timeline |
 | `/stocks`, `/stock/NVDA` | stocks in relevant news; one stock with summary, fundamentals, timeline |
-| `/topics`, `/topic/ai-infra` | topics as a cloud and trend table; one topic aggregation |
+| `/topics`, `/topic/ai-infra` | topics as a cloud and a trend table; one topic |
 | `/domains`, `/domain/sec.gov` | relevant against total per domain; one domain |
 | `/day/2026-11-03` | one day |
 | `/search?q=...` | Google-style query results with facet counts |
-| `/sources` | source health (shared, belongs to no watch) |
-| `/watches` | the tenant's watches: unread, channels; create, edit, mute |
-| `/w/<watch>/...` | any screen above, pinned to one watch |
+| `/sources` | source health |
+| `/watches` | your watches: unread, channels; create, edit, mute |
 
-## Tenants, watches and channels
-
-```
-            shared information base                 per tenant
-  sources → pipeline → articles, clusters,    →  watches   labels   alert state
-            (once)     entities, base scores      │                  read markers
-                                                  ▼
-                                       tui · email · webhook · file · feed
-```
-
-- **One information base.** Ingest runs once and writes articles, clusters,
-  entities and versioned base scores. No tenant or watch is involved, so adding
-  a tenant adds no fetching or scoring cost.
-- **Tenants** own watches, labels (keep/drop), alert hits and read markers. They
-  are reachable only through a `store.TenantStore` bound to one tenant. A single
-  user has the tenant `default` and never sees any of this.
-- **Watches** are saved views over the base, one YAML file each in
-  `app/config/tenants/<tenant>/watches/`. A watch selects subjects (tickers,
-  topics, sectors), narrows them (domains, event kinds, relevance and
-  materiality floors, a Google-style query), sets alerts (conditions, channels,
-  quiet hours, cooldown), an optional digest, and the dashboard widgets. Watches
-  never copy or re-score articles, so switching is instant.
-- **Switching** is one key: `tab` / `shift+tab` cycle watches, `1`-`9` jump, `w`
-  opens a finder with unread badges. The screen you are on stays; only the
-  watch behind it changes (`Home › Topics › AI` stays on the AI topic page).
-- **Channels** deliver the same notification everywhere a watch names: `tui`,
-  `email`, `webhook`, `file` (Markdown), `feed` (Atom).
-
-Try `stoxicity watch check` after editing a watch: it reports every problem in
-one pass. Copy any `*.yaml.example` to start a new watch.
-
-## Layout
+## From a headline to a decision
 
 ```
-app/
-  config/                   config.yaml, sources.yaml
-  src/
-    cmd/stoxicity/          CLI: fetch, run, digest, search, watch, tenant, sources, policy, instruments, fx, prices, dividends, portfolio, income, scorecard, strategy, allocate, plan, review, order, paper, tier, broker, event, performance, heldout, walkfwd, report, alerts, journal, daily, ops, doctor
-    cmd/stoxicity-tui/      full-screen interface
-    instrument/             issuer, security, listing identity and the resolver
-    capability/             what each data source could supply, where, at what cost
-    distribution/           dividend and fund-distribution observations: declared, estimated, cancelled, conflicting; calendar and history quality
-    csvtable/               the strict CSV reader the importers share
-    scorecard/              sourced multi-year figures, sector templates, ratios that say why they are blank, notes, versioned content hashes
-    strategy/               the scored core-strategy checklist, bear/base/bull valuation and entry ceiling, the fund template; proposals only
-    allocate/               quantities under policy limits and a sourced fee schedule; wait or no purchase are results; no sale
-    plan/                   immutable plan revisions: card, input manifest, hashes, lifecycle, revision diff, staleness
-    review/                 ordered hold, reduce and sell rules bounded by free shares; missing data blocks, a late review is overdue
-    order/                  order intents as an event log: terms, holds, confirmation, state machine, reports in any order
-    paper/                  conservative seeded fills from daily bars, reported through the order contracts
-    tier/                   operational tiers apart from risk limits, sourced readiness, health signals that suspend new risk
-    broker/                 the broker seam; fixture/ (a broker in a file), ibkr/ (Client Portal Gateway adapter, loopback only), recon/ (compare and record differences)
-    eventstrat/             the experimental earnings follow-through template: tests, paper-only proposals, time-stop and invalidation review
-    perf/                   gain by component, time- and money-weighted return, drawdown, baselines with matched cash flows; missing prices make a figure unavailable
-    heldout/                held-out news evaluation: corpus with licences, independent labels and disagreements, frozen thresholds, stage and group metrics with intervals
-    walkfwd/                replay of proposals on daily bars: frozen splits, trial registry, conservative fills, bootstrap over clusters, preregistered status
-    report/                 export of a book or a plan as Markdown and versioned JSON: no secrets, no article text
-    ops/                    health and metrics without opening a database, leases, disk limits, coherent backups with manifests, restore with a reconcile hold, service files, drills
-    alerts/                 alerts raised once, a durable outbox per channel (sent only on proof), quiet hours, urgent alerts, reminders, restarts
-    corrections/            what a plan depends on (events, articles, thesis rules, recipe), and what counts as a material change
-    journal/                the decision journal: reasons beside the thesis as it stood, later outcomes linked to the entry
-    workflow/               reads plans, books, income, orders and policy from the stores for the CLI and the terminal interface; the one confirm
-    income/                 which payouts a book is entitled to (shares held before the ex-date), and the check that the ledger agrees
-    portfolio/              books, the immutable double-entry journal, tax lots, unsettled cash, reservations, replay and statement reconciliation
-    quotes/                 exact FX and price observations, the ECB reader, and the rules that refuse stale, conflicting or unit-ambiguous values
-    config/                 load the configuration folder
-    model/                  shared types (Source, Article, Score, Entity)
-    sources/ httpx/         source registry and licences, shared HTTP client
-    feeds/ rss edgar api    fetchers, one package per source kind (docs/fetchers.md)
-    envfile/                loads .env and .env.local
-    scheduler/              background refresh, backoff, circuit breaker, events
-    sanitize/               strip escape sequences from untrusted text
-    pipeline/               ingest stages that build the shared base
-    tenant/                 workspaces that share the base
-    watch/                  watch spec, validation, matching, alert evaluation
-    channel/                delivery kinds, quiet hours, cooldown, dedupe
-    dashboard/              widgets a watch's home screen can show
-    entity/                 company mentions to tickers
-    company/                SEC and Nasdaq ticker lists, industry records
-    universe/               every known stock: profiles, lists, tags, queries
-    exchange/               the exchanges: operator, hours, holidays, open now?
-    refdata/                the self-refreshing reference database of stocks
-    cluster/                group syndicated copies of one story
-    store/                  persistence: shared Base + tenant-bound TenantStore
-    filter/                 Google-style query language
-    lens/                   keyword relevance scoring
-    lens/laya/              laya-serve client, second scoring stage
-    labels/                 keep/drop verdicts, the gold set; the queue of what to judge next
-    eval/                   precision@k, Brier, calibration error, precision and recall
-    marketdata/             daily candles (Polygon/Massive)
-    fundamentals/           revenue, profit and shares of every filer (SEC XBRL frames)
-    insider/                insider trades from Form 4 filings: keeper, 90-day figures
-    summarize/              extractive summaries with sources
-    discover/ trends/       new stock candidates, rising topics
-    domains/ digest/        per-domain counts, the daily summary
-    tagcloud/ timeline/     cloud tiers, bars per day and event list
-    nav/                    routes, breadcrumbs, back/forward
-    tui/                    full-screen interface: screens, model, key map
-    workspace/              opens config, stores and one tenant for the TUI
+  sources ─► fetch ─► score ─► search · stocks · topics · digest ─► watches and alerts
+                                          │
+              policy ─► scorecard ─► strategy ─► allocation ─► plan ─► review
+                                                                │
+                                         paper engine ◄─ order (confirmed by you) ─► broker seam
+                                                                │
+                              ledger ─► income ─► performance ─► report · journal
 ```
 
-Scoring in two stages: keyword rules first, then optionally a
-[laya](https://huggingface.co/convaiinnovations/laya) sidecar. Laya stays off
-until it has been calibrated on your own labels.
+Each step is a command and a record you can inspect, and none of it sends anything outward until
+you raise the tier. The commands for each workflow are in [docs/acceptance.md](docs/acceptance.md), and every command is
+listed by `./bin/stoxicity` with no arguments.
 
-## Usage
+| You want to | Start with |
+|---|---|
+| Follow a few stocks and get told when something happens | a watch file (`app/config/tenants/default/watches/*.yaml.example`), then `stoxicity watch check` |
+| Teach the scorer what you care about, and measure it | `stoxicity label sample`, `label keep` / `drop`, `eval` |
+| Set limits and see what a plan would buy | `stoxicity policy example`, `allocate example`, `plan` |
+| Rehearse a trade | `stoxicity paper` and `order` (paper first; real orders need a higher tier) |
+| Not lose your data | `stoxicity ops backup`, `ops verify`, `ops restore` |
 
-Build and check the installation:
+## Watches, tenants and channels
+
+- **One shared information base.** Ingest runs once and stores articles, clusters, entities and
+  versioned base scores. Adding a tenant adds no fetching or scoring cost.
+- **Watches** are saved views, one YAML file each. A watch picks subjects (tickers, topics, sectors),
+  narrows them (domains, event kinds, relevance floors, a query), sets alerts (conditions, quiet hours,
+  cooldown) and an optional digest. A watch never copies or re-scores articles, so switching is instant.
+- **Channels** deliver the same notification everywhere a watch names: `tui`, `email`, `webhook`,
+  `file` (Markdown) and `feed` (Atom).
+- **Tenants** own watches, labels and read markers. A single user has the tenant `default` and never
+  notices.
+
+`stoxicity watch check` reports every problem in a watch file in one pass.
+
+## Configuration
+
+| File | What goes in it |
+|---|---|
+| `.env` | settings: time zone, paths, mail server. Safe to commit. |
+| `.env.local` | credentials and your email address. Git-ignored, keep mode `600`. |
+| `app/config/config.yaml` | defaults for everything |
+| `app/config/sources.yaml` | the sources, each with its licence |
+| `app/config/tenants/<id>/` | tenant and watch files |
+
+Later wins: `config.yaml` < `.env` < `.env.local` < the real environment. Every variable is listed in
+[docs/configuration.md](docs/configuration.md).
+
+**Where your data goes.** Databases, backups and tokens are real data. Keep them outside the source
+folder by setting `STOXICITY_DATA_DIR` and `STOXICITY_BACKUP_DIR` in `.env.local`
+([docs/data-location.md](docs/data-location.md)). Without them the program uses `data/` next to
+`.env`. Back up before the first run of a new binary: databases migrate when opened and there is no
+downgrade (`stoxicity ops backup`).
+
+## Documentation
+
+| Area | Read |
+|---|---|
+| **Start here** | [acceptance matrix](docs/acceptance.md) (what is built, tested and unverified), [configuration](docs/configuration.md), [data location](docs/data-location.md), [terminal interface](docs/tui.md) |
+| **News and research** | [fetchers and SEC EDGAR](docs/fetchers.md), [events and evidence](docs/events.md), [coverage and source evaluation](docs/coverage.md), [the stock universe](docs/universe.md), [provider quotas](docs/provider-quotas.md), [held-out news evaluation](docs/heldout.md) |
+| **Decide** | [readiness and doctor](docs/readiness.md), [investment policy](docs/policy.md), [instruments](docs/instruments.md), [FX and prices](docs/fx-prices.md), [dividends](docs/dividends.md), [scorecards](docs/scorecards.md), [strategy](docs/strategy.md), [allocation](docs/allocation.md), [plans](docs/plans.md), [review](docs/review.md), [corrections](docs/corrections.md) |
+| **Account** | [portfolio and ledger](docs/portfolio.md), [income](docs/income.md), [performance](docs/performance.md), [reports](docs/report.md) |
+| **Trade** | [orders](docs/orders.md), [paper engine](docs/paper.md), [tiers](docs/tiers.md), [broker connection](docs/broker.md), [event sleeve](docs/event-sleeve.md), [walk-forward evaluation](docs/walkfwd.md) |
+| **Operate** | [alerts and journal](docs/alerts-journal.md), [operations: backup, restore, health](docs/operations.md), [terminal workflows](docs/tui-workflow.md) |
+| **Design** | [architecture and package map](docs/architecture.md), [design decisions with sources](docs/research/bleeding-edge-design.md) (read its "Unverified" section), [conventions](docs/conventions.md) |
+
+## Keeping real data off GitHub
+
+Databases, statements, prices, policy and broker files, credentials and built binaries are
+git-ignored, and `.githooks/` refuses to commit or push them. Turn the hooks on once per clone, and
+check anything not yet pushed:
 
 ```bash
-make build                  # ./build.sh: every package, and every program under app/src/cmd into bin/
-./bin/stoxicity version
-./bin/stoxicity doctor      # OK/WARN/FAIL per check; exit 1 if any FAIL
-./bin/stoxicity doctor -scope portfolio   # also the readiness table of that scope (research, portfolio, broker)
-./bin/stoxicity doctor -json              # the same as a versioned JSON report
+make hooks
+make guard
 ```
 
-Without a build, run from `app/`: `go run ./src/cmd/stoxicity doctor`.
+CI runs the same check on every pull request. Invented fixtures belong under `testdata/`; a deliberate
+exception is listed in `.githooks/allow`. Hooks can be skipped with `--no-verify`, so if the data is
+sensitive, keep your fork private.
 
-Back up before the first run of a new binary: the databases migrate when they are
-opened and there is no downgrade. `stoxicity ops backup` (docs/operations.md) makes a
-coherent, verified copy of every database with a manifest; `backup.sh` is the older
-shell tool and reads the same backups.
+## Contributing
+
+Issues and pull requests are welcome. Before opening a pull request:
 
 ```bash
-./backup.sh backup                     # data/ -> backups/<UTC time>/ (online SQLite backup, checked)
-./backup.sh verify backups/<time>      # checksums, integrity check, row counts
-./backup.sh restore backups/<time>     # with the program stopped; the replaced folder is kept aside
+make hooks   # once per clone
+make fmt vet test
 ```
 
-```bash
-stoxicity fetch [source-id...]      # poll once, print new articles per source
-stoxicity run                       # poll until Ctrl-C, one line per poll; starts and stops the laya server
-stoxicity digest [-day 2026-11-03]  # the day's top news, domains, candidates, trends
-stoxicity search [-from D] [-to D] [-limit N] 'free cash flow -rumor ticker:AAPL'
-stoxicity stock NVDA [-days 30] [-limit 10]   # one stock: summary, timeline, trend, domains, related topics
-stoxicity stocks [-days 14]         # stocks in relevant news with mentions, materiality, tone
-stoxicity topic ai-infra [-days 30] [-limit 10]   # one topic: its stocks, domains, timeline, top articles
-stoxicity topics [-days 14]         # all topics as a tag cloud with counts and trend lift
-stoxicity label keep|drop ID... [-sampled]   # record your verdict on articles
-stoxicity label list [-n 20]        # your latest labels
-stoxicity label sample [-n 10] [-days 7]   # random unlabelled articles to judge, then label with -sampled
-stoxicity eval [-days 90] [-threshold X]   # precision, recall, Brier, ECE of the lens against your labels
-stoxicity rescore [-days N | -from D -to D]   # score stored articles again after changing the lens
-stoxicity relink [-days N]          # give stored SEC filings the tickers of their CIK (all of them by default)
-stoxicity watch list                # the tenant's watches and unread hits
-stoxicity watch check [id...]       # validate watch files and their queries
-stoxicity watch test <id> -since 24h   # show matches, write nothing
-stoxicity tenant list
-stoxicity sources list              # kind, licence, last health from the database
-```
+Use the pull request checklist, and keep real figures, keys and account numbers out of code, tests and
+documents. Use fake values. Bug reports and feature requests have templates under *Issues*.
 
-Global flags come before the command: `-config-dir DIR`, `-env-file FILE`
-(repeatable), `-tenant ID`, `-v` (debug log). Days are read in the configured
-time zone (`Europe/Berlin`). Exit codes: 0 ok, 1 error, 2 usage. Output goes to
-stdout, diagnostics to stderr. Put flags of `search` before the query; use `--`
-if the query starts with `-`.
+## Security
 
-The stock and topic pages say that price and fundamentals are not available:
-no market data provider is configured. Tag clouds are plain text: one asterisk
-on each side of a term per size step above the smallest, capitals for the two
-largest steps, and the article count in brackets, for example `**ai-infra**(5)`.
-Label a few articles from `label sample` with `-sampled` before trusting
-`eval`; labels taken from the top of the ranking alone make the lens look better
-than it is, and `eval` prints the sampled labels' precision and recall apart.
-`rescore` adds a score for the current lens version and keeps the older ones.
+Please report vulnerabilities privately, not in public issues: see [SECURITY.md](SECURITY.md).
 
-- **Settings.** `.env` and `.env.local` are found by walking up from the current
-  directory; `config.yaml` and `sources.yaml` in `app/config`. See
-  [docs/configuration.md](docs/configuration.md).
-- **Where data goes.** Keep it outside the source folder: set `STOXICITY_DATA_DIR` and
-  `STOXICITY_BACKUP_DIR` in `.env.local` ([docs/data-location.md](docs/data-location.md)). Without them it is `data/` next to `.env` (set `STOXICITY_DATA_DIR` or
-  `data_dir` to move it): `base.db` is the shared base, `tenants/<id>.db` holds
-  each tenant's hits and labels. It is git-ignored.
-- **Network.** `fetch` and `run` refuse to start without `STOXICITY_CONTACT`
-  (your email or an https URL); it goes into the User-Agent. SEC EDGAR needs it
-  in particular and is limited to 10 requests a second. Offline commands work
-  without it. Naming a source on the `fetch` command line polls it even if it is
-  disabled.
-- **Not verified.** The EDGAR formats the fetchers read are written from the
-  documented formats and have not been checked against live data. Ticker
-  resolution uses the SEC and Nasdaq lists once `stoxicity universe update` has
-  loaded them; before that it knows only the `watchlist` and the tickers named
-  in watches. The universe covers US listings; other markets only through
-  `extra:` in `stocks.yaml`.
+## License
+
+stoxicity is released under the [MIT License](LICENSE). Copyright (c) 2026 Botond Biro.
+
+It builds on open-source Go modules under the MIT, BSD and Apache-2.0 licences (for example
+[Bubble Tea](https://github.com/charmbracelet/bubbletea) and
+[Lip Gloss](https://github.com/charmbracelet/lipgloss) for the interface and
+[modernc.org/sqlite](https://gitlab.com/cznic/sqlite) for the database). The full list is in
+[`app/go.mod`](app/go.mod). News, filings and prices that you fetch stay under their own publishers'
+terms: the licence of each source is in `app/config/sources.yaml`.
+
+## Disclaimer
+
+stoxicity is research software provided as is, without warranty. Nothing it prints is investment,
+tax or legal advice. You alone are responsible for your decisions and your money.
