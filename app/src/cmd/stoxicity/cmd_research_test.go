@@ -18,15 +18,15 @@ func TestSignalsGraphAndExportRunOverTheEventHistory(t *testing.T) {
 	r.wantCode(t, exitOK)
 	r.wantOut(t, "no security with primary or corroborated evidence")
 	r.wantNotOut(t, "materiality filter")
-	r = e.run(t, "signals", "-all", "-days", "3650", "-explain")
+	r = e.run(t, "evidence", "-all", "-days", "3650", "-explain")
 	r.wantCode(t, exitOK)
 	r.wantOut(t, "ACME", "unresolved", "independence not established", "unknown [unknown:news.example.com", "not whether the news is true or will move a price")
 	// An explicit materiality filter is labelled, and says how many events it removed.
-	r = e.run(t, "signals", "-all", "-min", "5", "-days", "3650")
+	r = e.run(t, "evidence", "-all", "-min", "5", "-days", "3650")
 	r.wantCode(t, exitOK)
 	r.wantOut(t, "materiality filter -min 5", "can be lower than with every event")
 	// Judging as of a time before anything was stored finds nothing, and stores nothing.
-	r = e.run(t, "signals", "-all", "-days", "3650", "-at", "2001-01-01")
+	r = e.run(t, "evidence", "-all", "-days", "3650", "-at", "2001-01-01")
 	r.wantCode(t, exitOK)
 	r.wantOut(t, "no security with primary or corroborated evidence")
 

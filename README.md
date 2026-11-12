@@ -190,7 +190,7 @@ downgrade (`stoxicity ops backup`).
 | Area | Read |
 |---|---|
 | **Start here** | [acceptance matrix](docs/acceptance.md) (what is built, tested and unverified), [configuration](docs/configuration.md), [data location](docs/data-location.md), [terminal interface](docs/tui.md) |
-| **News and research** | [fetchers and SEC EDGAR](docs/fetchers.md), [events and evidence](docs/events.md), [coverage and source evaluation](docs/coverage.md), [the stock universe](docs/universe.md), [provider quotas](docs/provider-quotas.md), [held-out news evaluation](docs/heldout.md) |
+| **News and research** | [fetchers and SEC EDGAR](docs/fetchers.md), [events and evidence](docs/events.md), [coverage and source evaluation](docs/coverage.md), [the stock universe](docs/universe.md), [provider quotas](docs/provider-quotas.md), [held-out news evaluation](docs/heldout.md), [research engine: event database, event studies, signal rules](docs/research-engine.md) |
 | **Decide** | [readiness and doctor](docs/readiness.md), [investment policy](docs/policy.md), [instruments](docs/instruments.md), [FX and prices](docs/fx-prices.md), [dividends](docs/dividends.md), [scorecards](docs/scorecards.md), [strategy](docs/strategy.md), [allocation](docs/allocation.md), [plans](docs/plans.md), [review](docs/review.md), [corrections](docs/corrections.md) |
 | **Account** | [portfolio and ledger](docs/portfolio.md), [income](docs/income.md), [performance](docs/performance.md), [reports](docs/report.md) |
 | **Trade** | [orders](docs/orders.md), [paper engine](docs/paper.md), [tiers](docs/tiers.md), [broker connection](docs/broker.md), [event sleeve](docs/event-sleeve.md), [walk-forward evaluation](docs/walkfwd.md) |
