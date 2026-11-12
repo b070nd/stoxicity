@@ -38,7 +38,7 @@ const universeUsage = "expected: status | update [-force] | changes [-days N] [-
 // knows, searched, tagged and grouped.
 func cmdUniverse(ctx context.Context, a *app, args []string) error {
 	if len(args) == 0 {
-		return usageErrorf("%s", universeUsage)
+		return usageErrorf("%s | %s", universeUsage, universeHistoryUsage)
 	}
 	switch args[0] {
 	case "status":
@@ -56,6 +56,8 @@ func cmdUniverse(ctx context.Context, a *app, args []string) error {
 		return a.universeFeeds(ctx, args[1:])
 	case "quotes":
 		return a.universeQuotes(ctx, args[1:])
+	case "history":
+		return a.universeHistory(ctx, args[1:])
 	case "fundamentals":
 		return a.universeFundamentals(ctx, args[1:])
 	case "insiders":
@@ -69,7 +71,7 @@ func cmdUniverse(ctx context.Context, a *app, args []string) error {
 	case "list":
 		return a.universeList(args[1:])
 	}
-	return usageErrorf("unknown subcommand %q; %s", args[0], universeUsage)
+	return usageErrorf("unknown subcommand %q; %s | %s", args[0], universeUsage, universeHistoryUsage)
 }
 
 func (a *app) universeStatus() error {

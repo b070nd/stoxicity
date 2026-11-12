@@ -79,8 +79,12 @@ type Workspace struct {
 	baseDir string
 
 	// The newest candles, read again once they are older than quotesEvery.
-	quotes   map[string]tui.Quote
-	quotesAt time.Time
+	quotes           map[string]tui.Quote
+	quotesAt         time.Time
+	priceCalendars   map[string]marketdata.PriceCalendar
+	priceCalendarsAt time.Time
+	priceCalendarDay string
+	priceCalendarErr error
 
 	sampled map[string]bool // articles of the label queue that were drawn at random
 
@@ -96,6 +100,7 @@ type Workspace struct {
 }
 
 var _ tui.Backend = (*Workspace)(nil)
+var _ tui.PriceCalendarer = (*Workspace)(nil)
 
 // Open reads the configuration and opens the tenant's data. It does not fetch
 // anything and does not write.

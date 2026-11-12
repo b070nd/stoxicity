@@ -9,6 +9,7 @@ import (
 
 	"github.com/b070nd/stoxicity/app/src/domains"
 	"github.com/b070nd/stoxicity/app/src/labels"
+	"github.com/b070nd/stoxicity/app/src/marketdata"
 	"github.com/b070nd/stoxicity/app/src/model"
 	"github.com/b070nd/stoxicity/app/src/nav"
 	"github.com/b070nd/stoxicity/app/src/pages"
@@ -176,7 +177,9 @@ type Data struct {
 	Group string
 	// Quotes are the newest daily candles by ticker; empty when none have been
 	// fetched (no key for the source, or not yet).
-	Quotes map[string]Quote
+	Quotes             map[string]Quote
+	PriceCalendars     map[string]marketdata.PriceCalendar
+	PriceCalendarError string
 	// Numbers are the companies' figures, by name and ticker (see Backend).
 	Numbers map[string]map[string]float64
 	// Why says why a market value is missing, by figure name and ticker (see
@@ -474,6 +477,11 @@ func toneLight(t float64) Style {
 // stockTable is the stocks of the news, most mentioned first unless sorted.
 func stockTable(rows []pages.StockRow, d Data) Table {
 	t := Table{Columns: stockColumns, Default: Sort{Key: "mentions", Desc: true}}
+	calendar := d.PriceCalendars != nil || d.PriceCalendarError != ""
+	if calendar {
+		t.Columns = slices.Insert(slices.Clone(stockColumns), 2, Column{Title: "12M", Width: 12, MaxWidth: 12}, Column{Title: "10Y", Width: 10, MaxWidth: 10})
+		t.Columns[4].MaxWidth = t.Columns[4].Width
+	}
 	for _, r := range rows {
 		star := " "
 		if r.Watched {
@@ -490,6 +498,11 @@ func stockTable(rows []pages.StockRow, d Data) Table {
 			},
 			Row: Row{Go: route(nav.Stock, r.Ticker)},
 		})
+		if calendar {
+			last := &t.Items[len(t.Items)-1]
+			monthly, yearly := d.priceCalendarCells(r.Ticker)
+			last.Cells = slices.Insert(last.Cells, 2, monthly, yearly)
+		}
 	}
 	return t
 }
@@ -526,6 +539,7 @@ func buildStock(ticker string, d Data) Screen {
 	s := Screen{Title: title}
 	var b builder
 	known := profileRows(&b, ticker, d)
+	priceCalendarRows(&b, ticker, d)
 	insiderRows(&b, ticker, d)
 	if page.Total == 0 && len(d.Latest) == 0 {
 		if !known {

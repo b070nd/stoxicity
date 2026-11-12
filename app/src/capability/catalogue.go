@@ -16,6 +16,13 @@ func Default() *Registry {
 func defaultProviders() []Provider {
 	return []Provider{
 		{
+			ID: "yahoo-chart", Name: "Yahoo Finance public chart history",
+			DocsURL: "https://help.yahoo.com/kb/SLN28256.html",
+			Cost:    CostFree, Rights: "public chart data for personal research; no redistribution grant verified; chart endpoint is unofficial",
+			Quota:        Quota{Basis: Unknown, Note: "local pacing and recorded provider throttles apply; no unlimited allowance assumed"},
+			Entitlements: []Entitlement{{Data: PricesHistory, Markets: []string{"US"}, Instruments: []string{"stock", "etf"}, History: "monthly history for ten calendar years plus baseline, subject to listing age and source coverage", Delay: "monthly closes and current month to date", Currencies: "as stated by the chart metadata", Wired: true, Note: "12M/10Y charts only; split-adjusted quote.close, not dividend-adjusted adjclose or raw daily candles"}},
+		},
+		{
 			ID: "sec-edgar", Name: "SEC EDGAR (filings, company facts, indexes)",
 			DocsURL: "https://www.sec.gov/os/accessing-edgar-data",
 			Cost:    CostFree,

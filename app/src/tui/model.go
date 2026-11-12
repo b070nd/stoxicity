@@ -386,6 +386,13 @@ func (m *Model) rebuild() {
 	if sb, ok := m.be.(Standinger); ok {
 		d.Standing = sb.Standings()
 	}
+	if pc, ok := m.be.(PriceCalendarer); ok && (r.Kind == nav.Companies || r.Kind == nav.Stock || r.Kind == nav.Stocks || r.Kind == nav.Exchange) {
+		var err error
+		d.PriceCalendars, err = pc.PriceCalendars()
+		if err != nil {
+			d.PriceCalendarError = err.Error()
+		}
+	}
 	d.Exchange, d.Chosen = m.scopeOf(r), m.exchange
 	if needsShared(r.Kind) {
 		d.Articles = m.scoped.news(d.Universe, m.shared, d.Exchange)

@@ -134,7 +134,7 @@ func newTestEnv(t *testing.T) *testEnv {
 			t.Fatal(err)
 		}
 	}
-	write("config.yaml", "since: 2026-11-01\ndata_dir: ./data\nwatchlist: [ACME]\ncompany:\n  url: "+srv.URL+"/company_tickers.json\n  nasdaq_url: "+srv.URL+"/nasdaqlisted.txt\n  other_url: "+srv.URL+"/otherlisted.txt\n  submissions_url: "+srv.URL+"/sub/CIK%s.json\n  sites_url: "+srv.URL+"/sparql\n")
+	write("config.yaml", "since: 2026-11-01\ndata_dir: ./data\nwatchlist: [ACME]\ncompany:\n  history: off\n  url: "+srv.URL+"/company_tickers.json\n  nasdaq_url: "+srv.URL+"/nasdaqlisted.txt\n  other_url: "+srv.URL+"/otherlisted.txt\n  submissions_url: "+srv.URL+"/sub/CIK%s.json\n  sites_url: "+srv.URL+"/sparql\n")
 	write("sources.yaml", fmt.Sprintf(`sources:
   - id: news-feed
     name: Synthetic news

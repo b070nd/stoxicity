@@ -51,5 +51,7 @@ func run(ctx context.Context, root, tenantID, watchID string, refresh time.Durat
 		return err
 	}
 	defer ws.Close()
+	stopHistory := ws.StartHistoryRefresh(ctx)
+	defer stopHistory()
 	return tui.Run(ctx, tui.Options{Backend: ws, Refresh: refresh})
 }

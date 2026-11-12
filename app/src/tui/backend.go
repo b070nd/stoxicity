@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/b070nd/stoxicity/app/src/labels"
+	"github.com/b070nd/stoxicity/app/src/marketdata"
 	"github.com/b070nd/stoxicity/app/src/model"
 	"github.com/b070nd/stoxicity/app/src/status"
 	"github.com/b070nd/stoxicity/app/src/universe"
@@ -127,4 +128,10 @@ type Standinger interface {
 // its dated, sourced overrides. A Backend that does not gets the recurring rules.
 type Calendarer interface {
 	Calendar() exchange.Calendar
+}
+
+// PriceCalendarer provides read-only monthly/yearly price summaries, independently of
+// the news window. It never fetches history while a screen is being drawn.
+type PriceCalendarer interface {
+	PriceCalendars() (map[string]marketdata.PriceCalendar, error)
 }

@@ -136,6 +136,12 @@ type Company struct {
 	Quotes         string `yaml:"quotes"`
 	QuotesPerCycle int    `yaml:"quotes_per_cycle"`
 	QuotesURL      string `yaml:"quotes_url"`
+	// History fills the 12M/10Y strips from public monthly chart data, separately
+	// from daily candles. Zero HistoryPerCycle disables background filling.
+	History         string `yaml:"history"`
+	HistoryURL      string `yaml:"history_url"`
+	HistoryPerCycle int    `yaml:"history_per_cycle"`
+	HistoryEvery    string `yaml:"history_every"`
 	// Fundamentals is where revenue, profit, assets, equity and shares come
 	// from: "sec" (the XBRL frames of the SEC, no key, a few dozen small
 	// requests a week for the whole market) or "off". FundamentalsURL replaces

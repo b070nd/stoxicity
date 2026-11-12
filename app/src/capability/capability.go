@@ -29,6 +29,7 @@ const (
 	Filings         DataType = "filings"
 	Fundamentals    DataType = "fundamentals"
 	PricesEOD       DataType = "prices_eod"
+	PricesHistory   DataType = "prices_history"
 	PricesLive      DataType = "prices_live"
 	FXReference     DataType = "fx_reference"
 	Dividends       DataType = "dividends"
@@ -39,7 +40,7 @@ const (
 )
 
 // DataTypes lists the valid data types.
-var DataTypes = []DataType{Filings, Fundamentals, PricesEOD, PricesLive, FXReference, Dividends, CorporateAction, ETFMetadata, ETFHoldings, Instruments}
+var DataTypes = []DataType{Filings, Fundamentals, PricesEOD, PricesHistory, PricesLive, FXReference, Dividends, CorporateAction, ETFMetadata, ETFHoldings, Instruments}
 
 // Unknown is written wherever a fact has not been checked.
 const Unknown = "unknown"
