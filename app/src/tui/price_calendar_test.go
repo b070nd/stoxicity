@@ -214,9 +214,11 @@ func TestCatalogueWithPriceCalendarsFiltersQuickly(t *testing.T) {
 		t.Fatal("no catalogue rows")
 	}
 	// Both colored strips render in about 40ms without instrumentation, about
-	// 410ms with -race. Allow detector overhead while guarding catalogue stalls.
-	if per > 500*time.Millisecond {
-		t.Errorf("calendar filtering takes %v per key", per)
+	// 410ms with -race on a laptop and 860ms with it on a shared CI runner. The
+	// limit guards against a catalogue that stalls, not against the detector's
+	// or the runner's overhead.
+	if per > 3*time.Second {
+		t.Errorf("calendar filtering takes %v per key, want under 3s", per)
 	}
 	t.Logf("%v per key with 12,000 price calendars", per)
 }
