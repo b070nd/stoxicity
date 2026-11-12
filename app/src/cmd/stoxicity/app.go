@@ -878,6 +878,11 @@ func (a *app) httpClient() (httpx.Client, error) {
 		}
 		return nil, errors.New("STOXICITY_CONTACT is not usable: it must be an email address or an https URL, without spaces or parentheses")
 	}
+	return a.fetchClient(ua)
+}
+
+// fetchClient shares durable accounting between news, candles and public history.
+func (a *app) fetchClient(ua string) (httpx.Client, error) {
 	limits := map[string]quota.Limit{}
 	for key, q := range a.cfg.Fetch.Quotas {
 		limits[key] = q.Limit()
@@ -901,7 +906,7 @@ func (a *app) httpClient() (httpx.Client, error) {
 		Timeout:    a.cfg.FetchTimeout(),
 		Burst:      a.cfg.Refresh.PerHost,
 		Groups:     hostGroups,
-		HostRates:  map[string]float64{"sec": 10},
+		HostRates:  map[string]float64{"sec": 10, "query1.finance.yahoo.com": 1},
 		Now:        a.now,
 		Quotas:     limits,
 		QuotaStore: db,

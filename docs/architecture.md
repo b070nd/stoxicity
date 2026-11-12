@@ -28,6 +28,10 @@ app/
     paper/                  conservative seeded fills from daily bars, reported through the order contracts
     tier/                   operational tiers apart from risk limits, sourced readiness, health signals that suspend new risk
     broker/                 the broker seam; fixture/ (a broker in a file), ibkr/ (Client Portal Gateway adapter, loopback only), recon/ (compare and record differences)
+    eventfact/              one record per economic event with its figures, when it could first be acted on, and whether it was held then or rebuilt
+    eventstudy/             what stocks did after a type of event: entry without look-ahead, costs, benchmarks, conditions, development and validation apart
+    playbook/               versioned signal rules read against a study: buy or sell only with an evaluated validation group, otherwise watch; cannot place an order
+    research/               builds the event database from the store, runs studies and evaluates playbooks; the only one of the four that knows the store
     eventstrat/             the experimental earnings follow-through template: tests, paper-only proposals, time-stop and invalidation review
     perf/                   gain by component, time- and money-weighted return, drawdown, baselines with matched cash flows; missing prices make a figure unavailable
     heldout/                held-out news evaluation: corpus with licences, independent labels and disagreements, frozen thresholds, stage and group metrics with intervals

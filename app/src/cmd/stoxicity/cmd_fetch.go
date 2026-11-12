@@ -231,6 +231,8 @@ func cmdRun(ctx context.Context, a *app, args []string) error {
 		return err
 	}
 	stopRefresh := a.startReferenceRefresh(ctx)
+	stopHistory := a.startHistoryRefresh(ctx)
+	defer stopHistory()
 	defer stopRefresh()
 	p, err := a.poller(srcs, a.pipeline(db), false)
 	if err != nil {

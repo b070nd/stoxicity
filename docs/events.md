@@ -8,7 +8,7 @@ be about one event and one filing can concern several. See PROTOCOL.md sections
 stoxicity events rebuild [-days 365]        derive the events, claims and readings from stored articles (repeatable)
 stoxicity events timeline TICKER [-at TIME] a security's events as known at a time
 stoxicity events show EVENT                 every revision of one event
-stoxicity signals [-days 7] [-at TIME] [-explain] [-all] [-min N]
+stoxicity evidence [-days 7] [-at TIME] [-explain] [-all] [-min N]
                                             securities whose events rest on primary or corroborated evidence
 stoxicity graph TICKER [-format text|json|dot]
                                             the small knowledge graph around a security
@@ -16,11 +16,14 @@ stoxicity export [-out research] [-days 30] write Markdown files for Git
 stoxicity reconcile [options]               compare the SEC indexes with the stored filings (see below)
 ```
 
-Existing before this change: `events rebuild | timeline | show`, `signals`
+Existing before this change: `events rebuild | timeline | show`, `evidence`
 (`-days`, `-min`, `-limit`, `-all`), `graph`, `export`, `reconcile -days -repair`.
-New: `signals -at -explain` and a `-min` that defaults to 0; `reconcile -from -to
+New: `evidence -at -explain` and a `-min` that defaults to 0; `reconcile -from -to
 -catchup -no-quarterly -refetch -max-requests -enrich -facts`; `events rebuild`
 now also writes assertions and assessments (see below).
+
+`evidence` was called `signals` until 2026-11-12; the old name still runs it and says so. Buy, sell and
+watch signals are a different thing: see [research-engine.md](research-engine.md).
 
 New articles are turned into events as they are stored; `events rebuild` is for
 the articles stored before this existed, and for re-deriving after the rules
@@ -28,7 +31,7 @@ change (it appends; it never edits an earlier row).
 
 ## Three states of evidence, not a score
 
-`signals` is a screen for where to read first. It measures how broad and how
+`evidence` is a screen for where to read first. It measures how broad and how
 independent the evidence is, not whether the news will move a price, and it is
 not a trading signal. The word is *corroborated*, never "strong".
 
@@ -41,18 +44,18 @@ not a trading signal. The word is *corroborated*, never "strong".
 One filing is therefore *primary evidence*, never "independent corroboration of
 its own claims".
 
-**Materiality takes no part in the verdict.** Before this change `signals`
+**Materiality takes no part in the verdict.** Before this change `evidence`
 defaulted to `-min 2` and removed low-materiality events before the evidence was
 assessed, so a keyword score could manufacture or remove confidence. The default
 is now `-min 0`: every event is assessed. If `-min N` is given the output says
 how many events were left out before assessment and that the states can be lower
 than with every event.
 
-`signals -explain` (and `graph`, `export`) print the evidence behind each verdict:
+`evidence -explain` (and `graph`, `export`) print the evidence behind each verdict:
 each reporting origin, how it was identified, its confidence and assessment
 version, and why two stories were or were not counted as one.
 
-`signals -at TIME` judges what was known then: observations, origins, episode
+`evidence -at TIME` judges what was known then: observations, origins, episode
 decisions and assertions recorded or decided later are not used, and nothing is
 stored.
 

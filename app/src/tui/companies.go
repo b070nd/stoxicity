@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/b070nd/stoxicity/app/src/marketdata"
 	"github.com/b070nd/stoxicity/app/src/nav"
 	"github.com/b070nd/stoxicity/app/src/pages"
 	"github.com/b070nd/stoxicity/app/src/store"
@@ -83,6 +84,19 @@ func buildCompanies(q string, d Data) Screen {
 	if cols.Funded || cols.Insiders {
 		for _, line := range legendLines(cols) {
 			b.styled(Dim, line)
+		}
+	}
+	if cols.Calendar {
+		at := d.priceCalendarAt()
+		start := marketdata.PriceCalendarStart(at)
+		yearsStart := marketdata.PriceYearsStart(at)
+		b.styled(Dim, "12M "+start.Format("Jan06")+"–"+at.Format("Jan06")+"* · 10Y "+yearsStart.Format("2006")+"–"+at.Format("2006")+"* · green ↑ / yellow = / red ↓")
+		if d.ShowFacets {
+			b.styled(Dim, "12M: one bar per month · 10Y: one bar per year · oldest first · height = relative close")
+			b.styled(Dim, "Color = change from prior month/year · * month/year to date · · missing / ? unresolved")
+		}
+		if d.PriceCalendarError != "" {
+			b.styled(Warn, "Price history unavailable: "+d.PriceCalendarError)
 		}
 	}
 	exchangeChips(&b, d)
@@ -207,9 +221,12 @@ func companyTable(q universe.Query, cols companyCols) Table {
 		{Title: "TICKER", Key: "ticker", Width: 8},
 		{Title: "NAME", Key: "name", Width: 22, MaxWidth: 28},
 	}
+	if cols.Calendar {
+		columns = append(columns, Column{Title: "12M", Width: 12, MaxWidth: 12}, Column{Title: "10Y", Width: 10, MaxWidth: 10})
+	}
 	if cols.Priced {
+		columns = append(columns, Column{Title: "DAY", Width: candleWidth})
 		columns = append(columns,
-			Column{Title: "DAY", Width: candleWidth},
 			Column{Title: "CLOSE", Key: "close", Width: 8, Right: true, Desc: true},
 			Column{Title: "CHG", Key: "change", Width: 7, Right: true, Desc: true})
 	}
@@ -292,10 +309,10 @@ func (d Data) latestQuoteDay() string {
 
 // companyCols says which optional column groups the table has: those whose
 // data exists.
-type companyCols struct{ Priced, Funded, Insiders bool }
+type companyCols struct{ Priced, Funded, Insiders, Calendar bool }
 
 func (d Data) companyColumns() companyCols {
-	return companyCols{Priced: len(d.Quotes) > 0, Funded: len(d.Numbers["revenue"]) > 0, Insiders: len(d.Numbers["buys"]) > 0}
+	return companyCols{Priced: len(d.Quotes) > 0, Funded: len(d.Numbers["revenue"]) > 0, Insiders: len(d.Numbers["buys"]) > 0, Calendar: d.PriceCalendars != nil || d.PriceCalendarError != ""}
 }
 
 func companyItem(h universe.Hit, watched bool, d Data, cols companyCols) Item {
@@ -315,6 +332,10 @@ func companyItem(h universe.Hit, watched bool, d Data, cols companyCols) Item {
 	}
 	typ, dom := p.Type(), p.Domain()
 	cells := []Cell{Str(star).Styled(Warn), Str(p.Ticker).Styled(Strong), Str(p.Name)}
+	if cols.Calendar {
+		monthly, yearly := d.priceCalendarCells(p.Ticker)
+		cells = append(cells, monthly, yearly)
+	}
 	if cols.Priced {
 		var bar, close, move Cell
 		if q, ok := quotes[p.Ticker]; ok {

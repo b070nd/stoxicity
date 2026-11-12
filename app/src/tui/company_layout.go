@@ -4,6 +4,13 @@ package tui
 // numeric values. The active sort column stays visible. All columns remain
 // available through the screen's full Table shape for sorting.
 func fitCompanyTable(t Table, width int, sort Sort) Table {
+	hasYearStrip := false
+	for _, column := range t.Columns {
+		if column.Title == "10Y" {
+			hasYearStrip = true
+			break
+		}
+	}
 	// Prefer stable widths to resizing every time a refresh changes one row.
 	for i := range t.Columns {
 		c := &t.Columns[i]
@@ -29,6 +36,9 @@ func fitCompanyTable(t Table, width int, sort Sort) Table {
 		}
 	}
 	for _, title := range []string{"TAGS", "DOMAIN", "TYPE", "REVENUE", "SELLS", "BUYS", "LISTED", "MARGIN", "GROWTH", "MCAP", "DAY", "NEWS"} {
+		if title == "DAY" && hasYearStrip {
+			continue
+		}
 		if total() <= width {
 			break
 		}
@@ -57,12 +67,12 @@ func fitCompanyTable(t Table, width int, sort Sort) Table {
 	}
 	// On very narrow terminals, retain the sort field and ticker rather than
 	// letting the terminal clip a numeric cell halfway through its value.
-	for _, key := range []string{"close", "change"} {
+	for _, key := range []string{"close", "change", "day", "10y", "12m"} {
 		if total() <= width {
 			break
 		}
 		for i, c := range t.Columns {
-			if c.Key == key && c.Key != sort.Key {
+			if (c.Key == key && c.Key != sort.Key) || (key == "day" && c.Title == "DAY") || (key == "10y" && c.Title == "10Y") || (key == "12m" && c.Title == "12M") {
 				remove(i)
 				break
 			}

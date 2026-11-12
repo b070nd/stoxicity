@@ -21,6 +21,14 @@ import (
 	"github.com/b070nd/stoxicity/app/src/store"
 )
 
+// cmdSignalsAlias runs the evidence screen under its earlier name and says so
+// on the diagnostics stream, so that the output itself is unchanged. The word
+// "signals" now belongs to the buy, sell and watch signals of a playbook.
+func cmdSignalsAlias(ctx context.Context, a *app, args []string) error {
+	fmt.Fprintln(a.stderr, "stoxicity: \"signals\" is now \"evidence\" (the evidence screen, not a trading signal); buy, sell and watch signals are under \"playbook signals\"")
+	return cmdSignals(ctx, a, args)
+}
+
 // cmdSignals lists the securities whose recent events rest on evidence of a
 // stated strength, and says for each on what. It is a screen for where to read
 // first, not a trading signal.
@@ -37,7 +45,7 @@ import (
 // Materiality takes no part in it. -min exists to read fewer events, and when it
 // removes any the output says how many and that it can lower the states.
 func cmdSignals(ctx context.Context, a *app, args []string) error {
-	fs := newFlags("signals")
+	fs := newFlags("evidence")
 	days := fs.Int("days", 7, "events made public in the last days")
 	minMat := fs.Int("min", 0, "read only events of at least this materiality (a keyword rule's reading); 0 reads every event. Filtering removes evidence before it is assessed and can lower the states")
 	limit := fs.Int("limit", 20, "most securities to show")

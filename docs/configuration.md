@@ -150,6 +150,10 @@ company:
   quotes: polygon     # where daily candles come from: polygon (needs STOXICITY_POLYGON_KEY) or off
   quotes_per_cycle: 10 # market days brought up to date in one refresh (0 to 5000)
   quotes_url: ""      # the source's address, for a test (the splits list is read from quotes_url + "splits")
+  history: yahoo      # public, keyless monthly history for the 12M/10Y charts; off disables it
+  history_per_cycle: 100 # symbols per background batch (0 disables background filling)
+  history_every: 5m   # batch interval while run or the TUI is open; at least 1m
+  history_url: ""     # optional Yahoo-compatible mirror/test base URL
   fundamentals: sec   # where revenue, profit and shares come from: sec (no key) or off
   fundamentals_url: "" # the SEC frames address, for a test (company history from + "companyfacts/", filings from + "archives/")
   covers_per_cycle: 20 # issuers whose cover page (shares per class) is read in one refresh (0 to 500); a failed issuer waits 3 days, doubling to 14

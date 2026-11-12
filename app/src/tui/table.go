@@ -44,6 +44,9 @@ type Cell struct {
 	// Style draws the cell's text in a colour of its own; Plain leaves it to
 	// the row.
 	Style Style
+	// Spans are styles within Text, in runes. When present they replace Style;
+	// the table translates them to row offsets after padding and clipping.
+	Spans []Span
 }
 
 // Styled is c drawn in the style.
@@ -194,8 +197,18 @@ func (t Table) line(cells []Cell) (string, []Span) {
 	text, at := t.layout(texts)
 	var spans []Span
 	for i := range t.Columns {
-		if i < len(cells) && cells[i].Style != Plain && at[i][1] > at[i][0] {
-			spans = append(spans, Span{From: at[i][0], To: at[i][1], Style: cells[i].Style})
+		if i < len(cells) && at[i][1] > at[i][0] {
+			if len(cells[i].Spans) > 0 {
+				for _, span := range cells[i].Spans {
+					from := at[i][0] + max(0, span.From)
+					to := min(at[i][1], at[i][0]+span.To)
+					if to > from {
+						spans = append(spans, Span{From: from, To: to, Style: span.Style})
+					}
+				}
+			} else if cells[i].Style != Plain {
+				spans = append(spans, Span{From: at[i][0], To: at[i][1], Style: cells[i].Style})
+			}
 		}
 	}
 	return text, spans

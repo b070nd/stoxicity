@@ -1,8 +1,8 @@
 # The full-screen interface
 
-`stoxicity-tui` reads what `stoxicity fetch` and `stoxicity run` have stored. It
-never fetches and never scores; it shows the shared base through the licence
-rule of your tenant, and writes only three things: your keep/drop labels, the
+`stoxicity-tui` renders stored news and research through your tenant's licence
+rules. While open, a background worker fills missing public price history for
+the 12M/10Y strips. It writes that history cache, your keep/drop labels, the
 read marker of a watch, and your tags and lists (`stocks.yaml`).
 
 ```sh
@@ -258,6 +258,59 @@ selected row's end-of-day session and stale status appear in the footer. The col
 prices exist (see `company.quotes` in [configuration.md](configuration.md)).
 `enter` on a company opens its profile, which also exists for stocks with no news
 in the window.
+
+### Compact 12-month and 10-year price calendars
+
+The **12M** column adds a compact `▁▂▃▄▅▆▇█` price strip for each security. Each
+position is a calendar month, oldest first: the eleven preceding months and the
+current month to date. The overview shows exactly twelve adjacent characters
+(for example `▁▂▃▄▅▆▇█▆▁▃▅`), each individually colored, on the stock's own row.
+It appears alongside the existing DAY candle, CLOSE and CHG. Related-stock
+lists also include the compact 12M column. The heading shows the date range;
+`f` expands the explanatory legend. Height is the last stored
+close relative to that security's lowest/highest monthly close in the window;
+these are price bars, not trading-volume bars. A constant series uses `▄`.
+
+Each month's color compares its close with the previous calendar month's close:
+**green** up, **yellow** flat, **red** down. A dim `·` means no stored observation;
+a dim bar means the price is known but a previous-month comparison is unavailable.
+Missing months are never filled forward or bridged. A dim `?` means the price
+basis cannot be reconciled, rather than an invented gain or loss. Colors remain
+visible on the selected row. Narrow catalogues hide secondary columns before
+dropping the calendar; the full calendar remains on the stock page.
+
+Open a stock to see its **12-month price calendar**, with month/year labels,
+monthly closes, signed changes and `*` on the current month. The grid adapts to
+terminal width. Known splits put raw historical closes on the current share
+basis; unknown bases and unexplained split-like changes are marked unresolved.
+Currency changes are not silently compared. This is price performance in the
+source's stated currency, not dividend-inclusive return or EUR conversion.
+
+The chart renderer reads cached history independently of the article/news window.
+A background worker in the TUI and `stoxicity run` fetches public monthly history
+from Yahoo's chart endpoint, including the preceding-year baseline for 10Y.
+Defaults are 100 symbols every five minutes, refreshing successful snapshots
+after 24 hours. Followed/listed/tagged/recent-news stocks get priority, then the
+remaining catalogue fills progressively. Provider throttles and configured
+request quotas apply; leases prevent duplicate concurrent fetches.
+
+Rendering does not wait for HTTP. The cache refreshes every 30 seconds, with
+date-rollover invalidation and explicit database errors. Monthly history is
+stored separately from daily candles, so DAY remains a genuine daily candle.
+See [price-history.md](price-history.md) for manual backfill and progress commands.
+
+The **10Y** strip sits immediately beside **12M** and uses the same individually
+colored `▁▂▃▄▅▆▇█` bars: one per calendar year, oldest first, for the preceding
+nine years plus the current year to date. Heights compare yearly closing-price
+levels within that strip; colors compare each year's last stored close with the
+previous year's last stored close. The first visible year's color uses a stored
+close from the preceding year when available. Green is a gain, yellow flat, red
+a loss. Missing years stay `·`, without bridging gaps. The `*` in the date range
+marks the current, partial year. Split/currency checks and unresolved `?` markers
+apply to both horizons. The DAY candle is retained alongside both strips on
+ordinary-width overviews; on narrow terminals, names/secondary columns shrink
+before charts. Older annual history fills automatically where the public source
+has coverage; younger listings and unavailable periods remain missing.
 
 On a stock page, or with the cursor on any stock row: `#` asks for tags
 (`moat dividend-grower`, or `-moat` to remove) and `l` for lists (a name that

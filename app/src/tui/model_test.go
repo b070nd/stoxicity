@@ -19,6 +19,7 @@ import (
 	"github.com/b070nd/stoxicity/app/src/exchange"
 	"github.com/b070nd/stoxicity/app/src/filter"
 	"github.com/b070nd/stoxicity/app/src/labels"
+	"github.com/b070nd/stoxicity/app/src/marketdata"
 	"github.com/b070nd/stoxicity/app/src/model"
 	"github.com/b070nd/stoxicity/app/src/nav"
 	"github.com/b070nd/stoxicity/app/src/pages"
@@ -44,14 +45,15 @@ type fake struct {
 	sources  []status.Source
 	verdicts map[string]labels.Verdict
 
-	layer    universe.Layer
-	univ     *universe.Universe
-	quotes   map[string]Quote
-	numbers  map[string]map[string]float64
-	standing map[string]CapStanding
-	insiders map[string][]model.InsiderTrade
-	queue    []labels.Pick
-	progress labels.Progress
+	layer          universe.Layer
+	univ           *universe.Universe
+	quotes         map[string]Quote
+	priceCalendars map[string]marketdata.PriceCalendar
+	numbers        map[string]map[string]float64
+	standing       map[string]CapStanding
+	insiders       map[string][]model.InsiderTrade
+	queue          []labels.Pick
+	progress       labels.Progress
 
 	articleCalls []string // the watch of each Articles call
 	searchCalls  []string
@@ -123,6 +125,12 @@ func (f *fake) Quotes() map[string]Quote {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.quotes
+}
+
+func (f *fake) PriceCalendars() (map[string]marketdata.PriceCalendar, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.priceCalendars, nil
 }
 
 func (f *fake) Following(t string) []string {

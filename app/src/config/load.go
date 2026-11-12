@@ -118,7 +118,7 @@ func defaults() Config {
 			Device:          "cpu",
 			Offline:         true,
 		},
-		Company: Company{Enabled: true, MaxAge: "168h", Listing: true, RefreshEvery: "6h", EnrichPerCycle: 200, SitesPerCycle: 400, Quotes: "polygon", QuotesPerCycle: 10, Fundamentals: "sec", Insiders: "sec", InsidersPerCycle: 300, CoversPerCycle: 20, FeedSearchPerCycle: 60},
+		Company: Company{Enabled: true, MaxAge: "168h", Listing: true, RefreshEvery: "6h", EnrichPerCycle: 200, SitesPerCycle: 400, Quotes: "polygon", QuotesPerCycle: 10, History: "yahoo", HistoryPerCycle: 100, HistoryEvery: "5m", Fundamentals: "sec", Insiders: "sec", InsidersPerCycle: 300, CoversPerCycle: 20, FeedSearchPerCycle: 60},
 		Tenancy: Tenancy{Dir: "tenants", Default: "default"},
 	}
 }
@@ -203,6 +203,15 @@ func validate(cfg Config) error {
 
 	if !slices.Contains([]string{"polygon", "off"}, cfg.Company.Quotes) {
 		errs = append(errs, fmt.Errorf("config: company.quotes must be polygon or off, got %q", cfg.Company.Quotes))
+	}
+	if !slices.Contains([]string{"yahoo", "off"}, cfg.Company.History) {
+		errs = append(errs, fmt.Errorf("config: company.history must be yahoo or off"))
+	}
+	if cfg.Company.HistoryPerCycle < 0 || cfg.Company.HistoryPerCycle > 5000 {
+		errs = append(errs, fmt.Errorf("config: company.history_per_cycle must be between 0 and 5000"))
+	}
+	if d, err := time.ParseDuration(cfg.Company.HistoryEvery); err != nil || d < time.Minute {
+		errs = append(errs, fmt.Errorf("config: company.history_every must be at least 1m"))
 	}
 	if !slices.Contains([]string{"sec", "off"}, cfg.Company.Fundamentals) {
 		errs = append(errs, fmt.Errorf("config: company.fundamentals must be sec or off, got %q", cfg.Company.Fundamentals))
