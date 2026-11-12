@@ -114,7 +114,16 @@ func TestStartLayaStartsTheServerAndStopsIt(t *testing.T) {
 	}
 
 	stop()
-	if _, err := os.Stat(filepath.Join(dir, "terminated")); err != nil {
+	// Stop returns when the shell that leads the group has ended. The helper
+	// under it got the same SIGTERM and records it a moment later, so the
+	// marker is waited for instead of being expected at once.
+	marker := filepath.Join(dir, "terminated")
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		if _, err := os.Stat(marker); err == nil {
+			break
+		}
+	}
+	if _, err := os.Stat(marker); err != nil {
 		t.Errorf("the server did not get SIGTERM: %v", err)
 	}
 	if !strings.Contains(out.String(), "laya: stopped") {
