@@ -2,32 +2,21 @@ package main
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/b070nd/stoxicity/app/src/eventstudy"
 	"github.com/b070nd/stoxicity/app/src/research"
-	"github.com/b070nd/stoxicity/app/src/store"
 )
 
-const (
-	recLabStudySpec = "study.spec"
-	recLabStudyRun  = "study.run"
-)
-
-// labRun is what is kept of one run of a study. The outcomes are not kept:
-// they can be large, and a run prints them on request.
-type labRun struct {
-	At       time.Time            `json:"at"`
-	Run      int                  `json:"run"`
-	SpecHash string               `json:"spec_hash"`
-	DataHash string               `json:"data_hash"`
-	Manifest eventstudy.Manifest  `json:"manifest"`
-	Prices   research.PriceResult `json:"prices"`
-	Report   eventstudy.Report    `json:"report"`
+// lab is the research lab over the tenant's records.
+func (a *app) lab() (research.Lab, error) {
+	rs, err := a.records()
+	if err != nil {
+		return research.Lab{}, err
+	}
+	return research.Lab{Records: rs}, nil
 }
 
 // cmdStudy runs event studies over the stored economic events and daily bars.
@@ -66,32 +55,6 @@ func labStudyExample(a *app) error {
 	return writeJSON(a.stdout, spec)
 }
 
-// labRegister stores body as the newest revision of a key and says which
-// revision it is. unchanged is true when the key already holds this body.
-func labRegister(ctx context.Context, a *app, kind, key string, body []byte) (revision int, existed, unchanged bool, err error) {
-	rs, err := a.records()
-	if err != nil {
-		return 0, false, false, err
-	}
-	hist, err := rs.History(ctx, kind, key)
-	if err != nil {
-		return 0, false, false, err
-	}
-	if n := len(hist); n > 0 {
-		if hist[n-1].Hash == store.RecordHash(body) {
-			return n, true, true, nil
-		}
-	}
-	_, fresh, err := rs.Append(ctx, store.RecordInput{Kind: kind, Key: key, Body: body})
-	if err != nil {
-		return 0, false, false, err
-	}
-	if fresh == 0 {
-		return 0, true, false, fmt.Errorf("%s was registered with exactly this content before and cannot be made the newest revision again: change something, or register it under a new id", key)
-	}
-	return len(hist) + 1, len(hist) > 0, false, nil
-}
-
 func labStudyRegister(ctx context.Context, a *app, args []string) error {
 	fs := newFlags("study register")
 	file := fs.String("file", "", "study JSON (study example shows one)")
@@ -106,84 +69,28 @@ func labStudyRegister(ctx context.Context, a *app, args []string) error {
 	if err := readJSONFile(*file, &spec); err != nil {
 		return err
 	}
-	if err := spec.Validate(); err != nil {
-		return err
-	}
-	body, err := json.Marshal(spec)
+	lab, err := a.lab()
 	if err != nil {
 		return err
 	}
-	rev, existed, unchanged, err := labRegister(ctx, a, recLabStudySpec, spec.ID, body)
+	reg, err := lab.RegisterStudy(ctx, spec)
 	if err != nil {
 		return err
 	}
 	switch {
-	case unchanged:
-		fmt.Fprintf(a.stdout, "study %s is already registered with this content (revision %d, hash %s).\n", spec.ID, rev, spec.Hash()[:12])
-	case existed:
-		fmt.Fprintf(a.stdout, "study %s registered as revision %d: a new revision of a study that was tried before (hash %s).\n", spec.ID, rev, spec.Hash()[:12])
+	case reg.Unchanged:
+		fmt.Fprintf(a.stdout, "study %s is already registered with this content (revision %d, hash %s).\n", spec.ID, reg.Revision, spec.Hash()[:12])
+	case reg.Existed:
+		fmt.Fprintf(a.stdout, "study %s registered as revision %d: a new revision of a study that was tried before (hash %s).\n", spec.ID, reg.Revision, spec.Hash()[:12])
 	default:
 		fmt.Fprintf(a.stdout, "study %s registered (hash %s).\n", spec.ID, spec.Hash()[:12])
 	}
-	rs, err := a.records()
+	studies, revisions, err := lab.StudyCounts(ctx)
 	if err != nil {
 		return err
 	}
-	cur, err := rs.Current(ctx, recLabStudySpec, "")
-	if err != nil {
-		return err
-	}
-	all, err := rs.All(ctx, recLabStudySpec, "")
-	if err != nil {
-		return err
-	}
-	fmt.Fprintf(a.stdout, "%d study(ies) and %d revision(s) are registered. Every study and every revision is another look at the same history; the more that is tried, the more a result needs.\n", len(cur), len(all))
+	fmt.Fprintf(a.stdout, "%d study(ies) and %d revision(s) are registered. Every study and every revision is another look at the same history; the more that is tried, the more a result needs.\n", studies, revisions)
 	return nil
-}
-
-// labLatestSpec is the newest revision of a registered study and its number.
-func labLatestSpec(ctx context.Context, a *app, id string) (eventstudy.Spec, int, error) {
-	rs, err := a.records()
-	if err != nil {
-		return eventstudy.Spec{}, 0, err
-	}
-	rec, err := rs.Latest(ctx, recLabStudySpec, id)
-	if errors.Is(err, store.ErrNoRecord) {
-		return eventstudy.Spec{}, 0, fmt.Errorf("no study %s: register it first (study register -file F)", id)
-	}
-	if err != nil {
-		return eventstudy.Spec{}, 0, err
-	}
-	var spec eventstudy.Spec
-	if err := json.Unmarshal(rec.Body, &spec); err != nil {
-		return eventstudy.Spec{}, 0, fmt.Errorf("study %s does not decode: %w", id, err)
-	}
-	hist, err := rs.History(ctx, recLabStudySpec, id)
-	if err != nil {
-		return eventstudy.Spec{}, 0, err
-	}
-	return spec, len(hist), nil
-}
-
-// labRuns lists the stored runs of a study, oldest first.
-func labRuns(ctx context.Context, a *app, id string) ([]labRun, error) {
-	rs, err := a.records()
-	if err != nil {
-		return nil, err
-	}
-	recs, err := rs.History(ctx, recLabStudyRun, id)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]labRun, 0, len(recs))
-	for _, r := range recs {
-		var x labRun
-		if err := json.Unmarshal(r.Body, &x); err != nil {
-			return nil, fmt.Errorf("a run of study %s does not decode: %w", id, err)
-		}
-		out = append(out, x)
-	}
-	return out, nil
 }
 
 func labWindow(w eventstudy.Window) string {
@@ -201,43 +108,31 @@ func labStudyList(ctx context.Context, a *app, args []string) error {
 	if len(rest) > 0 {
 		return usageErrorf("study list takes no arguments, got %q", rest[0])
 	}
-	rs, err := a.records()
+	lab, err := a.lab()
 	if err != nil {
 		return err
 	}
-	cur, err := rs.Current(ctx, recLabStudySpec, "")
+	studies, err := lab.Studies(ctx)
 	if err != nil {
 		return err
 	}
-	if len(cur) == 0 {
+	if len(studies) == 0 {
 		fmt.Fprintln(a.stdout, "no study is registered (study example, study register).")
 		return nil
 	}
 	t := cliTable{Header: []string{"study", "types", "horizons", "development", "validation", "revisions", "runs", "last run"}, Right: []bool{5: true, 6: true}}
-	for _, r := range cur {
-		var spec eventstudy.Spec
-		if err := json.Unmarshal(r.Body, &spec); err != nil {
-			return fmt.Errorf("study %s does not decode: %w", r.Key, err)
-		}
-		hist, err := rs.History(ctx, recLabStudySpec, r.Key)
-		if err != nil {
-			return err
-		}
-		runs, err := labRuns(ctx, a, r.Key)
-		if err != nil {
-			return err
-		}
+	for _, st := range studies {
+		spec := st.Spec
 		var hs []string
 		for _, h := range spec.Horizons {
 			hs = append(hs, fmt.Sprint(h))
 		}
 		last := plain("not run")
-		if n := len(runs); n > 0 {
-			st := runs[n-1].Report.Status
-			last = styled(st, studyStyle(st))
+		if st.Runs > 0 {
+			last = styled(st.LastStatus, studyStyle(st.LastStatus))
 		}
-		t.Rows = append(t.Rows, []cliCell{styled(r.Key, cliStrong), plain(strings.Join(spec.Types, ",")), plain(strings.Join(hs, ",")),
-			plain(labWindow(spec.Development)), plain(labWindow(spec.Validation)), plain(fmt.Sprint(len(hist))), plain(fmt.Sprint(len(runs))), last})
+		t.Rows = append(t.Rows, []cliCell{styled(spec.ID, cliStrong), plain(strings.Join(spec.Types, ",")), plain(strings.Join(hs, ",")),
+			plain(labWindow(spec.Development)), plain(labWindow(spec.Validation)), plain(fmt.Sprint(st.Revisions)), plain(fmt.Sprint(st.Runs)), last})
 	}
 	t.write(a.stdout, useColor(a.stdout))
 	return nil
@@ -253,7 +148,11 @@ func labStudyShow(ctx context.Context, a *app, args []string) error {
 	if len(pos) != 1 {
 		return usageErrorf("usage: study show ID [-json]")
 	}
-	spec, rev, err := labLatestSpec(ctx, a, pos[0])
+	lab, err := a.lab()
+	if err != nil {
+		return err
+	}
+	spec, rev, err := lab.LatestStudy(ctx, pos[0])
 	if err != nil {
 		return err
 	}
@@ -285,24 +184,20 @@ func labStudyRun(ctx context.Context, a *app, args []string) error {
 			return usageErrorf("-at %q is not an RFC 3339 time such as 2026-11-03T10:00:00Z", *at)
 		}
 	}
-	spec, _, err := labLatestSpec(ctx, a, pos[0])
+	lab, err := a.lab()
+	if err != nil {
+		return err
+	}
+	spec, _, err := lab.LatestStudy(ctx, pos[0])
 	if err != nil {
 		return err
 	}
 	in.Spec = spec
-	earlier, err := labRuns(ctx, a, spec.ID)
+	earlier, err := lab.Runs(ctx, spec.ID)
 	if err != nil {
 		return err
 	}
-	reads, first := 0, time.Time{}
-	for _, r := range earlier {
-		if r.Report.Spec.Validation.From != "" || r.Report.Spec.Validation.To != "" {
-			if reads == 0 {
-				first = r.At
-			}
-			reads++
-		}
-	}
+	reads, first := research.ValidationReads(earlier)
 	db, err := a.store()
 	if err != nil {
 		return err
@@ -313,16 +208,8 @@ func labStudyRun(ctx context.Context, a *app, args []string) error {
 	}
 	kept := report
 	kept.Outcomes = nil
-	run := labRun{At: a.now().UTC(), Run: len(earlier) + 1, SpecHash: report.SpecHash, DataHash: report.DataHash, Manifest: report.Manifest, Prices: prices, Report: kept}
-	body, err := json.Marshal(run)
-	if err != nil {
-		return err
-	}
-	rs, err := a.records()
-	if err != nil {
-		return err
-	}
-	if _, _, err := rs.Append(ctx, store.RecordInput{Kind: recLabStudyRun, Key: spec.ID, Body: body}); err != nil {
+	run := research.Run{At: a.now().UTC(), Run: len(earlier) + 1, SpecHash: report.SpecHash, DataHash: report.DataHash, Manifest: report.Manifest, Prices: prices, Report: kept}
+	if err := lab.RecordRun(ctx, spec.ID, run); err != nil {
 		return err
 	}
 	if !*outcomes {
@@ -349,7 +236,11 @@ func labStudyLast(ctx context.Context, a *app, args []string) error {
 	if len(pos) != 1 {
 		return usageErrorf("usage: study last ID [-breakdown] [-json]")
 	}
-	runs, err := labRuns(ctx, a, pos[0])
+	lab, err := a.lab()
+	if err != nil {
+		return err
+	}
+	runs, err := lab.Runs(ctx, pos[0])
 	if err != nil {
 		return err
 	}

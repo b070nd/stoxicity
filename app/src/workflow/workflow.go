@@ -26,6 +26,7 @@ import (
 	"github.com/b070nd/stoxicity/app/src/ops"
 	"github.com/b070nd/stoxicity/app/src/order"
 	"github.com/b070nd/stoxicity/app/src/plan"
+	"github.com/b070nd/stoxicity/app/src/policy"
 	"github.com/b070nd/stoxicity/app/src/portfolio"
 	"github.com/b070nd/stoxicity/app/src/readiness"
 	"github.com/b070nd/stoxicity/app/src/report"
@@ -41,9 +42,25 @@ const (
 	confirmValidity = 15 * time.Minute
 )
 
+// Store is what a Source reads from the data store: the tenant's portfolios,
+// policies, orders and records, the instrument register, the distribution
+// observations, and the clock the store stamps what it records with. *store.DB
+// satisfies it.
+type Store interface {
+	Portfolios(tenantID string) store.Portfolios
+	Policies(tenantID string) policy.Store
+	Orders(tenantID string) store.Orders
+	Records(tenantID string) store.Records
+	DistributionObservations(ctx context.Context, securityIDs []string, knownAt time.Time) ([]distribution.Obs, error)
+	InstrumentsAsOf(ctx context.Context, t time.Time) (instrument.Set, error)
+	SetClock(now func() time.Time)
+}
+
+var _ Store = (*store.DB)(nil)
+
 // Source is a tenant's stores and a clock.
 type Source struct {
-	DB     *store.DB
+	DB     Store
 	Tenant string
 	Now    func() time.Time
 	// DataDir is the data folder. When it was restored from a backup and the

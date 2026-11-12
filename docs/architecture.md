@@ -31,7 +31,7 @@ app/
     eventfact/              one record per economic event with its figures, when it could first be acted on, and whether it was held then or rebuilt
     eventstudy/             what stocks did after a type of event: entry without look-ahead, costs, benchmarks, conditions, development and validation apart
     playbook/               versioned signal rules read against a study: buy or sell only with an evaluated validation group, otherwise watch; cannot place an order
-    research/               builds the event database from the store, runs studies and evaluates playbooks; the only one of the four that knows the store
+    research/               builds the event database from the store, runs studies and evaluates playbooks; keeps the study, run, playbook and saved-signal records (Lab); turns signals into replay proposals; the only one of the four that knows the store
     eventstrat/             the experimental earnings follow-through template: tests, paper-only proposals, time-stop and invalidation review
     perf/                   gain by component, time- and money-weighted return, drawdown, baselines with matched cash flows; missing prices make a figure unavailable
     heldout/                held-out news evaluation: corpus with licences, independent labels and disagreements, frozen thresholds, stage and group metrics with intervals
@@ -69,7 +69,7 @@ app/
     lens/laya/              laya-serve client, second scoring stage
     labels/                 keep/drop verdicts, the gold set; the queue of what to judge next
     eval/                   precision@k, Brier, calibration error, precision and recall
-    marketdata/             daily candles (Polygon/Massive)
+    marketdata/             daily candles (Polygon/Massive); the one place that puts a ticker's candles on one price basis with the splits known at a time (PutOnOneBasis, LoadSeries)
     fundamentals/           revenue, profit and shares of every filer (SEC XBRL frames)
     insider/                insider trades from Form 4 filings: keeper, 90-day figures
     summarize/              extractive summaries with sources

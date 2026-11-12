@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	"github.com/b070nd/stoxicity/app/src/marketdata"
 	"github.com/b070nd/stoxicity/app/src/playbook"
 	"github.com/b070nd/stoxicity/app/src/store"
+	"github.com/b070nd/stoxicity/app/src/walkfwd"
 )
 
 // labJSON is the output of an example command without its comment lines.
@@ -115,6 +117,28 @@ func TestLabStudyAndPlaybookEndToEnd(t *testing.T) {
 	r.wantOut(t, "WATCH", "saved 3 new signal(s)")
 	e.run(t, "playbook", "signals", "insider-buys-pb-v1", "-from", "2025-06-01", "-to", "2025-06-30", "-save").wantOut(t, "saved 0 new signal(s)")
 	e.run(t, "playbook", "history", "insider-buys-pb-v1").wantOut(t, "WATCH")
+
+	// The study found nothing evaluated, so every signal is a watch: the replay
+	// keeps them as decisions not to trade and reads no bars for them.
+	barsOut := filepath.Join(e.dir, "replay-bars.csv")
+	fp := []string{"walkfwd", "from-playbook", "-trial", "t1", "-playbook", "insider-buys-pb-v1", "-from", "2025-06-01", "-to", "2025-06-30", "-fund", "SPY", "-bars-out", barsOut}
+	r = e.run(t, fp...)
+	r.wantCode(t, exitOK)
+	r.wantErr(t, "3 signal(s)", "0 trade(s)", "3 decision(s) not to trade", "0 bar(s)", "No trial was registered")
+	var proposals []walkfwd.Proposal
+	if err := json.Unmarshal([]byte(r.out), &proposals); err != nil || len(proposals) != 3 {
+		t.Fatalf("proposals: %v\n%s", err, r.out)
+	}
+	for _, p := range proposals {
+		if p.Trial != "t1" || p.Qty.Sign() != 0 || p.Decided != p.KnownOn || !strings.HasPrefix(p.ID, "sig_") {
+			t.Errorf("proposal = %+v", p)
+		}
+	}
+	if body, err := os.ReadFile(barsOut); err != nil || string(body) != "security,day,open,high,low,close,volume,currency\n" {
+		t.Errorf("bars file = %q, %v", body, err)
+	}
+	e.run(t, "walkfwd", "from-playbook", "-trial", "t1").wantCode(t, exitUsage)
+	e.run(t, "walkfwd", "from-playbook", "-trial", "t1", "-playbook", "nope", "-bars-out", barsOut).wantCode(t, exitError)
 
 	db, err = store.Open(filepath.Join(e.dir, "data"))
 	if err != nil {

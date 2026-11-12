@@ -6,12 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/b070nd/stoxicity/app/src/eventstrat"
 	"github.com/b070nd/stoxicity/app/src/money"
+	"github.com/b070nd/stoxicity/app/src/research"
 	"github.com/b070nd/stoxicity/app/src/store"
 	"github.com/b070nd/stoxicity/app/src/walkfwd"
 )
@@ -27,7 +29,7 @@ const (
 // cmdWalkfwd replays proposals against finished bars under preregistered criteria.
 func cmdWalkfwd(ctx context.Context, a *app, args []string) error {
 	if len(args) == 0 {
-		return usageErrorf("expected: example | register | splits | criteria | freeze | run | status | from-events")
+		return usageErrorf("expected: example | register | splits | criteria | freeze | run | status | from-events | from-playbook")
 	}
 	switch args[0] {
 	case "example":
@@ -58,6 +60,8 @@ func cmdWalkfwd(ctx context.Context, a *app, args []string) error {
 		return wfStatus(ctx, a, args[1:])
 	case "from-events":
 		return wfFromEvents(ctx, a, args[1:])
+	case "from-playbook":
+		return wfFromPlaybook(ctx, a, args[1:])
 	}
 	return usageErrorf("unknown subcommand %q", args[0])
 }
@@ -505,4 +509,86 @@ func wfFromEvents(ctx context.Context, a *app, args []string) error {
 		out = append(out, w)
 	}
 	return writeJSON(a.stdout, out)
+}
+
+// maxSkippedShown is how many skipped buys from-playbook names on stderr; the
+// rest are counted.
+const maxSkippedShown = 20
+
+// wfFromPlaybook turns the signals of a registered playbook into replay
+// proposals read from the database: the proposals go to stdout in the shape
+// `walkfwd run -proposals` reads, and the bars they need go to a CSV file in
+// the shape of `-bars`. It registers no trial and runs nothing.
+func wfFromPlaybook(ctx context.Context, a *app, args []string) error {
+	fs := newFlags("walkfwd from-playbook")
+	trial := fs.String("trial", "", "the trial to attribute the proposals to")
+	pb := fs.String("playbook", "", "the registered playbook")
+	days := fs.Int("days", 365, "events that became available in the last N days")
+	from := fs.String("from", "", "first day, YYYY-MM-DD (with -to)")
+	to := fs.String("to", "", "last day, YYYY-MM-DD, inclusive (with -from)")
+	cur := fs.String("currency", "", "the currency of prices whose bars state none")
+	fund := fs.String("fund", "", "the diversified fund to compare with, whose bars are written too")
+	barsOut := fs.String("bars-out", "", "where to write the bars CSV")
+	rest, err := parseFlags(fs, args)
+	if err != nil {
+		return err
+	}
+	if len(rest) > 0 || *trial == "" || *pb == "" || *barsOut == "" {
+		return usageErrorf("usage: walkfwd from-playbook -trial ID -playbook PB [-days N | -from DAY -to DAY] [-currency C] [-fund SEC] -bars-out FILE")
+	}
+	start, end, err := signalWindow(a, fs, *days, *from, *to)
+	if err != nil {
+		return err
+	}
+	lab, err := a.lab()
+	if err != nil {
+		return err
+	}
+	p, report, signals, err := playbookSignals(ctx, a, lab, *pb, start, end)
+	if err != nil {
+		return err
+	}
+	db, err := a.store()
+	if err != nil {
+		return err
+	}
+	rep, err := research.ReplayProposals(ctx, db, research.ReplayInput{Playbook: p, Signals: signals, Spec: report.Spec, Trial: *trial, Fund: *fund, Currency: *cur})
+	if err != nil {
+		return err
+	}
+	var csv strings.Builder
+	csv.WriteString("security,day,open,high,low,close,volume,currency\n")
+	secs := map[string]bool{}
+	for _, b := range rep.Bars {
+		secs[b.Security] = true
+		fmt.Fprintf(&csv, "%s,%s,%s,%s,%s,%s,%d,%s\n", b.Security, b.Day, b.Open, b.High, b.Low, b.Close, b.Volume, b.Currency)
+	}
+	if err := os.WriteFile(*barsOut, []byte(csv.String()), 0o644); err != nil {
+		return err
+	}
+	if err := writeJSON(a.stdout, rep.Proposals); err != nil {
+		return err
+	}
+	fmt.Fprintf(a.stderr, "%d signal(s) of playbook %s: %d trade(s), %d decision(s) not to trade (watch or sell), %d buy(s) skipped as not tradable.\n",
+		len(rep.Proposals), p.ID, rep.Trades, rep.NoTrades, len(rep.Skipped))
+	for i, s := range rep.Skipped {
+		if i == maxSkippedShown {
+			fmt.Fprintf(a.stderr, "  and %d more\n", len(rep.Skipped)-i)
+			break
+		}
+		fmt.Fprintf(a.stderr, "  skipped %s (%s): %s\n", s.Signal, s.Security, s.Reason)
+	}
+	fmt.Fprintf(a.stderr, "%d bar(s) of %d security(ies) written to %s", len(rep.Bars), len(secs), *barsOut)
+	if rep.From != "" {
+		fmt.Fprintf(a.stderr, ", read for %s to %s", rep.From, rep.To)
+	}
+	fmt.Fprintln(a.stderr, ".")
+	if rep.DroppedBars > 0 {
+		fmt.Fprintf(a.stderr, "%d bar(s) were left out because they are not a valid bar.\n", rep.DroppedBars)
+	}
+	if rep.FundProblem != "" {
+		fmt.Fprintf(a.stderr, "no fund bars: %s\n", rep.FundProblem)
+	}
+	fmt.Fprintln(a.stderr, "The bars are on the price basis of the newest bar (split-consistent), not as traded. No trial was registered and nothing was run: register the trial, then `walkfwd run`.")
+	return nil
 }

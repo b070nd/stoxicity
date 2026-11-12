@@ -50,7 +50,7 @@ func (c Completeness) Percent() float64 {
 }
 
 // Measure reads the stored days of [from, to] against the selected forms.
-func Measure(ctx context.Context, db *store.DB, from, to time.Time, forms []string) (Completeness, error) {
+func Measure(ctx context.Context, db Index, from, to time.Time, forms []string) (Completeness, error) {
 	c := Completeness{From: from.Format(time.DateOnly), To: to.Format(time.DateOnly)}
 	stored, err := db.IndexDays(ctx, c.From, c.To)
 	if err != nil {

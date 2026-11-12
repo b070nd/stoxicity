@@ -53,6 +53,8 @@ walkfwd freeze
 walkfwd run -trial ID -period test -manifest m.json -proposals p.json -bars bars.csv [-dists d.json] [-delist x.json] [-config c.json] [-fees f.json]
 walkfwd status
 walkfwd from-events -trial ID           saved event-sleeve proposals as replay proposals
+walkfwd from-playbook -trial ID -playbook PB [-days N | -from DAY -to DAY] [-currency C] [-fund SEC] -bars-out FILE
+                                        playbook signals as replay proposals, and the bars they need as a CSV
 ```
 
 ## What is not covered
@@ -60,8 +62,27 @@ walkfwd from-events -trial ID           saved event-sleeve proposals as replay p
 * The strategies themselves are not re-run over history here. This package replays the **proposals** they made (the
   event sleeve's own saved proposals, or a file). Re-running the core strategy as of past dates needs point-in-time
   scorecards, prices and fees for those dates, which this installation does not hold.
-* Bars come from files. A holiday calendar is not known, so a gap larger than the tolerance (default 4 weekdays)
+* Bars come from files. `from-playbook` writes such a file from the stored daily bars, on the split-consistent basis of the newest bar (not the as-traded price), so the replay can be fed from the database; `run` itself is unchanged. A holiday calendar is not known, so a gap larger than the tolerance (default 4 weekdays)
   marks missing history.
 * The criteria and every number in the default configuration are arbitrary starting points that you must approve.
 * Nothing here turns a result into permission to trade: tiers and readiness are separate, and `evaluated` never
   raises one.
+
+## Replaying a playbook
+
+`from-playbook` makes the proposals for the signals of a playbook in a window. A rule must carry a `trade`
+stanza for this (see [research-engine.md](research-engine.md)): the notional per trade, how far above the reference
+close the limit lies and how far below it the invalidation lies. The numbers are yours and arbitrary.
+
+* A **buy** becomes a sized proposal: the limit is the reference close times one plus the limit offset, the quantity
+  is the whole shares the notional buys at the limit. The reference close is the last bar on or before the day the
+  information was known; the entry is the first session after that day, so no bar from the entry session or later is
+  read.
+* A **watch** or **sell** signal becomes a decision not to trade (quantity 0), kept so that coverage is honest. A sell
+  means sell or avoid, never a short.
+* A buy that cannot be sized (no bars, bars not on one basis, no earlier bar, a stale close, an unknown currency, a
+  notional that buys no whole share) is also quantity 0 and is listed with its reason on stderr, never dropped.
+
+The command registers no trial and runs nothing; the trial, the frozen splits and `walkfwd run` stay as they are.
+The event sleeve (`stoxicity event`) is not replaced: it sizes under the policy and carries the paper-only guard
+and the tests of its template, which a rule file does not.
