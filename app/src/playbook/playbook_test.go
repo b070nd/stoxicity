@@ -1,6 +1,7 @@
 package playbook
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -142,5 +143,67 @@ func TestRuleNarrowerThanTheStudyStaysAtWatch(t *testing.T) {
 	}
 	if !failed {
 		t.Errorf("the population test did not fail: %+v", got[0].Tests)
+	}
+}
+
+func TestTradeValidate(t *testing.T) {
+	tests := []struct {
+		name   string
+		action Action
+		trade  Trade
+		want   string // part of the error; empty when it is valid
+	}{
+		{"limit and stop", Buy, Trade{Notional: "1000", LimitOffset: 0.005, InvalidationOffset: 0.08}, ""},
+		{"no stop, limit at the close", Buy, Trade{Notional: "250.50"}, ""},
+		{"no notional", Buy, Trade{LimitOffset: 0.01}, "notional"},
+		{"zero notional", Buy, Trade{Notional: "0.00"}, "notional"},
+		{"negative notional", Buy, Trade{Notional: "-5"}, "notional"},
+		{"notional with an exponent", Buy, Trade{Notional: "1e3"}, "notional"},
+		{"notional ending in a point", Buy, Trade{Notional: "10."}, "notional"},
+		{"limit below the close", Buy, Trade{Notional: "1000", LimitOffset: -0.01}, "limit_offset"},
+		{"limit far above the close", Buy, Trade{Notional: "1000", LimitOffset: 0.5}, "limit_offset"},
+		{"stop above the close", Buy, Trade{Notional: "1000", InvalidationOffset: -0.1}, "invalidation_offset"},
+		{"stop below any price", Buy, Trade{Notional: "1000", InvalidationOffset: 1}, "invalidation_offset"},
+		{"a sell is not sized", Sell, Trade{Notional: "1000"}, "never a short"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			p := testPlaybook()
+			p.Rules[0].Action, p.Rules[0].Trade = tc.action, &tc.trade
+			if tc.action == Sell {
+				p.Rules[0].Evidence.Direction = "down"
+			}
+			err := p.Validate()
+			switch {
+			case tc.want == "" && err != nil:
+				t.Fatalf("refused: %v", err)
+			case tc.want != "" && (err == nil || !strings.Contains(err.Error(), tc.want)):
+				t.Fatalf("error %v does not mention %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestTradeLeavesTheHashOfAPlaybookWithoutOne(t *testing.T) {
+	p := testPlaybook()
+	// The hash and the encoding of this playbook as they were before a rule
+	// could carry a trade.
+	const hash = "7b7e3659fe14c07d18988f0385511ecd72dedcd0aff9a582d5644d18bf20fab4"
+	const body = `{"id":"pb","study":"st","rules":[{"id":"r1","types":["earnings"],"when":[{"field":"number:surprise","op":"gt","value":0.05}],"evidence":{"sessions":5,"min_events":30,"direction":"up","min_edge":0.01},"action":"buy"}]}`
+	if got := p.Hash(); got != hash {
+		t.Fatalf("hash %s, was %s before the trade stanza existed", got, hash)
+	}
+	if b, _ := json.Marshal(p); string(b) != body {
+		t.Fatalf("encoding changed:\n%s", b)
+	}
+	with := testPlaybook()
+	with.Rules[0].Trade = &Trade{Notional: "1000", LimitOffset: 0.005}
+	if with.Hash() == hash {
+		t.Fatal("a trade stanza must change the hash: its numbers are part of the rules")
+	}
+	other := testPlaybook()
+	other.Rules[0].Trade = &Trade{Notional: "2000", LimitOffset: 0.005}
+	if with.Hash() == other.Hash() {
+		t.Fatal("two notionals gave one hash")
 	}
 }

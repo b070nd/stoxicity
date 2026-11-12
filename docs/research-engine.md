@@ -236,7 +236,8 @@ that is the correct answer.
   session, even when the filing appeared before the open.
 - Company size is unknown to the study: market capitalisation is not joined
   yet, so the size bucket is `unknown`.
-- Bars are keyed by ticker. A ticker change splits a history.
+- Bars are keyed by ticker. A ticker change splits a history. Nothing stored says which tickers are one security, so no
+  series follows a rename.
 - The correction for the number of groups covers one run of one study. Studies
   registered one after another on the same history are counted and shown, not
   corrected for.
@@ -263,3 +264,18 @@ that is the correct answer.
   0 at the risk gate.
 - Tests: `eventfact`, `eventstudy`, `playbook`, `research`, the store's
   `eventfacts_test.go` and `cmd_lab_test.go` use invented data only.
+
+## Where the records and the bars live
+
+- The study, run, playbook and saved-signal records are kept by `research.Lab` over a small `Records` interface; the
+  commands only read flags, call it and print, so the terminal interface can use the same calls. The stored bodies
+  are the same as before.
+- Daily bars on one price basis come from `marketdata.LoadSeries` (`PutOnOneBasis` for the rule): raw candles are put
+  on the basis of the newest, candles of unknown basis with a later split are left out with the reason.
+
+## Replaying a rule as a traded strategy
+
+A rule may carry an optional `trade` stanza (only a buy may): `notional` (a plain positive decimal per trade),
+`limit_offset` (0 to 0.2 above the reference close) and `invalidation_offset` (0 for no stop, below 1). It is part of
+the playbook's hash only when present, so earlier playbooks keep theirs. `walkfwd from-playbook` turns signals into
+proposals and bars for the replay; see [walkfwd.md](walkfwd.md).

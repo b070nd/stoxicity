@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/b070nd/stoxicity/app/src/eventstudy"
+	"github.com/b070nd/stoxicity/app/src/money"
 )
 
 // Version names the signal rules.
@@ -52,6 +53,45 @@ type Evidence struct {
 	MinEdge   float64 `json:"min_edge"`  // how far beyond zero the bound of the mean must lie, as a return (0.01 is 1%)
 }
 
+// maxLimitOffset is the most a limit may lie above the last close: a limit
+// further away asks to buy at a price the market has already left.
+const maxLimitOffset = 0.2
+
+// Trade states how a buy rule is replayed as a traded strategy: how much is
+// put in, and the prices of the order relative to the last close before the
+// entry. Every number is the author's own, is part of the rule and so of the
+// playbook's hash, and means nothing to the research: the evidence tests above
+// never read it. A rule without a trade can be read as a signal but not
+// replayed with fills.
+type Trade struct {
+	// Notional is the amount to put into one trade, in the currency of the bars,
+	// as a plain decimal such as "1000" or "250.50".
+	Notional string `json:"notional"`
+	// LimitOffset is how far above the last close the buy limit lies, as a
+	// fraction (0.005 is 0.5%); 0 puts the limit at the close, and it may not
+	// exceed 0.2.
+	LimitOffset float64 `json:"limit_offset"`
+	// InvalidationOffset is how far below the last close the stop lies, as a
+	// fraction (0.08 is 8%), strictly between 0 and 1; 0 sets no stop.
+	InvalidationOffset float64 `json:"invalidation_offset"`
+}
+
+func (t Trade) validate(r Rule) error {
+	if r.Action != Buy {
+		return fmt.Errorf("playbook: rule %s sells and states a trade: a sell is never a short, so it is not sized", r.ID)
+	}
+	if n, err := money.ParseDecimal(t.Notional); err != nil || n.Sign() <= 0 {
+		return fmt.Errorf("playbook: rule %s: trade notional %q is not a positive plain decimal such as 1000 or 250.50", r.ID, t.Notional)
+	}
+	if !(t.LimitOffset >= 0 && t.LimitOffset <= maxLimitOffset) {
+		return fmt.Errorf("playbook: rule %s: trade limit_offset %v is not between 0 and %v", r.ID, t.LimitOffset, maxLimitOffset)
+	}
+	if !(t.InvalidationOffset >= 0 && t.InvalidationOffset < 1) {
+		return fmt.Errorf("playbook: rule %s: trade invalidation_offset %v is not from 0 (no stop) up to, but not including, 1", r.ID, t.InvalidationOffset)
+	}
+	return nil
+}
+
 // Rule is one predefined rule: which events it reads, which conditions the
 // event must meet, what the research must show, and what it asks for.
 type Rule struct {
@@ -60,7 +100,8 @@ type Rule struct {
 	Types    []string               `json:"types"`
 	When     []eventstudy.Condition `json:"when,omitempty"`
 	Evidence Evidence               `json:"evidence"`
-	Action   Action                 `json:"action"` // buy or sell; watch is what a rule falls back to, not what it asks for
+	Action   Action                 `json:"action"`          // buy or sell; watch is what a rule falls back to, not what it asks for
+	Trade    *Trade                 `json:"trade,omitempty"` // how a buy is replayed as a traded strategy; absent, the rule cannot be replayed
 }
 
 // Playbook is a named, versioned set of rules that reads the report of one
@@ -126,6 +167,9 @@ func (r Rule) validate() error {
 		return fmt.Errorf("playbook: rule %s buys but reads a direction of %s", r.ID, e.Direction)
 	case r.Action == Sell && e.Direction != "down":
 		return fmt.Errorf("playbook: rule %s sells but reads a direction of %s", r.ID, e.Direction)
+	}
+	if r.Trade != nil {
+		return r.Trade.validate(r)
 	}
 	return nil
 }

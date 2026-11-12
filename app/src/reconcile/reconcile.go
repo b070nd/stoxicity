@@ -50,9 +50,44 @@ const (
 	LateDays = 3
 )
 
+// Index is what Measure reads: the stored state of the filing days.
+type Index interface {
+	IndexDays(ctx context.Context, from string, to ...string) (map[string]store.IndexDay, error)
+}
+
+// MetaStore is what Enrich needs: it stores the metadata it reads.
+type MetaStore interface {
+	PutFilingMeta(ctx context.Context, metas []store.FilingMeta, at time.Time) (int, error)
+}
+
+// RepairStore is what Repair needs: the filings missing from the article
+// store, their metadata, and the backfill marks it writes.
+type RepairStore interface {
+	MissingFilings(ctx context.Context, from, to string) ([]store.FilingRef, error)
+	FilingMetas(ctx context.Context, accessions []string) (map[string]store.FilingMeta, error)
+	PutBackfill(ctx context.Context, bs []store.Backfill, at time.Time) error
+}
+
+// Store is everything a reconcile run reads and writes: the day index, the
+// quarterly index, the run log, and what Enrich and Repair need. *store.DB
+// satisfies it.
+type Store interface {
+	Index
+	MetaStore
+	RepairStore
+	LastResolvedDay(ctx context.Context) (string, bool, error)
+	UnresolvedDays(ctx context.Context, from, to string) ([]store.IndexDay, error)
+	StartReconcileRun(ctx context.Context, from, to, mode string, total int, at time.Time) (int64, error)
+	UpdateReconcileRun(ctx context.Context, id int64, done int, note string, finished time.Time) error
+	PutFilingDay(ctx context.Context, r store.DayResult, at time.Time) (added int, err error)
+	PutFilingQuarter(ctx context.Context, q store.QuarterRow, at time.Time) error
+}
+
+var _ Store = (*store.DB)(nil)
+
 // Config carries what a run works with.
 type Config struct {
-	DB      *store.DB
+	DB      Store
 	Indexer edgar.Indexer
 	Forms   []string
 	Now     func() time.Time
@@ -467,7 +502,7 @@ func (u SubmissionsURL) fileURL(name string) string {
 // accessions to resolve. Older filings, kept by the record in extra files, are
 // read only for accessions that the recent list does not hold, and only the
 // files whose filing days could hold them.
-func Enrich(ctx context.Context, db *store.DB, client httpx.Client, urls SubmissionsURL, want map[string][]string, filed map[string]string, now time.Time, maxRequests int) (EnrichReport, error) {
+func Enrich(ctx context.Context, db MetaStore, client httpx.Client, urls SubmissionsURL, want map[string][]string, filed map[string]string, now time.Time, maxRequests int) (EnrichReport, error) {
 	var rep EnrichReport
 	ciks := make([]string, 0, len(want))
 	for c := range want {
@@ -563,7 +598,7 @@ type RepairReport struct {
 // was not news when this system stored it, so alerts do not treat it as new. The
 // article is dated to the acceptance time when the filing's metadata has one;
 // otherwise to the start of its filing day, and that precision is recorded.
-func Repair(ctx context.Context, db *store.DB, ing Ingester, cfg edgar.Config, src model.Source, from, to string, runID int64, now time.Time) (RepairReport, error) {
+func Repair(ctx context.Context, db RepairStore, ing Ingester, cfg edgar.Config, src model.Source, from, to string, runID int64, now time.Time) (RepairReport, error) {
 	var rep RepairReport
 	missing, err := db.MissingFilings(ctx, from, to)
 	if err != nil {

@@ -178,25 +178,12 @@ func Compare(prev, cur Candle, splits []Split, cov SplitCoverage) Move {
 	if missed, ok := MissingWeekdays(prev.Day, cur.Day); !ok || missed > MaxMissingWeekdays {
 		return Move{State: MoveGap, Note: "sessions missing between the two closes"}
 	}
-	var between, after []Split
-	for _, s := range splits {
-		if !SameTicker(s.Ticker, cur.Ticker) && !SameTicker(s.Ticker, prev.Ticker) {
-			continue
-		}
-		if s.Day > prev.Day {
-			after = append(after, s)
-			if s.Day <= cur.Day {
-				between = append(between, s)
-			}
-		}
-	}
+	after := splitsBetween(splits, prev.Day, "", cur.Ticker, prev.Ticker)
+	between := splitsBetween(after, prev.Day, cur.Day, cur.Ticker, prev.Ticker)
 	if !(prev.Raw && cur.Raw) && len(after) > 0 {
 		return Move{State: MoveUnresolved, Note: fmt.Sprintf("candle of unknown basis and %s", after[0])}
 	}
-	ratio := 1.0
-	for _, s := range between {
-		ratio *= s.Ratio()
-	}
+	ratio := splitFactor(between, prev.Day)
 	base := prev.Close / ratio
 	m := Move{Change: cur.Close/base - 1, State: MoveOK}
 	if len(between) > 0 {

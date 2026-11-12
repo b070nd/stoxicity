@@ -2,28 +2,15 @@ package main
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
-	"sort"
+	"time"
 
+	"github.com/b070nd/stoxicity/app/src/eventstudy"
 	"github.com/b070nd/stoxicity/app/src/order"
 	"github.com/b070nd/stoxicity/app/src/playbook"
 	"github.com/b070nd/stoxicity/app/src/research"
-	"github.com/b070nd/stoxicity/app/src/store"
 )
-
-const (
-	recLabPlaybook = "playbook.def"
-	recLabSignal   = "playbook.signal"
-)
-
-// labSaved is a signal as kept, with the answer of the risk layer.
-type labSaved struct {
-	Signal   playbook.Signal   `json:"signal"`
-	Decision playbook.Decision `json:"decision"`
-}
 
 // labGate adapts the tier gate to the risk layer of the playbook. It approves
 // the drafting of an order of a kind; it never places, drafts or confirms one.
@@ -89,11 +76,14 @@ func cmdPlaybook(ctx context.Context, a *app, args []string) error {
 func labPlaybookExample(a *app) error {
 	fmt.Fprintln(a.stdout, "# playbook.json: a rule may only test what its study also selected on.")
 	fmt.Fprintln(a.stdout, "# buy or sell is only given when the study has an evaluated validation group; otherwise the answer is watch.")
+	fmt.Fprintln(a.stdout, "# trade (a buy only) is what `walkfwd from-playbook` replays with fills: the amount, and how far the limit and the stop lie from the last close.")
+	fmt.Fprintln(a.stdout, "# Its numbers are arbitrary starting points to review, not findings; they are part of the rule and of its hash.")
 	return writeJSON(a.stdout, playbook.Playbook{
 		ID: "insider-buys-pb-v1", Study: "insider-buys-v1",
 		Rules: []playbook.Rule{{
 			ID: "buy-insider-buys", Types: []string{"insider_buy"}, Action: playbook.Buy,
 			Evidence: playbook.Evidence{Sessions: 20, MinEvents: 50, Direction: "up", MinEdge: 0.01},
+			Trade:    &playbook.Trade{Notional: "1000", LimitOffset: 0.005, InvalidationOffset: 0.08},
 		}},
 	})
 }
@@ -123,55 +113,30 @@ func labPlaybookFile(ctx context.Context, a *app, args []string, register bool) 
 		fmt.Fprintf(a.stdout, "playbook %s is valid (hash %s).\n", p.ID, p.Hash()[:12])
 		return nil
 	}
-	body, err := json.Marshal(p)
+	lab, err := a.lab()
 	if err != nil {
 		return err
 	}
-	rev, existed, unchanged, err := labRegister(ctx, a, recLabPlaybook, p.ID, body)
+	reg, err := lab.RegisterPlaybook(ctx, p)
 	if err != nil {
 		return err
 	}
 	switch {
-	case unchanged:
-		fmt.Fprintf(a.stdout, "playbook %s is already registered with this content (revision %d, hash %s).\n", p.ID, rev, p.Hash()[:12])
-	case existed:
-		fmt.Fprintf(a.stdout, "playbook %s registered as revision %d, a new version of the rules (hash %s).\n", p.ID, rev, p.Hash()[:12])
+	case reg.Unchanged:
+		fmt.Fprintf(a.stdout, "playbook %s is already registered with this content (revision %d, hash %s).\n", p.ID, reg.Revision, p.Hash()[:12])
+	case reg.Existed:
+		fmt.Fprintf(a.stdout, "playbook %s registered as revision %d, a new version of the rules (hash %s).\n", p.ID, reg.Revision, p.Hash()[:12])
 	default:
-		fmt.Fprintf(a.stdout, "playbook %s registered as revision %d (hash %s).\n", p.ID, rev, p.Hash()[:12])
+		fmt.Fprintf(a.stdout, "playbook %s registered as revision %d (hash %s).\n", p.ID, reg.Revision, p.Hash()[:12])
 	}
-	rs, err := a.records()
+	known, err := lab.HasStudy(ctx, p.Study)
 	if err != nil {
 		return err
 	}
-	if _, err := rs.Latest(ctx, recLabStudySpec, p.Study); errors.Is(err, store.ErrNoRecord) {
+	if !known {
 		fmt.Fprintf(a.stdout, "study %s is not registered yet.\n", p.Study)
-	} else if err != nil {
-		return err
 	}
 	return nil
-}
-
-func labLatestPlaybook(ctx context.Context, a *app, id string) (playbook.Playbook, int, error) {
-	rs, err := a.records()
-	if err != nil {
-		return playbook.Playbook{}, 0, err
-	}
-	rec, err := rs.Latest(ctx, recLabPlaybook, id)
-	if errors.Is(err, store.ErrNoRecord) {
-		return playbook.Playbook{}, 0, fmt.Errorf("no playbook %s: register it first (playbook register -file F)", id)
-	}
-	if err != nil {
-		return playbook.Playbook{}, 0, err
-	}
-	var p playbook.Playbook
-	if err := json.Unmarshal(rec.Body, &p); err != nil {
-		return playbook.Playbook{}, 0, fmt.Errorf("playbook %s does not decode: %w", id, err)
-	}
-	hist, err := rs.History(ctx, recLabPlaybook, id)
-	if err != nil {
-		return playbook.Playbook{}, 0, err
-	}
-	return p, len(hist), nil
 }
 
 func labPlaybookList(ctx context.Context, a *app, args []string) error {
@@ -182,29 +147,22 @@ func labPlaybookList(ctx context.Context, a *app, args []string) error {
 	if len(rest) > 0 {
 		return usageErrorf("playbook list takes no arguments, got %q", rest[0])
 	}
-	rs, err := a.records()
+	lab, err := a.lab()
 	if err != nil {
 		return err
 	}
-	cur, err := rs.Current(ctx, recLabPlaybook, "")
+	pbs, err := lab.Playbooks(ctx)
 	if err != nil {
 		return err
 	}
-	if len(cur) == 0 {
+	if len(pbs) == 0 {
 		fmt.Fprintln(a.stdout, "no playbook is registered (playbook example, playbook register).")
 		return nil
 	}
 	t := cliTable{Header: []string{"playbook", "study", "rules", "revisions", "hash"}, Right: []bool{2: true, 3: true}}
-	for _, r := range cur {
-		var p playbook.Playbook
-		if err := json.Unmarshal(r.Body, &p); err != nil {
-			return fmt.Errorf("playbook %s does not decode: %w", r.Key, err)
-		}
-		hist, err := rs.History(ctx, recLabPlaybook, r.Key)
-		if err != nil {
-			return err
-		}
-		t.Rows = append(t.Rows, []cliCell{styled(p.ID, cliStrong), plain(p.Study), plain(fmt.Sprint(len(p.Rules))), plain(fmt.Sprint(len(hist))), plain(p.Hash()[:12])})
+	for _, s := range pbs {
+		p := s.Playbook
+		t.Rows = append(t.Rows, []cliCell{styled(p.ID, cliStrong), plain(p.Study), plain(fmt.Sprint(len(p.Rules))), plain(fmt.Sprint(s.Revisions)), plain(p.Hash()[:12])})
 	}
 	t.write(a.stdout, useColor(a.stdout))
 	return nil
@@ -220,7 +178,11 @@ func labPlaybookShow(ctx context.Context, a *app, args []string) error {
 	if len(pos) != 1 {
 		return usageErrorf("usage: playbook show ID [-json]")
 	}
-	p, rev, err := labLatestPlaybook(ctx, a, pos[0])
+	lab, err := a.lab()
+	if err != nil {
+		return err
+	}
+	p, rev, err := lab.LatestPlaybook(ctx, pos[0])
 	if err != nil {
 		return err
 	}
@@ -244,44 +206,15 @@ func labPlaybookSignals(ctx context.Context, a *app, args []string) error {
 	if len(pos) != 1 {
 		return usageErrorf("usage: playbook signals ID [-days 7 | -from DAY -to DAY] [-save] [-json]")
 	}
-	daysSet := false
-	fs.Visit(func(f *flag.Flag) { daysSet = daysSet || f.Name == "days" })
-	now := a.now()
-	start, end := now.AddDate(0, 0, -*days), now
-	switch {
-	case *from != "" || *to != "":
-		if *from == "" || *to == "" || daysSet {
-			return usageErrorf("give either -days or both -from and -to")
-		}
-		if start, err = parseDay(*from, a.location()); err != nil {
-			return usageErrorf("-from: %v", err)
-		}
-		last, err := parseDay(*to, a.location())
-		if err != nil {
-			return usageErrorf("-to: %v", err)
-		}
-		if end = labEndOfDay(last); end.Before(start) {
-			return usageErrorf("-to is before -from")
-		}
-	case *days < 1:
-		return usageErrorf("-days must be at least 1")
-	}
-	p, _, err := labLatestPlaybook(ctx, a, pos[0])
+	start, end, err := signalWindow(a, fs, *days, *from, *to)
 	if err != nil {
 		return err
 	}
-	runs, err := labRuns(ctx, a, p.Study)
+	lab, err := a.lab()
 	if err != nil {
 		return err
 	}
-	if len(runs) == 0 {
-		return fmt.Errorf("study %s has not been run: run `stoxicity study run %s` first", p.Study, p.Study)
-	}
-	db, err := a.store()
-	if err != nil {
-		return err
-	}
-	signals, err := research.Signals(ctx, db, research.SignalInput{Playbook: p, Report: runs[len(runs)-1].Report, From: start, To: end, Sectors: a.sectorMap()})
+	_, _, signals, err := playbookSignals(ctx, a, lab, pos[0], start, end)
 	if err != nil {
 		return err
 	}
@@ -293,22 +226,12 @@ func labPlaybookSignals(ctx context.Context, a *app, args []string) error {
 	}
 	fresh := 0
 	if *save {
-		rs, err := a.records()
-		if err != nil {
-			return err
-		}
-		in := make([]store.RecordInput, 0, len(signals))
+		kept := make([]research.SavedSignal, 0, len(signals))
 		for _, s := range signals {
-			body, err := json.Marshal(labSaved{Signal: s, Decision: decisions[s.ID]})
-			if err != nil {
-				return err
-			}
-			in = append(in, store.RecordInput{Kind: recLabSignal, Key: s.ID, Body: body})
+			kept = append(kept, research.SavedSignal{Signal: s, Decision: decisions[s.ID]})
 		}
-		if len(in) > 0 {
-			if _, fresh, err = rs.Append(ctx, in...); err != nil {
-				return err
-			}
+		if fresh, err = lab.SaveSignals(ctx, kept); err != nil {
+			return err
 		}
 	}
 	if *asJSON {
@@ -325,6 +248,60 @@ func labPlaybookSignals(ctx context.Context, a *app, args []string) error {
 	return nil
 }
 
+// signalWindow reads the -days, -from and -to flags of a command that computes
+// signals: the last N days up to now, or the days from -from to -to inclusive.
+// It takes the flag set, to tell whether -days was given, and the three values
+// after parsing.
+func signalWindow(a *app, fs *flag.FlagSet, days int, from, to string) (start, end time.Time, err error) {
+	daysSet := false
+	fs.Visit(func(f *flag.Flag) { daysSet = daysSet || f.Name == "days" })
+	now := a.now()
+	start, end = now.AddDate(0, 0, -days), now
+	switch {
+	case from != "" || to != "":
+		if from == "" || to == "" || daysSet {
+			return start, end, usageErrorf("give either -days or both -from and -to")
+		}
+		if start, err = parseDay(from, a.location()); err != nil {
+			return start, end, usageErrorf("-from: %v", err)
+		}
+		last, err := parseDay(to, a.location())
+		if err != nil {
+			return start, end, usageErrorf("-to: %v", err)
+		}
+		if end = labEndOfDay(last); end.Before(start) {
+			return start, end, usageErrorf("-to is before -from")
+		}
+	case days < 1:
+		return start, end, usageErrorf("-days must be at least 1")
+	}
+	return start, end, nil
+}
+
+// playbookSignals evaluates a registered playbook on the events that became
+// available in the window, against the newest run of the study it reads. It
+// returns the playbook, the report the signals read, and the signals.
+func playbookSignals(ctx context.Context, a *app, lab research.Lab, id string, start, end time.Time) (playbook.Playbook, eventstudy.Report, []playbook.Signal, error) {
+	p, _, err := lab.LatestPlaybook(ctx, id)
+	if err != nil {
+		return p, eventstudy.Report{}, nil, err
+	}
+	runs, err := lab.Runs(ctx, p.Study)
+	if err != nil {
+		return p, eventstudy.Report{}, nil, err
+	}
+	if len(runs) == 0 {
+		return p, eventstudy.Report{}, nil, fmt.Errorf("study %s has not been run: run `stoxicity study run %s` first", p.Study, p.Study)
+	}
+	report := runs[len(runs)-1].Report
+	db, err := a.store()
+	if err != nil {
+		return p, report, nil, err
+	}
+	signals, err := research.Signals(ctx, db, research.SignalInput{Playbook: p, Report: report, From: start, To: end, Sectors: a.sectorMap()})
+	return p, report, signals, err
+}
+
 func labPlaybookHistory(ctx context.Context, a *app, args []string) error {
 	fs := newFlags("playbook history")
 	asJSON := fs.Bool("json", false, "print as JSON")
@@ -335,27 +312,21 @@ func labPlaybookHistory(ctx context.Context, a *app, args []string) error {
 	if len(pos) > 1 {
 		return usageErrorf("usage: playbook history [ID] [-json]")
 	}
-	rs, err := a.records()
+	lab, err := a.lab()
 	if err != nil {
 		return err
 	}
-	recs, err := rs.Current(ctx, recLabSignal, "")
+	playbookID := ""
+	if len(pos) == 1 {
+		playbookID = pos[0]
+	}
+	saved, err := lab.SavedSignals(ctx, playbookID)
 	if err != nil {
 		return err
 	}
-	sort.SliceStable(recs, func(i, j int) bool { return recs[i].Seq > recs[j].Seq })
-	var saved []labSaved
-	var signals []playbook.Signal
-	decisions := map[string]playbook.Decision{}
-	for _, r := range recs {
-		var x labSaved
-		if err := json.Unmarshal(r.Body, &x); err != nil {
-			return fmt.Errorf("saved signal %s does not decode: %w", r.Key, err)
-		}
-		if len(pos) == 1 && x.Signal.Playbook != pos[0] {
-			continue
-		}
-		saved = append(saved, x)
+	signals := make([]playbook.Signal, 0, len(saved))
+	decisions := make(map[string]playbook.Decision, len(saved))
+	for _, x := range saved {
 		signals = append(signals, x.Signal)
 		decisions[x.Signal.ID] = x.Decision
 	}

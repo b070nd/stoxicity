@@ -129,10 +129,7 @@ func buildPricePeriods(at, start time.Time, count int, annual bool, closes []Can
 		if adjusted {
 			return price, ""
 		}
-		for _, split := range splits {
-			if !SameTicker(split.Ticker, c.Ticker) || split.Day <= c.Day || split.Day > last {
-				continue
-			}
+		for _, split := range splitsBetween(splits, c.Day, last, c.Ticker) {
 			if _, err := time.Parse(time.DateOnly, split.Day); err != nil {
 				return 0, "invalid split record"
 			}
