@@ -7,7 +7,7 @@ import "math"
 // benchmark. marketEntry is negative when there is no benchmark bar for the
 // entry day.
 func contextAt(spec ContextSpec, bars []Bar, entry int, market []Bar, marketEntry int, marketCap float64) Context {
-	ctx := unknownContext()
+	ctx := unknownContext(spec)
 	before := bars[:clamp(entry, len(bars))]
 
 	if v, ok := volatility(before, spec.VolatilitySessions); ok {
@@ -15,6 +15,11 @@ func contextAt(spec ContextSpec, bars []Bar, entry int, market []Bar, marketEntr
 	}
 	if v, ok := momentum(before, spec.MomentumSessions); ok {
 		ctx.Momentum, ctx.MomentumValue = bucketOf(v, spec.MomentumEdges), &v
+	}
+	if spec.LiquiditySessions > 0 {
+		if v, ok := tradedValue(before, spec.LiquiditySessions); ok {
+			ctx.Liquidity, ctx.LiquidityValue = bucketOf(v, spec.LiquidityEdges), &v
+		}
 	}
 	if marketCap > 0 && !math.IsInf(marketCap, 0) {
 		ctx.Size = bucketOf(marketCap, spec.SizeEdges)
@@ -29,6 +34,12 @@ func contextAt(spec ContextSpec, bars []Bar, entry int, market []Bar, marketEntr
 		}
 		if v, ok := volatility(mb, spec.VolatilitySessions); ok {
 			ctx.MarketVolatility, ctx.MarketVolatilityValue = bucketOf(v, spec.VolatilityEdges), &v
+		}
+		if len(spec.RelativeEdges) > 0 && ctx.MomentumValue != nil {
+			if m, ok := momentum(mb, spec.MomentumSessions); ok {
+				v := *ctx.MomentumValue - m
+				ctx.RelativeMomentum, ctx.RelativeMomentumValue = bucketOf(v, spec.RelativeEdges), &v
+			}
 		}
 	}
 	return ctx
@@ -82,6 +93,23 @@ func momentum(bars []Bar, n int) (float64, bool) {
 	}
 	v := bars[len(bars)-1].Close/bars[len(bars)-1-n].Close - 1
 	return v, !math.IsNaN(v) && !math.IsInf(v, 0)
+}
+
+// tradedValue is the mean of close times volume over the last n bars; false
+// when the bars hold fewer than n, one has a negative volume, or nothing traded.
+func tradedValue(bars []Bar, n int) (float64, bool) {
+	if n < 1 || len(bars) < n {
+		return 0, false
+	}
+	var sum float64
+	for _, b := range bars[len(bars)-n:] {
+		if b.Volume < 0 {
+			return 0, false
+		}
+		sum += b.Close * float64(b.Volume)
+	}
+	v := sum / float64(n)
+	return v, v > 0 && !math.IsInf(v, 0)
 }
 
 // trend is the last close against the mean of the last n closes, less one.

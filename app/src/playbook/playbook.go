@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -47,7 +48,7 @@ const (
 // Evidence is what the research must show before a rule may ask for a trade.
 type Evidence struct {
 	Sessions  int     `json:"sessions"`            // the holding period whose group is read
-	Dimension string  `json:"dimension,omitempty"` // "" or "all": every event of the type; otherwise one of eventstudy.Dimensions(), and the group of the event's own bucket is read
+	Dimension string  `json:"dimension,omitempty"` // "" or "all": every event of the type; otherwise one of eventstudy.AllDimensions() that the study's context also turns on (else the comparable test fails), and the group of the event's own bucket is read
 	MinEvents int     `json:"min_events"`
 	Direction string  `json:"direction"` // "up" or "down"
 	MinEdge   float64 `json:"min_edge"`  // how far beyond zero the bound of the mean must lie, as a return (0.01 is 1%)
@@ -175,7 +176,7 @@ func (r Rule) validate() error {
 }
 
 func isDimension(name string) bool {
-	for _, d := range eventstudy.Dimensions() {
+	for _, d := range eventstudy.AllDimensions() {
 		if d == name {
 			return true
 		}
@@ -211,29 +212,57 @@ type Test struct {
 	Detail string `json:"detail"`
 }
 
+// ExitRule says how long a position the signal proposes is held and what ends
+// it early. It describes the rule and the study; it promises nothing about the
+// price the position will reach.
+type ExitRule struct {
+	// Sessions is the holding period, the rule's evidence sessions.
+	Sessions int `json:"sessions"`
+	// Invalidation is how far below the last close before entry the stop lies,
+	// as a fraction (0.08 is 8%), taken from the rule's trade stanza; absent when
+	// the rule has no trade or sets no stop.
+	Invalidation *float64 `json:"invalidation,omitempty"`
+	// Text is one plain sentence saying the same. For a watch signal it says no
+	// position is proposed.
+	Text string `json:"text"`
+}
+
 // Signal is the answer of one rule to one event. It is a request, not an
 // order: Action is what the research supports, and a separate risk layer must
 // still approve it.
 type Signal struct {
-	ID           string            `json:"id"`
-	Playbook     string            `json:"playbook"`
-	PlaybookHash string            `json:"playbook_hash"`
-	Rule         string            `json:"rule"`
-	Observation  string            `json:"observation"`
-	Security     string            `json:"security"`
-	Type         string            `json:"type"`
-	AvailableAt  time.Time         `json:"available_at"`
-	Requested    Action            `json:"requested"`
-	Action       Action            `json:"action"`
-	Sessions     int               `json:"sessions"`
-	Entry        eventstudy.Entry  `json:"entry"`
-	Tests        []Test            `json:"tests"`
-	Comparable   *eventstudy.Group `json:"comparable,omitempty"`  // the validation group the decision rests on
-	Development  *eventstudy.Group `json:"development,omitempty"` // the same group in development, for comparison only
-	Study        string            `json:"study"`
-	SpecHash     string            `json:"spec_hash"`
-	DataHash     string            `json:"data_hash"`
-	Explanation  string            `json:"explanation"`
+	ID           string    `json:"id"`
+	Playbook     string    `json:"playbook"`
+	PlaybookHash string    `json:"playbook_hash"`
+	Rule         string    `json:"rule"`
+	Observation  string    `json:"observation"`
+	Security     string    `json:"security"`
+	Type         string    `json:"type"`
+	AvailableAt  time.Time `json:"available_at"`
+	// CreatedAt is when the signal was made. Evaluate leaves it zero: the caller
+	// sets it from its own clock, and it enters neither the ID nor any hash.
+	CreatedAt time.Time `json:"created_at,omitzero"`
+	// ExpiresAt is the first moment the signal can no longer be acted on. The
+	// study refuses an entry session more than MaxEntryGapDays calendar days
+	// after the day the information became available (that day taken in the
+	// exchange's zone, or in UTC when the information is known only to the day,
+	// in which case AvailableAt is the start of that UTC day). The last session
+	// that may be entered is therefore on that day plus MaxEntryGapDays, and
+	// ExpiresAt is the start of the day after it, in the same zone. It is zero
+	// when the study has no gap rule or its session zone cannot be read.
+	ExpiresAt   time.Time         `json:"expires_at,omitzero"`
+	Requested   Action            `json:"requested"`
+	Action      Action            `json:"action"`
+	Sessions    int               `json:"sessions"`
+	Exit        ExitRule          `json:"exit"`
+	Entry       eventstudy.Entry  `json:"entry"`
+	Tests       []Test            `json:"tests"`
+	Comparable  *eventstudy.Group `json:"comparable,omitempty"`  // the validation group the decision rests on
+	Development *eventstudy.Group `json:"development,omitempty"` // the same group in development, for comparison only
+	Study       string            `json:"study"`
+	SpecHash    string            `json:"spec_hash"`
+	DataHash    string            `json:"data_hash"`
+	Explanation string            `json:"explanation"`
 }
 
 // Evaluate applies every rule of the playbook to one event, in rule order. A
@@ -310,10 +339,11 @@ func (r Rule) apply(p Playbook, hash string, o eventstudy.Observation, ctx event
 	}
 
 	dimension, bucket := "all", "all"
-	bucketKnown := true
+	bucketKnown, broken := true, true
 	if e.Dimension != "" && e.Dimension != "all" {
 		dimension, bucket = e.Dimension, ctx.Bucket(e.Dimension)
 		bucketKnown = bucket != "" && bucket != eventstudy.Unknown
+		broken = slices.Contains(research.Spec.Context.Dimensions(), dimension)
 	}
 	scope := fmt.Sprintf("%s events held %d sessions", o.Type, e.Sessions)
 	if dimension != "all" {
@@ -322,16 +352,18 @@ func (r Rule) apply(p Playbook, hash string, o eventstudy.Observation, ctx event
 
 	var group eventstudy.Group
 	found := false
-	if bucketKnown {
+	if bucketKnown && broken {
 		group, found = research.Find(o.Type, e.Sessions, eventstudy.Validation, dimension, bucket)
 	}
 	var dev *eventstudy.Group
-	if bucketKnown {
+	if bucketKnown && broken {
 		if g, ok := research.Find(o.Type, e.Sessions, eventstudy.Development, dimension, bucket); ok {
 			dev = &g
 		}
 	}
 	switch {
+	case !broken:
+		tests = append(tests, Test{Name: "comparable", Result: Fail, Detail: fmt.Sprintf("the research of study %s does not break its groups down by %s: the study's context does not turn that dimension on", research.Spec.ID, dimension)})
 	case !bucketKnown:
 		tests = append(tests, Test{Name: "comparable", Result: Unknown, Detail: fmt.Sprintf("the %s of this event is not known", dimension)})
 	case !found:
@@ -383,7 +415,8 @@ func (r Rule) apply(p Playbook, hash string, o eventstudy.Observation, ctx event
 		Playbook: p.ID, PlaybookHash: hash, Rule: r.ID,
 		Observation: o.ID, Security: o.Security, Type: o.Type, AvailableAt: o.AvailableAt,
 		Requested: r.Action, Action: action,
-		Sessions: e.Sessions, Entry: research.Spec.Entry, Tests: tests,
+		ExpiresAt: entryDeadline(research.Spec, o),
+		Sessions:  e.Sessions, Exit: exitRule(r, research.Spec.Entry, action), Entry: research.Spec.Entry, Tests: tests,
 		Development: dev,
 		Study:       research.Spec.ID, SpecHash: research.SpecHash, DataHash: research.DataHash,
 	}
@@ -393,6 +426,50 @@ func (r Rule) apply(p Playbook, hash string, o eventstudy.Observation, ctx event
 	s.ID = signalID(s)
 	s.Explanation = explain(r, s, primary, measure, scope, found)
 	return s, true
+}
+
+// entryDeadline is the start of the day after the last day the study would
+// still enter on: the day the information became available plus
+// MaxEntryGapDays calendar days, in the exchange's zone or in UTC for
+// information known only to the day. It is the zero time when there is no gap
+// rule or the zone cannot be read.
+func entryDeadline(spec eventstudy.Spec, o eventstudy.Observation) time.Time {
+	if spec.MaxEntryGapDays < 1 {
+		return time.Time{}
+	}
+	loc := time.UTC
+	if !o.DayPrecision {
+		var err error
+		if loc, err = time.LoadLocation(spec.Session.Zone); spec.Session.Zone == "" || err != nil {
+			return time.Time{}
+		}
+	}
+	y, m, d := o.AvailableAt.In(loc).Date()
+	return time.Date(y, m, d+spec.MaxEntryGapDays+1, 0, 0, 0, 0, loc)
+}
+
+// exitRule states how a position of the rule would be closed, in the words of
+// the study's entry rule: the study holds Sessions sessions, the first being
+// the entry session itself when it enters at the open.
+func exitRule(r Rule, entry eventstudy.Entry, action Action) ExitRule {
+	x := ExitRule{Sessions: r.Evidence.Sessions}
+	stop := "no stop is set"
+	if r.Trade != nil && r.Trade.InvalidationOffset > 0 {
+		off := r.Trade.InvalidationOffset
+		x.Invalidation = &off
+		stop = fmt.Sprintf("the stop lies %s below the last close before entry", pct(off))
+	}
+	switch {
+	case action == Watch:
+		x.Text = fmt.Sprintf("No position is proposed; were the rule to ask for a %s, the study holds %d sessions.", r.Action, x.Sessions)
+	case action == Sell:
+		x.Text = fmt.Sprintf("A sell opens no position and is never a short; the study measured a fall over %d sessions.", x.Sessions)
+	case entry == eventstudy.NextClose:
+		x.Text = fmt.Sprintf("Sell at the close of session %d, counting from the session after the entry; %s.", x.Sessions, stop)
+	default:
+		x.Text = fmt.Sprintf("Sell at the close of session %d, counting the entry session as the first; %s.", x.Sessions, stop)
+	}
+	return x
 }
 
 func edgeTest(e Evidence, st eventstudy.Stats, measure string) Test {

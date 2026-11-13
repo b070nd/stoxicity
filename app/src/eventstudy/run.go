@@ -134,12 +134,21 @@ func limits(spec Spec, man Manifest) []string {
 	return out
 }
 
-func unknownContext() Context {
-	return Context{Volatility: Unknown, Momentum: Unknown, Size: Unknown, MarketTrend: Unknown, MarketVolatility: Unknown}
+// unknownContext is a context nothing could be measured for. Liquidity and
+// relative momentum are named unknown only when the study measures them.
+func unknownContext(spec ContextSpec) Context {
+	ctx := Context{Volatility: Unknown, Momentum: Unknown, Size: Unknown, MarketTrend: Unknown, MarketVolatility: Unknown}
+	if spec.LiquiditySessions > 0 {
+		ctx.Liquidity = Unknown
+	}
+	if len(spec.RelativeEdges) > 0 {
+		ctx.RelativeMomentum = Unknown
+	}
+	return ctx
 }
 
 func (r *run) measure(o Observation) Outcome {
-	out := Outcome{Observation: o.ID, Security: o.Security, Type: o.Type, Context: unknownContext()}
+	out := Outcome{Observation: o.ID, Security: o.Security, Type: o.Type, Context: unknownContext(r.spec.Context)}
 	s := r.load(o.Security)
 	if s.state != Measured {
 		out.State, out.Why = s.state, s.why
@@ -289,7 +298,7 @@ func periodRank(p string) int {
 }
 
 func dimensionRank(d string) int {
-	for i, name := range Dimensions() {
+	for i, name := range AllDimensions() {
 		if name == d {
 			return i + 1
 		}
@@ -301,6 +310,7 @@ func dimensionRank(d string) int {
 // groups for how many of them were tested.
 func (r *run) groups(rep Report, recon map[string]rebuilt) ([]Group, int) {
 	cells := map[cellKey]*cell{}
+	spec := r.spec
 	for _, o := range rep.Outcomes {
 		if o.State != Measured {
 			continue
@@ -310,7 +320,7 @@ func (r *run) groups(rep Report, recon map[string]rebuilt) ([]Group, int) {
 				continue
 			}
 			keys := []cellKey{{o.Type, h.Sessions, o.Period, "all", "all"}}
-			for _, d := range Dimensions() {
+			for _, d := range spec.Context.Dimensions() {
 				keys = append(keys, cellKey{o.Type, h.Sessions, o.Period, d, o.Context.Bucket(d)})
 			}
 			b := block(o.EntryDay, h.Sessions)
@@ -360,7 +370,6 @@ func (r *run) groups(rep Report, recon map[string]rebuilt) ([]Group, int) {
 		return a.bucket < b.bucket
 	})
 
-	spec := r.spec
 	out := make([]Group, 0, len(keys))
 	var tested []int
 	for _, k := range keys {

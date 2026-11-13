@@ -100,6 +100,63 @@ func TestFiguresAsOf(t *testing.T) {
 	}
 }
 
+func TestFiguresAsOfMarginsAndCashFlow(t *testing.T) {
+	const filed = "2025-02-15"
+	year := func(metric string, value float64) fundamentals.Fact {
+		return fact(metric, "USD", "2024-01-01", "2024-12-31", filed, value)
+	}
+	otherYear := func(metric string, value float64) fundamentals.Fact {
+		return fact(metric, "USD", "2023-01-01", "2023-12-31", filed, value)
+	}
+	cases := []struct {
+		name                                         string
+		facts                                        []fundamentals.Fact
+		netMargin, operatingMargin, flow, flowMargin *float64
+	}{
+		{"all present", []fundamentals.Fact{
+			year(fundamentals.Revenue, 200), year(fundamentals.NetIncome, 20),
+			year(fundamentals.OperatingIncome, 50), year(fundamentals.OperatingCashFlow, 80)},
+			ptr(0.1), ptr(0.25), ptr(80), ptr(0.4)},
+		{"operating income missing", []fundamentals.Fact{
+			year(fundamentals.Revenue, 200), year(fundamentals.NetIncome, 20), year(fundamentals.OperatingCashFlow, 80)},
+			ptr(0.1), nil, ptr(80), ptr(0.4)},
+		{"stored before the operating concepts were read", []fundamentals.Fact{
+			year(fundamentals.Revenue, 200), year(fundamentals.NetIncome, 20)},
+			ptr(0.1), nil, nil, nil},
+		{"revenue zero", []fundamentals.Fact{
+			year(fundamentals.Revenue, 0), year(fundamentals.NetIncome, 20),
+			year(fundamentals.OperatingIncome, 50), year(fundamentals.OperatingCashFlow, 80)},
+			nil, nil, ptr(80), nil},
+		{"figures of another period are not used", []fundamentals.Fact{
+			year(fundamentals.Revenue, 200), year(fundamentals.NetIncome, 20),
+			otherYear(fundamentals.OperatingIncome, 50), otherYear(fundamentals.OperatingCashFlow, 80)},
+			ptr(0.1), nil, nil, nil},
+		{"revenue of another period is not used", []fundamentals.Fact{
+			otherYear(fundamentals.Revenue, 100), year(fundamentals.NetIncome, 20), year(fundamentals.OperatingIncome, 50)},
+			nil, nil, nil, nil},
+	}
+	same := func(got, want *float64) bool {
+		if got == nil || want == nil {
+			return got == want
+		}
+		return math.Abs(*got-*want) < 1e-9
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, ok := figuresAsOf(c.facts, "2025-06-01")
+			if !ok {
+				t.Fatal("no figures")
+			}
+			if !same(got.NetMargin, c.netMargin) || !same(got.OperatingMargin, c.operatingMargin) ||
+				!same(got.OperatingCashFlow, c.flow) || !same(got.CashFlowMargin, c.flowMargin) {
+				t.Errorf("net %v operating %v flow %v flow margin %v", got.NetMargin, got.OperatingMargin, got.OperatingCashFlow, got.CashFlowMargin)
+			}
+		})
+	}
+}
+
+func ptr(v float64) *float64 { return &v }
+
 func TestPrices(t *testing.T) {
 	day := func(d string, price float64, raw bool) marketdata.Candle {
 		return marketdata.Candle{Day: d, Open: price, High: price, Low: price, Close: price, Volume: 100, Raw: raw}

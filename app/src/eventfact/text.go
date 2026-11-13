@@ -7,8 +7,10 @@ import (
 	"github.com/b070nd/stoxicity/app/src/model"
 )
 
-// TextExtractor names these rules.
-const TextExtractor = "text-rules-1"
+// TextExtractor names these rules. A change of what the rules read, such as a
+// new label, takes a new number, so that the records made by the earlier rules
+// stay readable as earlier revisions.
+const TextExtractor = "text-rules-2"
 
 // reading is one passage with what the rules need from it.
 type reading struct {
@@ -615,11 +617,11 @@ func buybackRecords(e EventText, rs []reading) []Record {
 	refs := map[string]bool{}
 	typ := Type("")
 	haveFacts := false
+	kind, mixed := "", false
 	for _, r := range rs {
 		for _, s := range r.sents {
 			low := r.low[s[0]:s[1]]
-			if speculative(low) || !hasAny(low, true, "repurchase", "buyback", "buy back", "buy-back") ||
-				!hasAny(low, true, "authoriz", "authoris", "approv", "announc", "increas", "expand", "program", "plan", "additional") {
+			if speculative(low) || !hasAny(low, true, "repurchase", "buyback", "buy back", "buy-back") || !buybackCue(r, s, low) {
 				continue
 			}
 			if typ == "" {
@@ -629,6 +631,10 @@ func buybackRecords(e EventText, rs []reading) []Record {
 				typ = BuybackExpanded
 			}
 			refs[r.ref] = true
+			if k := buybackKind(low); k != "" {
+				mixed = mixed || (kind != "" && kind != k)
+				kind = k
+			}
 			if haveFacts {
 				continue
 			}
@@ -674,11 +680,62 @@ func buybackRecords(e EventText, rs []reading) []Record {
 	if typ == "" {
 		return nil
 	}
+	if kind != "" && !mixed {
+		if labels == nil {
+			labels = map[string]string{}
+		}
+		labels["kind"] = kind
+	}
 	r, ok := build(e, typ, NewKey(Buyback, security(e), e.EventID), facts, labels, refs)
 	if !ok {
 		return nil
 	}
 	return []Record{r}
+}
+
+// buybackCue reports whether a repurchase sentence announces or expands a
+// program. A sentence that only reports shares already bought back is not
+// news of a program, and a bare mention of a plan or program, with no amount
+// and no word of authorization, announcement or increase, is not either.
+func buybackCue(r reading, s [2]int, low string) bool {
+	if hasAny(low, true, "approv", "announc", "increas", "expand", "additional") {
+		return true
+	}
+	if buybackKind(low) == "executed" {
+		return false
+	}
+	if hasAny(low, true, "authoriz", "authoris") {
+		return true
+	}
+	if !hasAny(low, true, "program", "plan") {
+		return false
+	}
+	for _, a := range r.amountsIn(s[0], s[1]) {
+		if (isMoney(a) || a.Unit == "shares") && !a.PerShare {
+			return true
+		}
+	}
+	return false
+}
+
+// buybackKind reads whether a repurchase sentence reports a decision of the
+// board (authorization) or shares already bought (executed). It returns ""
+// when the sentence supports neither, or both, so that a sentence such as "the
+// board authorized X and the company repurchased Y" gets no label.
+func buybackKind(low string) string {
+	executed := hasAny(low, false, "repurchased", "bought back", "returned")
+	decided := hasAny(low, false, "authorized", "authorised", "authorizes", "authorises", "approved", "approves", "announced", "announces") ||
+		hasAny(low, true, "increas", "expand", "additional") ||
+		(hasAny(low, true, "authoriz", "authoris") && (hasAny(low, false, "new") || hasAny(low, true, "rais", "upsiz", "boost")))
+	switch {
+	case executed && decided:
+		return ""
+	case executed:
+		return "executed"
+	case decided || hasAny(low, false, "up to"):
+		return "authorization"
+	}
+	return ""
 }
 
 // capRun reads a capitalised name that starts at or after pos.
@@ -774,6 +831,12 @@ func contractRecords(e EventText, rs []reading) []Record {
 				facts = append(facts, Fact{Name: "annual_value", Value: value.Value / dur.Value, Unit: value.Unit, Derived: true})
 			}
 			labels := map[string]string{}
+			if c := contractCertainty(low, ceilingIn(r.low, s[0], totals, annuals)); typ == ContractAward && c != "" {
+				labels["certainty"] = c
+			}
+			if value != nil && ceilingIn(r.low, s[0], totals) {
+				labels["value_kind"] = "ceiling"
+			}
 			name := ""
 			for _, w := range []string{" with ", " from "} {
 				for from := 0; from < len(low); {
@@ -807,6 +870,46 @@ func contractRecords(e EventText, rs []reading) []Record {
 		}
 	}
 	return nil
+}
+
+// contractCertainty reads how firm an award sentence says the contract is:
+// conditional when it hangs on an approval, a financing or an option,
+// framework when it is a standing agreement or states only a ceiling, firm when
+// it says the award was made or the order signed. It returns "" when the
+// sentence supports none, and never assumes firm.
+func contractCertainty(low string, ceiling bool) string {
+	switch {
+	case hasAny(low, true, "subject to", "contingent", "conditional", "conditioned", "pending approval", "pending financing",
+		"pending regulatory", "pending final", "pending funding", "pending completion", "option"):
+		return "conditional"
+	case ceiling || hasAny(low, false, "idiq", "mou", "indefinite-delivery", "indefinite delivery", "indefinite-quantity", "indefinite quantity",
+		"framework agreement", "framework contract", "master agreement", "master services agreement", "master service agreement",
+		"master supply agreement", "letter of intent", "memorandum of understanding"):
+		return "framework"
+	case hasAny(low, false, "awarded", "awards", "won", "wins", "signed", "signs", "secured", "secures", "received", "receives"):
+		return "firm"
+	}
+	return ""
+}
+
+// ceilingIn reports whether the words before any of the figures say it is a
+// maximum ("up to $X", "a maximum value of $X", "ceiling of $X"). lo is where
+// the sentence starts.
+func ceilingIn(low string, lo int, groups ...[]Amount) bool {
+	for _, g := range groups {
+		for _, a := range g {
+			ws := prevWords(low, a.Span.Start, lo, 4)
+			for i, w := range ws {
+				if isDigit(w[0]) {
+					break
+				}
+				if w == "maximum" || w == "ceiling" || (w == "to" && i+1 < len(ws) && ws[i+1] == "up") {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 func nameIfNone(name, sentence string) string {

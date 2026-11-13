@@ -32,6 +32,37 @@ func TestCompanyFactsKeepsEveryFilingOfAFigureAndOnlyYears(t *testing.T) {
 	}
 }
 
+// synthetic fixture, not verified against live data
+const companyFactsOperating = `{"cik":1000001,"facts":{"us-gaap":{
+ "OperatingIncomeLoss":{"units":{"USD":[
+  {"start":"2024-01-01","end":"2024-12-31","val":-12,"accn":"0001-25-000001","form":"10-K","filed":"2025-02-20"},
+  {"start":"2024-01-01","end":"2024-03-31","val":5,"accn":"0001-24-000030","form":"10-Q","filed":"2024-05-01"}]}},
+ "NetCashProvidedByUsedInOperatingActivities":{"units":{"USD":[
+  {"start":"2024-01-01","end":"2024-12-31","val":30,"accn":"0001-25-000001","form":"10-K","filed":"2025-02-20"}]}}}}}`
+
+func TestCompanyFactsReadsOperatingIncomeAndCashFlowAsYears(t *testing.T) {
+	facts, err := parseCompanyFacts([]byte(companyFactsOperating), "0001000001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]float64{}
+	for _, f := range facts {
+		got[f.Metric+" "+f.Concept+" "+f.Unit] = f.Value
+	}
+	want := map[string]float64{
+		"operating_income OperatingIncomeLoss USD":                          -12,
+		"operating_cashflow NetCashProvidedByUsedInOperatingActivities USD": 30,
+	}
+	if len(got) != len(want) || len(facts) != 2 {
+		t.Fatalf("facts %+v", facts)
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("%s = %v, want %v", k, got[k], v)
+		}
+	}
+}
+
 func TestAsOfShowsOnlyWhatHadBeenFiledAndTheRestatementOnlyAfterIt(t *testing.T) {
 	facts, _ := parseCompanyFacts([]byte(companyFacts), "0001000001")
 	rev := func(at string) float64 {

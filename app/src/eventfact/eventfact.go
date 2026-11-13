@@ -119,6 +119,10 @@ func schema() map[Type]typeInfo {
 		{"revenue_yoy", "ratio", "revenue against the same period a year before, as a change"},
 		{"net_income_yoy", "ratio", "net income against the same period a year before, as a change"},
 		{"eps_yoy", "ratio", "earnings per share against the same period a year before, as a change"},
+		{"net_margin", "ratio", "net income over revenue of the period"},
+		{"operating_margin", "ratio", "operating income over revenue of the period"},
+		{"operating_cash_flow", "currency", "net cash from operating activities of the period"},
+		{"cash_flow_margin", "ratio", "operating cash flow over revenue of the period"},
 		{"eps_surprise", "ratio", "earnings per share against the stated consensus, as a change; only when the source states it"},
 		{"revenue_surprise", "ratio", "revenue against the stated consensus, as a change; only when the source states it"},
 	}
@@ -134,16 +138,22 @@ func schema() map[Type]typeInfo {
 		{"amount", "currency", "the size of the authorisation"},
 		{"shares", "shares", "the number of shares authorised, when the programme is stated in shares"},
 		{"previous_amount", "currency", "the earlier authorisation, when this one raises it"},
-		{"pct_of_market_cap", "ratio", "the amount against the market capitalisation at the time, when that is known"},
+		{"pct_of_market_cap", "ratio", "the amount against the market capitalisation at the time, when that is known; worked out when a study reads the event, not stored"},
+		{"pct_of_shares_outstanding", "ratio", "the shares authorised against the shares outstanding at the time, when both are known; worked out when a study reads the event, not stored"},
 		{"financing", "label", "how it is paid for: cash, debt, mixed or unknown"},
+		{"kind", "label", "authorization when the board authorised a programme, executed when the company reports shares already bought; absent when the text says neither"},
 	}
 	contractFields := []Field{
 		{"value", "currency", "the stated total value"},
 		{"duration_years", "years", "the stated length"},
 		{"annual_value", "currency", "value divided by duration, when both are stated"},
 		{"revenue_impact", "ratio", "annual value against the last annual revenue, when that is known"},
+		{"pct_of_revenue", "ratio", "annual value against the revenue of the latest fiscal year filed by then, when both are known; worked out when a study reads the event, not stored"},
+		{"pct_of_market_cap", "ratio", "the stated total value against the market capitalisation at the time, when that is known; worked out when a study reads the event, not stored"},
 		{"counterparty", "label", "the other side, as the source names it"},
 		{"customer", "label", "government, commercial or unknown"},
+		{"certainty", "label", "firm (awarded, signed, order received), conditional (subject to approval, financing or options) or framework (indefinite-quantity or master agreement, letter of intent, a ceiling value); absent when the text supports none"},
+		{"value_kind", "label", "ceiling when the stated value is a maximum (up to, maximum); absent otherwise"},
 	}
 	insiderFields := []Field{
 		{"value", "currency", "shares times price, summed over the transactions of the filing"},

@@ -82,12 +82,17 @@ func change(now float64, before fundamentals.Fact, ok bool) *float64 {
 // figuresAsOf reads the reported figures of the most recent fiscal period whose facts had been
 // filed by day (YYYY-MM-DD): revenue, net income and earnings per share (net income over the
 // weighted average shares of the same period), each with its change on the same period a year
-// earlier when that had been filed too. It uses consolidated facts only; false when no revenue
+// earlier when that had been filed too. For the same period it also gives the net margin, the
+// operating margin, the operating cash flow and its margin, each margin only when both figures
+// were filed for exactly that period and revenue is above zero; the operating figures exist only
+// once a history refresh has stored them. It uses consolidated facts only; false when no revenue
 // or net income had been filed.
 func figuresAsOf(facts []fundamentals.Fact, day string) (eventfact.Figures, bool) {
 	revenue := periodsOf(facts, fundamentals.Revenue, "USD", day)
 	income := periodsOf(facts, fundamentals.NetIncome, "USD", day)
 	shares := periodsOf(facts, fundamentals.AvgShares, "shares", day)
+	operatingIncome := periodsOf(facts, fundamentals.OperatingIncome, "USD", day)
+	operatingCashFlow := periodsOf(facts, fundamentals.OperatingCashFlow, "USD", day)
 	eps := map[period]fundamentals.Fact{}
 	for p, ni := range income {
 		if sh, ok := shares[p]; ok && sh.Value > 0 {
@@ -136,5 +141,24 @@ func figuresAsOf(facts []fundamentals.Fact, day string) (eventfact.Figures, bool
 	if out.Revenue == nil && out.NetIncome == nil {
 		return eventfact.Figures{}, false
 	}
+	if f, ok := operatingCashFlow[cur]; ok {
+		v := f.Value
+		out.OperatingCashFlow = &v
+	}
+	out.NetMargin = margin(income, revenue, cur)
+	out.OperatingMargin = margin(operatingIncome, revenue, cur)
+	out.CashFlowMargin = margin(operatingCashFlow, revenue, cur)
 	return out, true
+}
+
+// margin is the figure of the period over the revenue of the same period; nil when either is
+// missing for exactly that period or the revenue is not above zero.
+func margin(figure, revenue map[period]fundamentals.Fact, p period) *float64 {
+	f, hasFigure := figure[p]
+	r, hasRevenue := revenue[p]
+	if !hasFigure || !hasRevenue || r.Value <= 0 {
+		return nil
+	}
+	v := f.Value / r.Value
+	return &v
 }

@@ -13,25 +13,25 @@ import "time"
 // ends earlier is stale, and the conditions are unknown, not carried forward.
 func ContextFor(spec Spec, o Observation, prices Prices) (Context, error) {
 	if err := spec.Validate(); err != nil {
-		return unknownContext(), err
+		return unknownContext(spec.Context), err
 	}
 	ses, err := newSessions(spec.Session)
 	if err != nil {
-		return unknownContext(), err
+		return unknownContext(spec.Context), err
 	}
 	if prices == nil {
-		return unknownContext(), nil
+		return unknownContext(spec.Context), nil
 	}
 	s, ok := prices.Series(o.Security)
 	if !ok || len(s.Bars) == 0 || s.Validate() != nil {
-		return unknownContext(), nil
+		return unknownContext(spec.Context), nil
 	}
 	bars := s.Bars
 	e, found := entryIndex(bars, o, spec.Entry, time.Duration(spec.EntryDelayMinutes)*time.Minute, ses)
 	if !found {
 		gap, ok := daysBetween(bars[len(bars)-1].Day, availableDay(o, ses))
 		if !ok || gap > spec.MaxEntryGapDays {
-			return unknownContext(), nil
+			return unknownContext(spec.Context), nil
 		}
 		e = len(bars)
 	}

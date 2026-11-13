@@ -149,3 +149,108 @@ func TestVet(t *testing.T) {
 		t.Error("Vet accepted a record whose figures are in no passage")
 	}
 }
+
+// TestContractAndBuybackLabels covers the labels read from contract and
+// buyback sentences. The sentences are synthetic sentences, not verified
+// against live releases. An empty want means the label must be absent.
+func TestContractAndBuybackLabels(t *testing.T) {
+	at := time.Date(2026, 5, 4, 12, 0, 0, 0, time.UTC)
+	base := EventText{EventID: "ev1", SecurityID: "sec1", Symbol: "ACME", PublishedAt: at, AvailableAt: at, Precision: PrecisionTime,
+		Source: SourceWire, SourceRef: "a1", Evidence: []string{"a1"}, Basis: Known}
+	cases := []struct {
+		name    string
+		kind    model.EventKind
+		text    string
+		records int
+		typ     Type // checked only when set
+		want    map[string]string
+	}{
+		{"award is firm", model.EventAgreement, "Acme was awarded a $500 million contract with the U.S. Army.", 1, ContractAward,
+			map[string]string{"certainty": "firm", "value_kind": ""}},
+		{"signed is firm", model.EventAgreement, "Acme signed a $40 million supply agreement with Bolt Corp.", 1, ContractAward,
+			map[string]string{"certainty": "firm"}},
+		{"subject to approval", model.EventAgreement, "Acme won a $30 million order from Bolt Corp, subject to regulatory approval.", 1, ContractAward,
+			map[string]string{"certainty": "conditional"}},
+		{"contingent on financing", model.EventAgreement, "Acme secured a $60 million contract with Bolt Corp, contingent on financing.", 1, ContractAward,
+			map[string]string{"certainty": "conditional"}},
+		{"options", model.EventAgreement, "Acme was awarded a $70 million contract with Bolt Corp including two one-year options.", 1, ContractAward,
+			map[string]string{"certainty": "conditional"}},
+		{"indefinite quantity", model.EventAgreement, "Acme was awarded a $900 million indefinite-delivery/indefinite-quantity contract by the U.S. Navy.", 1, ContractAward,
+			map[string]string{"certainty": "framework", "value_kind": ""}},
+		{"framework agreement", model.EventAgreement, "Acme signed a framework agreement with Bolt Corp worth $80 million.", 1, ContractAward,
+			map[string]string{"certainty": "framework", "value_kind": ""}},
+		{"master agreement", model.EventAgreement, "Acme signed a master agreement with Bolt Corp.", 1, ContractAward,
+			map[string]string{"certainty": "framework"}},
+		{"letter of intent", model.EventAgreement, "Acme signed a letter of intent for a supply deal with Bolt Corp.", 1, ContractAward,
+			map[string]string{"certainty": "framework"}},
+		{"memorandum", model.EventAgreement, "Acme signed a memorandum of understanding on a supply deal with Bolt Corp.", 1, ContractAward,
+			map[string]string{"certainty": "framework"}},
+		{"up to is a ceiling", model.EventAgreement, "Acme won a contract worth up to $120 million over five years.", 1, ContractAward,
+			map[string]string{"certainty": "framework", "value_kind": "ceiling"}},
+		{"maximum value", model.EventAgreement, "Acme was awarded a contract with a maximum value of $250 million.", 1, ContractAward,
+			map[string]string{"certainty": "framework", "value_kind": "ceiling"}},
+		{"conditional beats framework", model.EventAgreement, "Acme signed a framework agreement with Bolt Corp, subject to board approval.", 1, ContractAward,
+			map[string]string{"certainty": "conditional"}},
+		{"intent only, no label", model.EventAgreement, "Acme expects to win a new contract with Bolt Corp.", 1, ContractAward,
+			map[string]string{"certainty": "", "value_kind": ""}},
+		{"termination has no certainty", model.EventAgreement, "Bolt cancelled a $20 million contract with Acme.", 1, ContractTermination,
+			map[string]string{"certainty": ""}},
+		{"contract speculative", model.EventAgreement, "Acme may be awarded a $500 million contract with Bolt Corp.", 0, "", nil},
+		{"contract negated", model.EventAgreement, "Acme was not awarded the $500 million contract with Bolt Corp.", 0, "", nil},
+		{"contract conditional clause", model.EventAgreement, "Acme will be awarded a $50 million order with Bolt Corp if the option is exercised.", 0, "", nil},
+
+		{"authorized program", model.EventBuyback, "The board authorized a share repurchase program of up to $5 billion.", 1, BuybackAnnounced,
+			map[string]string{"kind": "authorization"}},
+		{"approved plan", model.EventBuyback, "The board approved a new $2 billion share repurchase plan.", 1, BuybackAnnounced,
+			map[string]string{"kind": "authorization"}},
+		{"announced program", model.EventBuyback, "Acme announces a share repurchase program of up to $1 billion.", 1, BuybackAnnounced,
+			map[string]string{"kind": "authorization"}},
+		{"raised authorization", model.EventBuyback, "The board increased the share repurchase authorization to $5 billion from $3 billion.", 1, BuybackExpanded,
+			map[string]string{"kind": "authorization"}},
+		{"authorization with financing", model.EventBuyback, "The board authorized a $5 billion share repurchase program, funded with cash on hand.", 1, BuybackAnnounced,
+			map[string]string{"kind": "authorization", "financing": "cash"}},
+		{"repurchased shares", model.EventBuyback, "During the quarter the company repurchased 2.1 million shares under its share repurchase program.", 0, "", nil},
+		{"returned through repurchases", model.EventBuyback, "Acme returned $400 million to shareholders through share repurchases under its program.", 0, "", nil},
+		{"bought back under existing authorization", model.EventBuyback, "Acme bought back $300 million of stock under its existing repurchase authorization.", 0, "", nil},
+		{"executed with amounts and plan", model.EventBuyback, "Acme repurchased $1.2 billion of shares in the year under its $5 billion repurchase plan.", 0, "", nil},
+		{"new program with amount, no verb", model.EventBuyback, "Acme has a new $2 billion share repurchase program.", 1, BuybackAnnounced,
+			map[string]string{"kind": ""}},
+		{"expansion in an executed sentence", model.EventBuyback, "Acme increased its share repurchase program by $1 billion and bought back 3 million shares.", 1, BuybackExpanded,
+			map[string]string{"kind": ""}},
+		{"both in one sentence", model.EventBuyback, "The board authorized a new $1 billion repurchase program and the company repurchased 2 million shares.", 1, "",
+			map[string]string{"kind": ""}},
+		{"both in two sentences", model.EventBuyback, "The board authorized a new $1 billion repurchase program. The company repurchased 2 million shares in the quarter under its program.", 1, BuybackAnnounced,
+			map[string]string{"kind": "authorization"}},
+		{"bare mention of a plan", model.EventBuyback, "Acme's share repurchase plan is described in the annual report.", 0, "", nil},
+		{"bare mention of a program", model.EventBuyback, "Details of the buyback program are on the investor page.", 0, "", nil},
+		{"buyback speculative", model.EventBuyback, "The board may authorize a share repurchase program of up to $5 billion.", 0, "", nil},
+		{"buyback negated", model.EventBuyback, "The company did not repurchase any shares under its program.", 0, "", nil},
+	}
+	for _, c := range cases {
+		e := base
+		e.Kind = c.kind
+		e.Passages = []Passage{{Ref: "a1", Text: c.text}}
+		recs := FromEvent(e)
+		if len(recs) != c.records {
+			t.Errorf("%s: %d records, want %d", c.name, len(recs), c.records)
+			continue
+		}
+		for _, r := range recs {
+			if err := r.Validate(); err != nil {
+				t.Errorf("%s: %v", c.name, err)
+			}
+			if c.typ != "" && r.Type != c.typ {
+				t.Errorf("%s: type %s, want %s", c.name, r.Type, c.typ)
+			}
+			if r.Extractor != TextExtractor {
+				t.Errorf("%s: extractor %q", c.name, r.Extractor)
+			}
+			for k, want := range c.want {
+				got, have := r.Labels[k]
+				if have != (want != "") || got != want {
+					t.Errorf("%s: label %s = %q (present %v), want %q", c.name, k, got, have, want)
+				}
+			}
+		}
+	}
+}

@@ -16,6 +16,11 @@ type Figures struct {
 	Currency                         string // "USD"
 	Revenue, NetIncome, EPS          *float64
 	RevenueYoY, NetIncomeYoY, EPSYoY *float64 // changes, 0.05 is +5%
+
+	// OperatingCashFlow is in Currency; the margins are of revenue, 0.1 is 10%. Each is nil when the
+	// figures it needs are not known for the period.
+	OperatingCashFlow                          *float64
+	NetMargin, OperatingMargin, CashFlowMargin *float64
 }
 
 // EpisodeDays is how long after the first results publication of a security further results publications are taken for the same reporting period (the release, its 8-K and the 10-Q that follows).
@@ -105,6 +110,10 @@ func earningsRecord(security string, episode []EventText, figures func(string, s
 			add("revenue_yoy", f.RevenueYoY, "ratio", true)
 			add("net_income_yoy", f.NetIncomeYoY, "ratio", true)
 			add("eps_yoy", f.EPSYoY, "ratio", true)
+			add("net_margin", f.NetMargin, "ratio", true)
+			add("operating_margin", f.OperatingMargin, "ratio", true)
+			add("operating_cash_flow", f.OperatingCashFlow, f.Currency, false)
+			add("cash_flow_margin", f.CashFlowMargin, "ratio", true)
 		}
 	}
 

@@ -170,6 +170,30 @@ type ContextSpec struct {
 	VolatilityEdges    []float64 `json:"volatility_edges"` // annualised volatility of daily returns
 	MomentumEdges      []float64 `json:"momentum_edges"`   // return over the momentum sessions
 	SizeEdges          []float64 `json:"size_edges"`       // market capitalisation
+
+	// LiquiditySessions and LiquidityEdges turn on the liquidity dimension: the
+	// mean traded value (close times volume) of the sessions before entry, in the
+	// currency of the series. RelativeEdges turns on relative momentum: the
+	// stock's return over MomentumSessions less the benchmark's. Both are left out
+	// of the specification, and so of its hash and of the report's breakdown, until
+	// they are set.
+	LiquiditySessions int       `json:"liquidity_sessions,omitempty"`
+	LiquidityEdges    []float64 `json:"liquidity_edges,omitempty"`
+	RelativeEdges     []float64 `json:"relative_edges,omitempty"`
+}
+
+// Dimensions are the conditions the specification breaks a report's groups
+// down by, in order: the original five, then liquidity and relative momentum
+// when they are turned on.
+func (c ContextSpec) Dimensions() []string {
+	out := Dimensions()
+	if c.LiquiditySessions > 0 {
+		out = append(out, "liquidity")
+	}
+	if len(c.RelativeEdges) > 0 {
+		out = append(out, "relative_momentum")
+	}
+	return out
 }
 
 // Context is the conditions around one event, measured from bars before the
@@ -181,21 +205,42 @@ type Context struct {
 	MarketTrend      string `json:"market_trend"`      // the benchmark against its own average: up, down
 	MarketVolatility string `json:"market_volatility"` // of the benchmark: low, mid, high
 
+	// Liquidity and RelativeMomentum are empty when the study does not measure
+	// them: low, mid, high, or "unknown" when it does and the data does not reach.
+	Liquidity        string `json:"liquidity,omitempty"`         // mean traded value before entry
+	RelativeMomentum string `json:"relative_momentum,omitempty"` // the stock's earlier return less the benchmark's
+
 	VolatilityValue       *float64 `json:"volatility_value,omitempty"`
 	MomentumValue         *float64 `json:"momentum_value,omitempty"`
 	MarketTrendValue      *float64 `json:"market_trend_value,omitempty"`
 	MarketVolatilityValue *float64 `json:"market_volatility_value,omitempty"`
+	LiquidityValue        *float64 `json:"liquidity_value,omitempty"`
+	RelativeMomentumValue *float64 `json:"relative_momentum_value,omitempty"`
 }
 
 // Unknown is the bucket of a condition that could not be measured.
 const Unknown = "unknown"
 
-// Dimensions are the conditions a report breaks its groups down by, in order.
+// Dimensions are the conditions every report breaks its groups down by, in
+// order. A study may add the two in ExtraDimensions; ContextSpec.Dimensions
+// lists the ones a specification uses.
 func Dimensions() []string {
 	return []string{"volatility", "momentum", "size", "market_trend", "market_volatility"}
 }
 
-// Bucket returns the bucket of one dimension; empty for a name that is not one.
+// ExtraDimensions are the conditions a study breaks its groups down by only
+// when its context specification turns them on.
+func ExtraDimensions() []string {
+	return []string{"liquidity", "relative_momentum"}
+}
+
+// AllDimensions are the names Bucket and a context condition understand.
+func AllDimensions() []string {
+	return append(Dimensions(), ExtraDimensions()...)
+}
+
+// Bucket returns the bucket of one dimension; empty for a name that is not one
+// and for a dimension the study did not measure.
 func (c Context) Bucket(dimension string) string {
 	switch dimension {
 	case "volatility":
@@ -208,6 +253,10 @@ func (c Context) Bucket(dimension string) string {
 		return c.MarketTrend
 	case "market_volatility":
 		return c.MarketVolatility
+	case "liquidity":
+		return c.Liquidity
+	case "relative_momentum":
+		return c.RelativeMomentum
 	}
 	return ""
 }
@@ -297,18 +346,35 @@ func (s Spec) Validate() error {
 		}
 		seen[h] = true
 	}
+	enabled := map[string]bool{}
+	for _, d := range s.Context.Dimensions() {
+		enabled[d] = true
+	}
 	for _, c := range s.Where {
 		if err := c.Validate(); err != nil {
 			return err
+		}
+		if kind, name := c.kind(); kind == "context" && !enabled[name] {
+			return fmt.Errorf("eventstudy: condition %q needs the %s dimension, which the context does not turn on", c.Field, name)
 		}
 	}
 	if _, err := newSessions(s.Session); err != nil {
 		return err
 	}
 	for name, edges := range map[string][]float64{"volatility_edges": s.Context.VolatilityEdges, "momentum_edges": s.Context.MomentumEdges, "size_edges": s.Context.SizeEdges} {
-		if len(edges) != 2 || edges[0] >= edges[1] {
+		if !twoAscending(edges) {
 			return fmt.Errorf("eventstudy: context %s must be two ascending values", name)
 		}
+	}
+	switch {
+	case s.Context.LiquiditySessions < 0:
+		return errors.New("eventstudy: context liquidity_sessions must not be negative")
+	case s.Context.LiquiditySessions == 0 && len(s.Context.LiquidityEdges) > 0:
+		return errors.New("eventstudy: context liquidity_edges need liquidity_sessions of at least 1")
+	case s.Context.LiquiditySessions > 0 && !twoAscending(s.Context.LiquidityEdges):
+		return errors.New("eventstudy: context liquidity_edges must be two ascending values")
+	case len(s.Context.RelativeEdges) > 0 && !twoAscending(s.Context.RelativeEdges):
+		return errors.New("eventstudy: context relative_edges must be two ascending values")
 	}
 	if s.Context.VolatilitySessions < 5 || s.Context.MomentumSessions < 5 || s.Context.TrendSessions < 5 {
 		return errors.New("eventstudy: context lookbacks must be at least 5 sessions")
@@ -334,6 +400,10 @@ func (s Spec) Validate() error {
 		return errors.New("eventstudy: validation must start after development ends")
 	}
 	return nil
+}
+
+func twoAscending(edges []float64) bool {
+	return len(edges) == 2 && edges[0] < edges[1]
 }
 
 // Hash is a digest of the specification.
@@ -451,7 +521,7 @@ type Group struct {
 	Type      string `json:"type"`
 	Sessions  int    `json:"sessions"`
 	Period    string `json:"period"`
-	Dimension string `json:"dimension"` // "all", or one of Dimensions
+	Dimension string `json:"dimension"` // "all", or one of the study's ContextSpec.Dimensions
 	Bucket    string `json:"bucket"`    // "all", or the bucket of the dimension
 	// Net is after costs; VsMarket and VsSector are Net less the benchmark, over
 	// the events that have one.

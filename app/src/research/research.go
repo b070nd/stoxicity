@@ -338,7 +338,7 @@ func eventText(e store.SignalEvent, articles map[string]model.Article, backfills
 
 // Observations turns records into what a study reads, ordered by availability and then ID.
 // sectors gives the sector of a symbol and may be nil. The capitalisation is not known here and
-// stays zero.
+// stays zero; SetSizes sets it once the prices are loaded.
 func Observations(records []eventfact.Record, sectors map[string]string) []eventstudy.Observation {
 	out := make([]eventstudy.Observation, 0, len(records))
 	for _, r := range records {
@@ -417,6 +417,9 @@ func Study(ctx context.Context, s Store, in StudyInput) (eventstudy.Report, Pric
 			return eventstudy.Report{}, pr, err
 		}
 	}
+	if err := sizeObservations(ctx, s, obs, records, prices, in.AsOf); err != nil {
+		return eventstudy.Report{}, pr, err
+	}
 	report, err := eventstudy.Run(in.Spec, in.Manifest, obs, prices)
 	return report, pr, err
 }
@@ -460,6 +463,8 @@ type SignalInput struct {
 	Report   eventstudy.Report
 	From, To time.Time
 	Sectors  map[string]string
+	// Now is the time the signals are made; it is set as the CreatedAt of each.
+	Now time.Time
 }
 
 // Signals evaluates the playbook on every event that became available in [From, To], against
@@ -482,6 +487,9 @@ func Signals(ctx context.Context, s Store, in SignalInput) ([]playbook.Signal, e
 	if err != nil {
 		return nil, err
 	}
+	if err := sizeObservations(ctx, s, obs, records, prices, time.Time{}); err != nil {
+		return nil, err
+	}
 	var out []playbook.Signal
 	for _, o := range obs {
 		ctxt, err := eventstudy.ContextFor(in.Report.Spec, o, prices)
@@ -491,6 +499,9 @@ func Signals(ctx context.Context, s Store, in SignalInput) ([]playbook.Signal, e
 		sigs, err := playbook.Evaluate(in.Playbook, o, ctxt, in.Report)
 		if err != nil {
 			return nil, err
+		}
+		for i := range sigs {
+			sigs[i].CreatedAt = in.Now
 		}
 		out = append(out, sigs...)
 	}
