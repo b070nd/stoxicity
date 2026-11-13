@@ -14,7 +14,10 @@
 //     next session. Conditions are computed from bars before the entry session.
 //   - Prices are finished daily bars on one basis. An entry "15 minutes after
 //     publication" inside a session cannot be measured with daily bars and is
-//     not pretended: the entry is the next open or the next close.
+//     not pretended: the entry is the next open or the next close, unless the
+//     study enters intraday and is given intraday bars, which it then reads. An
+//     event with no intraday bar to enter on is left out, never entered at a
+//     daily price.
 //   - Costs are charged on both sides: half the spread, slippage and fees. The
 //     benchmark is held without costs, which is against the event.
 //   - A holding period with sessions missing from the data is left out, not
@@ -66,6 +69,21 @@ type Series struct {
 	Security string
 	Currency string
 	Bars     []Bar
+	// Chain are the symbols whose bars make the series, oldest first, when it joins
+	// a verified rename or relisting; nil otherwise. EndedOn is the last day of a
+	// security that was delisted or merged away: the series legitimately stops
+	// there, which is not missing data. Both are read only by a study that follows
+	// renames (Spec.FollowRenames).
+	Chain   []Link
+	EndedOn string
+}
+
+// Link is one symbol's part of a series that joins renames: the days it was the
+// security's.
+type Link struct {
+	Symbol string `json:"symbol"`
+	From   string `json:"from"`         // first day, YYYY-MM-DD
+	To     string `json:"to,omitempty"` // last day, inclusive; empty while it still is
 }
 
 // Validate says why the series cannot be measured.
@@ -128,10 +146,15 @@ type Observation struct {
 // Entry is the rule by which a position is opened.
 type Entry string
 
-// The entries a daily bar can honour.
+// The entries a daily bar can honour, and the one that needs intraday bars.
 const (
 	NextOpen  Entry = "next_open"  // at the open of the first session that starts after the information
 	NextClose Entry = "next_close" // at the close of the first session that ends after the information
+	// Intraday opens at the open of the first intraday bar that starts at or after
+	// the information plus the delay, inside a session. The intraday bars must be
+	// supplied (see IntradaySource); an entry is never made at a daily price
+	// instead, except for information known only to the day.
+	Intraday Entry = "intraday"
 )
 
 // Costs are charged on each side of a trade, in basis points of the price.
@@ -170,6 +193,30 @@ type ContextSpec struct {
 	VolatilityEdges    []float64 `json:"volatility_edges"` // annualised volatility of daily returns
 	MomentumEdges      []float64 `json:"momentum_edges"`   // return over the momentum sessions
 	SizeEdges          []float64 `json:"size_edges"`       // market capitalisation
+
+	// LiquiditySessions and LiquidityEdges turn on the liquidity dimension: the
+	// mean traded value (close times volume) of the sessions before entry, in the
+	// currency of the series. RelativeEdges turns on relative momentum: the
+	// stock's return over MomentumSessions less the benchmark's. Both are left out
+	// of the specification, and so of its hash and of the report's breakdown, until
+	// they are set.
+	LiquiditySessions int       `json:"liquidity_sessions,omitempty"`
+	LiquidityEdges    []float64 `json:"liquidity_edges,omitempty"`
+	RelativeEdges     []float64 `json:"relative_edges,omitempty"`
+}
+
+// Dimensions are the conditions the specification breaks a report's groups
+// down by, in order: the original five, then liquidity and relative momentum
+// when they are turned on.
+func (c ContextSpec) Dimensions() []string {
+	out := Dimensions()
+	if c.LiquiditySessions > 0 {
+		out = append(out, "liquidity")
+	}
+	if len(c.RelativeEdges) > 0 {
+		out = append(out, "relative_momentum")
+	}
+	return out
 }
 
 // Context is the conditions around one event, measured from bars before the
@@ -181,21 +228,42 @@ type Context struct {
 	MarketTrend      string `json:"market_trend"`      // the benchmark against its own average: up, down
 	MarketVolatility string `json:"market_volatility"` // of the benchmark: low, mid, high
 
+	// Liquidity and RelativeMomentum are empty when the study does not measure
+	// them: low, mid, high, or "unknown" when it does and the data does not reach.
+	Liquidity        string `json:"liquidity,omitempty"`         // mean traded value before entry
+	RelativeMomentum string `json:"relative_momentum,omitempty"` // the stock's earlier return less the benchmark's
+
 	VolatilityValue       *float64 `json:"volatility_value,omitempty"`
 	MomentumValue         *float64 `json:"momentum_value,omitempty"`
 	MarketTrendValue      *float64 `json:"market_trend_value,omitempty"`
 	MarketVolatilityValue *float64 `json:"market_volatility_value,omitempty"`
+	LiquidityValue        *float64 `json:"liquidity_value,omitempty"`
+	RelativeMomentumValue *float64 `json:"relative_momentum_value,omitempty"`
 }
 
 // Unknown is the bucket of a condition that could not be measured.
 const Unknown = "unknown"
 
-// Dimensions are the conditions a report breaks its groups down by, in order.
+// Dimensions are the conditions every report breaks its groups down by, in
+// order. A study may add the two in ExtraDimensions; ContextSpec.Dimensions
+// lists the ones a specification uses.
 func Dimensions() []string {
 	return []string{"volatility", "momentum", "size", "market_trend", "market_volatility"}
 }
 
-// Bucket returns the bucket of one dimension; empty for a name that is not one.
+// ExtraDimensions are the conditions a study breaks its groups down by only
+// when its context specification turns them on.
+func ExtraDimensions() []string {
+	return []string{"liquidity", "relative_momentum"}
+}
+
+// AllDimensions are the names Bucket and a context condition understand.
+func AllDimensions() []string {
+	return append(Dimensions(), ExtraDimensions()...)
+}
+
+// Bucket returns the bucket of one dimension; empty for a name that is not one
+// and for a dimension the study did not measure.
 func (c Context) Bucket(dimension string) string {
 	switch dimension {
 	case "volatility":
@@ -208,6 +276,10 @@ func (c Context) Bucket(dimension string) string {
 		return c.MarketTrend
 	case "market_volatility":
 		return c.MarketVolatility
+	case "liquidity":
+		return c.Liquidity
+	case "relative_momentum":
+		return c.RelativeMomentum
 	}
 	return ""
 }
@@ -246,6 +318,37 @@ type Spec struct {
 	MinClusters int     `json:"min_clusters"`
 	Alpha       float64 `json:"alpha"`
 	Resamples   int     `json:"resamples"`
+
+	// TotalReturn counts the gross cash distributions paid while a position is
+	// held, in the stock's return and in the benchmark's and the sector
+	// benchmark's over the same days, so that they are compared like with like; no
+	// withholding tax is taken. A benchmark with no distribution record stays a
+	// price return and the report says so (Report.BenchmarkPriceOnly). It is left
+	// out of the specification, and so of its hash, until it is set.
+	TotalReturn bool `json:"total_return,omitempty"`
+
+	// FollowRenames makes the study read each series as the security that held the
+	// ticker, joining the bars of the symbols a verified rename or relisting links
+	// (marketdata.LoadSeriesWith), and report which series were joined and which
+	// ended. Without it a ticker is read as the one symbol it is. It is left out of
+	// the specification, and so of its hash, until it is set.
+	FollowRenames bool `json:"follow_renames,omitempty"`
+
+	// IntradayInterval is the length, in seconds, of the intraday bars the
+	// Intraday entry reads: a whole number of minutes, up to an hour. It is set
+	// for that entry and for no other, and is left out of the specification, and
+	// so of its hash, until it is set.
+	IntradayInterval int `json:"intraday_interval,omitempty"`
+
+	// EarlyCloseDays are the days, YYYY-MM-DD in the session's calendar, on which
+	// the exchange closed before the usual time. An intraday entry whose entry
+	// session is one of them is left out as a gap, not entered on bars the session
+	// may not have had; it is not guessed. They must be in ascending order without
+	// repeats, so that one list has one hash, and are for the intraday entry only.
+	// The study holds no calendar of its own: the days come from whoever states the
+	// study. It is left out of the specification, and so of its hash, until it is
+	// set.
+	EarlyCloseDays []string `json:"early_close_days,omitempty"`
 }
 
 // DefaultSpec is a starting point. Every number in it is a conservative,
@@ -275,10 +378,18 @@ func (s Spec) Validate() error {
 		return errors.New("eventstudy: the study names no event type")
 	case len(s.Horizons) == 0:
 		return errors.New("eventstudy: the study names no holding period")
-	case s.Entry != NextOpen && s.Entry != NextClose:
-		return fmt.Errorf("eventstudy: entry %q is not next_open or next_close: a daily bar can honour no other", s.Entry)
+	case s.Entry != NextOpen && s.Entry != NextClose && s.Entry != Intraday:
+		return fmt.Errorf("eventstudy: entry %q is not next_open, next_close or intraday", s.Entry)
 	case s.EntryDelayMinutes < 0 || s.EntryDelayMinutes > 24*60:
 		return errors.New("eventstudy: the entry delay must be between 0 minutes and a day")
+	case s.Entry == Intraday && s.EntryDelayMinutes < 1:
+		return errors.New("eventstudy: an intraday entry needs an entry delay of at least 1 minute")
+	case s.Entry == Intraday && (s.IntradayInterval < 60 || s.IntradayInterval > 3600 || s.IntradayInterval%60 != 0):
+		return errors.New("eventstudy: an intraday entry needs an intraday_interval of a whole number of minutes, in seconds, between 60 and 3600")
+	case s.Entry != Intraday && s.IntradayInterval != 0:
+		return errors.New("eventstudy: intraday_interval is for the intraday entry only")
+	case s.Entry != Intraday && len(s.EarlyCloseDays) > 0:
+		return errors.New("eventstudy: early_close_days is for the intraday entry only")
 	case s.Costs.HalfSpreadBps < 0 || s.Costs.SlippageBps < 0 || s.Costs.FeeBps < 0 || s.Costs.perSide() >= 0.05:
 		return errors.New("eventstudy: costs must not be negative and must stay under 500 basis points a side")
 	case s.MaxEntryGapDays < 1:
@@ -297,18 +408,43 @@ func (s Spec) Validate() error {
 		}
 		seen[h] = true
 	}
+	for i, day := range s.EarlyCloseDays {
+		if _, err := time.Parse(time.DateOnly, day); err != nil {
+			return fmt.Errorf("eventstudy: early close day %q is not YYYY-MM-DD", day)
+		}
+		if i > 0 && day <= s.EarlyCloseDays[i-1] {
+			return fmt.Errorf("eventstudy: early close days must be in ascending order without repeats, at %s", day)
+		}
+	}
+	enabled := map[string]bool{}
+	for _, d := range s.Context.Dimensions() {
+		enabled[d] = true
+	}
 	for _, c := range s.Where {
 		if err := c.Validate(); err != nil {
 			return err
+		}
+		if kind, name := c.kind(); kind == "context" && !enabled[name] {
+			return fmt.Errorf("eventstudy: condition %q needs the %s dimension, which the context does not turn on", c.Field, name)
 		}
 	}
 	if _, err := newSessions(s.Session); err != nil {
 		return err
 	}
 	for name, edges := range map[string][]float64{"volatility_edges": s.Context.VolatilityEdges, "momentum_edges": s.Context.MomentumEdges, "size_edges": s.Context.SizeEdges} {
-		if len(edges) != 2 || edges[0] >= edges[1] {
+		if !twoAscending(edges) {
 			return fmt.Errorf("eventstudy: context %s must be two ascending values", name)
 		}
+	}
+	switch {
+	case s.Context.LiquiditySessions < 0:
+		return errors.New("eventstudy: context liquidity_sessions must not be negative")
+	case s.Context.LiquiditySessions == 0 && len(s.Context.LiquidityEdges) > 0:
+		return errors.New("eventstudy: context liquidity_edges need liquidity_sessions of at least 1")
+	case s.Context.LiquiditySessions > 0 && !twoAscending(s.Context.LiquidityEdges):
+		return errors.New("eventstudy: context liquidity_edges must be two ascending values")
+	case len(s.Context.RelativeEdges) > 0 && !twoAscending(s.Context.RelativeEdges):
+		return errors.New("eventstudy: context relative_edges must be two ascending values")
 	}
 	if s.Context.VolatilitySessions < 5 || s.Context.MomentumSessions < 5 || s.Context.TrendSessions < 5 {
 		return errors.New("eventstudy: context lookbacks must be at least 5 sessions")
@@ -334,6 +470,10 @@ func (s Spec) Validate() error {
 		return errors.New("eventstudy: validation must start after development ends")
 	}
 	return nil
+}
+
+func twoAscending(edges []float64) bool {
+	return len(edges) == 2 && edges[0] < edges[1]
 }
 
 // Hash is a digest of the specification.
@@ -382,14 +522,29 @@ const (
 	Leaks     = "leaks"      // a development holding period reaches into validation
 )
 
+// States of a study that counts distributions (Spec.TotalReturn).
+const (
+	// NoDividends is an outcome: nothing is known about the security's
+	// distributions, or what is known cannot be read.
+	NoDividends = "no_dividends"
+	// DividendUnclear is a holding period over the ex-day of a distribution that
+	// cannot be counted: it is left out, not scored without it.
+	DividendUnclear = "dividend_unclear"
+)
+
 // Held is one holding period of one event.
 type Held struct {
 	Sessions int    `json:"sessions"`
 	State    string `json:"state"`
 	ExitDay  string `json:"exit_day,omitempty"`
-	// Gross is the price return; Net is after costs on both sides.
+	// Gross is the price return, with the distributions of Dividend added when the
+	// study counts them; Net is after costs on both sides (the distributions are
+	// not charged).
 	Gross float64 `json:"gross"`
 	Net   float64 `json:"net"`
+	// Dividend is the gross cash per share received over the holding period, in
+	// the study's price basis; zero, and left out, when none or not counted.
+	Dividend float64 `json:"dividend,omitempty"`
 	// Market and Sector are the returns of the benchmarks over the same days,
 	// without costs; nil when there is no benchmark or it lacks those days.
 	Market *float64 `json:"market,omitempty"`
@@ -412,8 +567,14 @@ type Outcome struct {
 	Period      string  `json:"period,omitempty"`
 	EntryDay    string  `json:"entry_day,omitempty"`
 	EntryPrice  float64 `json:"entry_price,omitempty"`
-	Context     Context `json:"context"`
-	Held        []Held  `json:"held,omitempty"`
+	// EntryAt is the start of the intraday bar the position was opened at, RFC 3339
+	// in UTC, and EntryBasis says whether that was an intraday bar or the daily
+	// open (information known only to the day); both are left out unless the
+	// study enters intraday.
+	EntryAt    string  `json:"entry_at,omitempty"`
+	EntryBasis string  `json:"entry_basis,omitempty"`
+	Context    Context `json:"context"`
+	Held       []Held  `json:"held,omitempty"`
 }
 
 // Stats summarises one measure over the events of a group.
@@ -451,7 +612,7 @@ type Group struct {
 	Type      string `json:"type"`
 	Sessions  int    `json:"sessions"`
 	Period    string `json:"period"`
-	Dimension string `json:"dimension"` // "all", or one of Dimensions
+	Dimension string `json:"dimension"` // "all", or one of the study's ContextSpec.Dimensions
 	Bucket    string `json:"bucket"`    // "all", or the bucket of the dimension
 	// Net is after costs; VsMarket and VsSector are Net less the benchmark, over
 	// the events that have one.
@@ -495,6 +656,44 @@ type Report struct {
 	Limits   []string  `json:"limits,omitempty"`
 	Status   string    `json:"status"`
 	Outcomes []Outcome `json:"outcomes,omitempty"`
+
+	// Basis says what the stock's returns include: BasisTotalReturnGross when the
+	// study counts distributions, empty for prices only. The benchmarks include
+	// their own distributions under the same rule, except those listed in
+	// BenchmarkPriceOnly.
+	Basis string `json:"basis,omitempty"`
+
+	// BenchmarkPriceOnly names, with the reason, each benchmark that was used with
+	// no distribution record at all, so that its return is a price return while the
+	// stock's is a total return: nothing can tell such a benchmark from one that
+	// pays none. It is left out when there is none, and for a study that counts
+	// prices only.
+	BenchmarkPriceOnly map[string]string `json:"benchmark_price_only,omitempty"`
+
+	// Stitched lists, by ticker, the series that joined the bars of several symbols
+	// and Ended those that stop on a day because the security was delisted or merged
+	// away, so that a delisting is not read as missing data. Both list only the
+	// series the study read, and are left out unless the study follows renames
+	// (Spec.FollowRenames) and there is something to say.
+	Stitched []Stitched `json:"stitched,omitempty"`
+	Ended    []Ended    `json:"ended,omitempty"`
+
+	// Entries counts the measured events of a study that enters intraday by how
+	// they were opened (EntryBasisIntraday, EntryBasisDailyOpen); nil for every
+	// other study.
+	Entries map[string]int `json:"entries,omitempty"`
+}
+
+// Stitched is a series joined from the bars of several symbols.
+type Stitched struct {
+	Security string `json:"security"`
+	Chain    []Link `json:"chain"`
+}
+
+// Ended is a series that stops because the security stopped trading.
+type Ended struct {
+	Security string `json:"security"`
+	Day      string `json:"day"` // the last day of the security, YYYY-MM-DD
 }
 
 // Find returns the group of a type, holding period, window, dimension and

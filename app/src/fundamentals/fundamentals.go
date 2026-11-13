@@ -36,6 +36,12 @@ const (
 	AvgShares = "shares_avg" // weighted average over a year, the fallback for Shares
 )
 
+// The metrics that are read from a company's history only (History), never from the frames.
+const (
+	OperatingIncome   = "operating_income"   // a year
+	OperatingCashFlow = "operating_cashflow" // a year
+)
+
 // Fact is one number of one company, for the period that ended on End. Start is
 // empty for a value at a date.
 type Fact struct {
@@ -50,24 +56,28 @@ type Fact struct {
 	Accession, Taxonomy, Concept, Unit, Form, Filed, Dimensions string
 }
 
-// source is a concept in a taxonomy, in the order of preference for its metric.
+// source is a concept in a taxonomy, in the order of preference for its metric. A historyOnly
+// source is read from a company's facts (History) and is not asked of the frames API, which would
+// add a request per period to the weekly job for every such concept.
 type source struct {
 	metric, taxonomy, concept, unit string
-	instant                         bool
+	instant, historyOnly            bool
 }
 
 var sources = []source{
-	{Revenue, "us-gaap", "Revenues", "USD", false},
-	{Revenue, "us-gaap", "RevenueFromContractWithCustomerExcludingAssessedTax", "USD", false},
-	{Revenue, "us-gaap", "RevenueFromContractWithCustomerIncludingAssessedTax", "USD", false},
-	{Revenue, "us-gaap", "SalesRevenueNet", "USD", false},
-	{NetIncome, "us-gaap", "NetIncomeLoss", "USD", false},
-	{NetIncome, "us-gaap", "ProfitLoss", "USD", false},
-	{AvgShares, "us-gaap", "WeightedAverageNumberOfSharesOutstandingBasic", "shares", false},
-	{Assets, "us-gaap", "Assets", "USD", true},
-	{Equity, "us-gaap", "StockholdersEquity", "USD", true},
-	{Equity, "us-gaap", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest", "USD", true},
-	{Shares, "dei", "EntityCommonStockSharesOutstanding", "shares", true},
+	{Revenue, "us-gaap", "Revenues", "USD", false, false},
+	{Revenue, "us-gaap", "RevenueFromContractWithCustomerExcludingAssessedTax", "USD", false, false},
+	{Revenue, "us-gaap", "RevenueFromContractWithCustomerIncludingAssessedTax", "USD", false, false},
+	{Revenue, "us-gaap", "SalesRevenueNet", "USD", false, false},
+	{NetIncome, "us-gaap", "NetIncomeLoss", "USD", false, false},
+	{NetIncome, "us-gaap", "ProfitLoss", "USD", false, false},
+	{AvgShares, "us-gaap", "WeightedAverageNumberOfSharesOutstandingBasic", "shares", false, false},
+	{Assets, "us-gaap", "Assets", "USD", true, false},
+	{Equity, "us-gaap", "StockholdersEquity", "USD", true, false},
+	{Equity, "us-gaap", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest", "USD", true, false},
+	{Shares, "dei", "EntityCommonStockSharesOutstanding", "shares", true, false},
+	{OperatingIncome, "us-gaap", "OperatingIncomeLoss", "USD", false, true},
+	{OperatingCashFlow, "us-gaap", "NetCashProvidedByUsedInOperatingActivities", "USD", false, true},
 }
 
 // Fetcher asks the frames API.
@@ -133,6 +143,9 @@ func (f Fetcher) Fetch(ctx context.Context) ([]Fact, Report, error) {
 	var facts []Fact
 	now := f.now()
 	for _, s := range sources {
+		if s.historyOnly {
+			continue
+		}
 		var periods []string
 		if s.instant {
 			periods = quarterEnds(now)

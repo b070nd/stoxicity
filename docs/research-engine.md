@@ -34,7 +34,7 @@ request; the order path with its own checks is in [orders.md](orders.md) and
   publication" inside a session cannot be measured with them and is not
   pretended: the entry is the next open or the next close after the information
   plus the stated delay.
-- **Not a model's opinion.** Figures are read by rules (`text-rules-1`,
+- **Not a model's opinion.** Figures are read by rules (`text-rules-2`,
   `form4-1`, `results-1`). No language model reads them. `eventfact.Vet` exists
   to check a model's proposals against the text (verbatim spans, re-read
   values) for when one is wired in; none is.
@@ -57,10 +57,10 @@ new revision and the earlier one stays readable (`list -at TIME`).
 
 | Category | Types | Read from | Figures |
 |---|---|---|---|
-| earnings | `earnings_reported`, `earnings_beat`, `earnings_miss` | results events (8-K 2.02, 10-Q, 10-K) and reported XBRL figures filed by that day | revenue, net income, EPS, year-over-year changes; a surprise only when the text states one |
+| earnings | `earnings_reported`, `earnings_beat`, `earnings_miss` | results events (8-K 2.02, 10-Q, 10-K) and reported XBRL figures filed by that day | revenue, net income, EPS, year-over-year changes, net margin, operating margin, operating cash flow and its margin; a surprise only when the text states one |
 | guidance | `guidance_issued`, `_upgrade`, `_downgrade`, `_reaffirmed`, `_withdrawn` | the event's titles and summaries | previous and new figure (midpoint and both ends of a range), change, period, metric |
-| buyback | `buyback_announced`, `buyback_expanded` | the event's text | amount, shares, previous amount, financing when stated |
-| contract | `contract_award`, `contract_termination` | the event's text | value, duration, annual value, counterparty, government or commercial |
+| buyback | `buyback_announced`, `buyback_expanded` | the event's text | amount, shares, previous amount, financing when stated; label `kind` (authorization) |
+| contract | `contract_award`, `contract_termination` | the event's text | value, duration, annual value, counterparty, government or commercial; labels `certainty` (firm, conditional, framework) and `value_kind` (ceiling) |
 | insider | `insider_buy`, `insider_sell` | Form 4, codes P and S in common shares only | value, shares, average price, share of holding, role, 10b5-1 plan |
 | analyst | `analyst_upgrade`, `_downgrade`, `target_raised`, `target_cut`, `estimate_raised`, `estimate_cut` | the event's text | previous and new target or estimate, ratings, firm |
 
@@ -279,3 +279,32 @@ A rule may carry an optional `trade` stanza (only a buy may): `notional` (a plai
 `limit_offset` (0 to 0.2 above the reference close) and `invalidation_offset` (0 for no stop, below 1). It is part of
 the playbook's hash only when present, so earlier playbooks keep theirs. `walkfwd from-playbook` turns signals into
 proposals and bars for the replay; see [walkfwd.md](walkfwd.md).
+
+## Company size, ratios, context and the life of a signal
+
+- **Company size.** A study fills the market capitalisation of each event: the latest share count from the cover
+  page filed by the day before the event (the annual average count only when no cover count exists), brought to the
+  price basis with the known splits, times the last close before the event day. A cover that states several counts
+  for one date (dual-class issuers), a count older than 480 days or a close more than 10 days old gives nothing, and
+  the size bucket stays `unknown`. Nothing is guessed.
+- **Ratios against size.** When a study reads an event it also works out `pct_of_market_cap` and
+  `pct_of_shares_outstanding` for buybacks, and `pct_of_revenue` (from the annual value) and `pct_of_market_cap` for
+  contracts. They are not stored with the event, because they depend on price and split vintage.
+- **More conditions.** A study may switch on `liquidity` (mean traded value over N sessions) and `relative_momentum`
+  (the stock's earlier return less the benchmark's) in its `context` (`liquidity_sessions`, `liquidity_edges`,
+  `relative_edges`). They are off by default, and a study without them reads and hashes exactly as before. A rule
+  that asks for a dimension the study did not break down fails its `comparable` test with that reason.
+- **Margins and cash flow** need the operating-income and operating-cash-flow concepts from the company-facts
+  history. They are read by the history refresh only, never by the daily frames job, so they are absent until a
+  history refresh has run.
+- **A signal's life.** A signal carries `created_at` (the clock of the command), `expires_at` (the start of the day
+  after the last day an entry is still accepted, by the study's entry gap, in the session's time zone) and `exit`
+  (the holding period, the stop offset of the rule's trade stanza if any, and a plain sentence). None of them is part
+  of the signal's ID.
+- **Executed buybacks** ("repurchased N shares under the program") are no longer stored as announcements: a report on
+  past execution is not a new program.
+
+Not built, and why: analyst revisions (no source), model extraction (the labelled test set comes first), identity
+mappings for ticker changes and mergers (no authoritative source stored), intraday entries, dividends in study
+returns (it would change every study's hash), year-over-year change of the margins, and the contract and buyback
+fields that need the full text of a release ("revenue impact", execution against authorization as figures).

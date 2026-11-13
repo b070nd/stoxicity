@@ -11,7 +11,7 @@ import (
 // their conditions before they are run and be compared by hash.
 type Condition struct {
 	// Field is "number:<name>" for a figure of the event, "label:<name>" for a
-	// word of it, "sector", or "context:<dimension>" for a bucket of Dimensions.
+	// word of it, "sector", or "context:<dimension>" for a bucket of AllDimensions.
 	Field string `json:"field"`
 	// Op is gt, ge, lt, le or eq for a figure, and is or not for a word.
 	Op    string  `json:"op"`
@@ -59,7 +59,7 @@ func (c Condition) Validate() error {
 }
 
 func isDimension(name string) bool {
-	for _, d := range Dimensions() {
+	for _, d := range AllDimensions() {
 		if d == name {
 			return true
 		}

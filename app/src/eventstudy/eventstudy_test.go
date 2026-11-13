@@ -4,10 +4,15 @@ package eventstudy
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"math"
 	"reflect"
+	"runtime"
+	"sort"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -351,5 +356,315 @@ func TestRebuiltEventsCountOnlyWhenAttested(t *testing.T) {
 	g.Reconstructed, g.Attested = 1, 39
 	if status, _ := verdict(g, spec, nil, 1); status != Experimental {
 		t.Errorf("one rebuilt event without an attested time: %s, want experimental", status)
+	}
+}
+
+// A study that does not turn on the two extra dimensions keeps its
+// specification hash, its report bit for bit and its breakdown. The two digests
+// were taken from the code before the dimensions existed.
+func TestStudyWithoutExtraDimensionsIsUnchanged(t *testing.T) {
+	const (
+		specHash   = "f4a29dc957f9879ddb351807d3c396d653d6f2dba90fed66830cba0189ae8d26"
+		reportHash = "abed7899c26fbafed5b051b30a2173b6ab248f35f72e278b9c50ed71621d255c"
+	)
+	obs, prices := studyData(t)
+	rep, err := Run(studySpec(), Manifest{PointInTimeUniverse: true, IncludesDelisted: true}, obs, prices)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.SpecHash != specHash {
+		t.Errorf("spec hash = %s, want %s", rep.SpecHash, specHash)
+	}
+	b, err := json.Marshal(rep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The digest was taken on arm64, where the compiler fuses multiplications and
+	// additions, so the last bits of the floats in the report differ on other
+	// architectures. The spec hash above and the key check below hold everywhere.
+	if sum := sha256.Sum256(b); runtime.GOARCH == "arm64" && hex.EncodeToString(sum[:]) != reportHash {
+		t.Error("the report no longer encodes as it did before liquidity and relative momentum")
+	}
+	for _, word := range []string{"liquidity", "relative"} {
+		if strings.Contains(string(b), word) {
+			t.Errorf("the report mentions %q though the study does not measure it", word)
+		}
+	}
+}
+
+func dimensionsOf(rep Report) []string {
+	seen := map[string]bool{}
+	for _, g := range rep.Groups {
+		if g.Dimension != "all" {
+			seen[g.Dimension] = true
+		}
+	}
+	return sortedKeys(seen)
+}
+
+func TestBreakdownListsExtraDimensionsOnlyWhenEnabled(t *testing.T) {
+	obs, prices := studyData(t)
+	base := Dimensions()
+	sort.Strings(base)
+	both := append(append([]string(nil), base...), "liquidity", "relative_momentum")
+	sort.Strings(both)
+	liquidityOnly := append(append([]string(nil), base...), "liquidity")
+	sort.Strings(liquidityOnly)
+
+	for _, c := range []struct {
+		name string
+		set  func(*ContextSpec)
+		want []string
+	}{
+		{"neither", func(*ContextSpec) {}, base},
+		{"liquidity", func(c *ContextSpec) { c.LiquiditySessions, c.LiquidityEdges = 5, []float64{5e4, 2e5} }, liquidityOnly},
+		{"both", func(c *ContextSpec) {
+			c.LiquiditySessions, c.LiquidityEdges, c.RelativeEdges = 5, []float64{5e4, 2e5}, []float64{-0.02, 0.02}
+		}, both},
+	} {
+		spec := studySpec()
+		spec.Context.MomentumSessions = 5
+		c.set(&spec.Context)
+		rep, err := Run(spec, Manifest{}, obs, prices)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if got := dimensionsOf(rep); !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%s: breakdown by %v, want %v", c.name, got, c.want)
+		}
+		if got := spec.Context.Dimensions(); len(got) != len(c.want) {
+			t.Errorf("%s: ContextSpec.Dimensions = %v", c.name, got)
+		}
+	}
+
+	spec := studySpec()
+	spec.Context.MomentumSessions = 5
+	spec.Context.LiquiditySessions, spec.Context.LiquidityEdges, spec.Context.RelativeEdges = 5, []float64{5e4, 2e5}, []float64{-0.02, 0.02}
+	rep, err := Run(spec, Manifest{}, obs, prices)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g, ok := rep.Find("x", 1, Validation, "liquidity", "mid"); !ok || g.Net.N == 0 {
+		t.Errorf("no liquidity group: %+v", g)
+	}
+	if g, ok := rep.Find("x", 1, Validation, "relative_momentum", "high"); !ok || g.Net.N == 0 {
+		t.Errorf("no relative momentum group: %+v", g)
+	}
+	if rep.SpecHash == studySpec().Hash() {
+		t.Error("turning the dimensions on did not change the specification hash")
+	}
+}
+
+// volumeBars are weekday bars closing at 100 with the given volume on each.
+func volumeBars(n int, volume func(i int) int64) []Bar {
+	bars := weekdayBars("2024-01-01", n, flat)
+	for i := range bars {
+		bars[i].Volume = volume(i)
+	}
+	return bars
+}
+
+func TestLiquidityBuckets(t *testing.T) {
+	spec := ContextSpec{LiquiditySessions: 5, LiquidityEdges: []float64{1e5, 1e6}}
+	const entry = 20
+	for _, c := range []struct {
+		name   string
+		volume int64 // a close of 100 makes the mean traded value 100 times this
+		want   string
+	}{
+		{"below the first edge", 999, "low"},
+		{"on the first edge", 1000, "mid"},
+		{"below the second edge", 9999, "mid"},
+		{"on the second edge", 10000, "high"},
+	} {
+		bars := volumeBars(30, func(i int) int64 {
+			if i >= entry-5 && i < entry {
+				return c.volume
+			}
+			return 1 // older bars are outside the five sessions
+		})
+		got := contextAt(spec, bars, entry, nil, -1, 0)
+		if got.Liquidity != c.want || got.LiquidityValue == nil || *got.LiquidityValue != 100*float64(c.volume) {
+			t.Errorf("%s: %s %v, want %s", c.name, got.Liquidity, got.LiquidityValue, c.want)
+		}
+		if got.RelativeMomentum != "" || got.RelativeMomentumValue != nil {
+			t.Errorf("%s: relative momentum measured though it is off: %+v", c.name, got)
+		}
+	}
+
+	// the mean, not the last session, is what is bucketed
+	bars := volumeBars(30, func(i int) int64 {
+		if i == entry-1 {
+			return 25000
+		}
+		return 0
+	})
+	if got := contextAt(spec, bars, entry, nil, -1, 0); got.Liquidity != "mid" {
+		t.Errorf("one busy session of five: %s, want mid", got.Liquidity)
+	}
+}
+
+func TestLiquidityIsUnknownWhenTheDataDoesNotReach(t *testing.T) {
+	spec := ContextSpec{LiquiditySessions: 5, LiquidityEdges: []float64{1e5, 1e6}}
+	busy := func(int) int64 { return 5000 }
+	negative := volumeBars(30, busy)
+	negative[18].Volume = -1
+	for _, c := range []struct {
+		name  string
+		bars  []Bar
+		entry int
+	}{
+		{"fewer sessions than asked for", volumeBars(30, busy), 4},
+		{"no entry session", volumeBars(30, busy), -3},
+		{"no volume at all", volumeBars(30, func(int) int64 { return 0 }), 20},
+		{"a volume that cannot be right", negative, 20},
+	} {
+		got := contextAt(spec, c.bars, c.entry, nil, -1, 0)
+		if got.Liquidity != Unknown || got.LiquidityValue != nil {
+			t.Errorf("%s: %s %v, want unknown", c.name, got.Liquidity, got.LiquidityValue)
+		}
+	}
+	if got := contextAt(ContextSpec{}, volumeBars(30, busy), 20, nil, -1, 0); got.Liquidity != "" {
+		t.Errorf("liquidity off: %q, want empty", got.Liquidity)
+	}
+
+	on, off := studySpec(), studySpec()
+	on.Context.LiquiditySessions, on.Context.LiquidityEdges = 5, []float64{1e5, 1e6}
+	o := Observation{ID: "a", Security: "ZZZ", Type: "x", AvailableAt: newYork(t, "2024-01-03", "10:00")}
+	if got, err := ContextFor(on, o, MapPrices{}); err != nil || got.Liquidity != Unknown {
+		t.Errorf("no series, liquidity on: %q, %v; want unknown", got.Liquidity, err)
+	}
+	if got, err := ContextFor(off, o, MapPrices{}); err != nil || got.Liquidity != "" {
+		t.Errorf("no series, liquidity off: %q, %v; want empty", got.Liquidity, err)
+	}
+}
+
+// momentumBars close at from five sessions before the last bar before entry and
+// at to on it.
+func momentumBars(entry int, from, to float64) []Bar {
+	return weekdayBars("2024-01-01", 30, func(i int) (float64, float64) {
+		c := from
+		if i >= entry-1 {
+			c = to
+		}
+		return c, c
+	})
+}
+
+func TestRelativeMomentumBuckets(t *testing.T) {
+	spec := ContextSpec{MomentumSessions: 5, MomentumEdges: []float64{-0.1, 0.1}, RelativeEdges: []float64{-0.05, 0.05}}
+	const entry = 20
+	for _, c := range []struct {
+		name          string
+		stock, market float64 // the last close before entry, from 100 five sessions earlier
+		want          string
+		value         float64
+	}{
+		{"ahead of the market", 110, 102, "high", 0.08},
+		{"level with the market", 100, 102, "mid", -0.02},
+		{"behind the market", 90, 100, "low", -0.1},
+		{"up in a rising market is not ahead", 106, 106, "mid", 0},
+	} {
+		got := contextAt(spec, momentumBars(entry, 100, c.stock), entry, momentumBars(entry, 100, c.market), entry, 0)
+		if got.RelativeMomentum != c.want || got.RelativeMomentumValue == nil || math.Abs(*got.RelativeMomentumValue-c.value) > 1e-12 {
+			t.Errorf("%s: %s %v, want %s %v", c.name, got.RelativeMomentum, got.RelativeMomentumValue, c.want, c.value)
+		}
+	}
+
+	stock, market := momentumBars(entry, 100, 110), momentumBars(entry, 100, 100)
+	for _, c := range []struct {
+		name        string
+		market      []Bar
+		marketEntry int
+		spec        ContextSpec
+		want        string
+	}{
+		{"no benchmark bar for the entry day", market, -1, spec, Unknown},
+		{"a benchmark too short for the lookback", market, 3, spec, Unknown},
+		{"not asked for", market, entry, ContextSpec{MomentumSessions: 5, MomentumEdges: spec.MomentumEdges}, ""},
+	} {
+		if got := contextAt(c.spec, stock, entry, c.market, c.marketEntry, 0); got.RelativeMomentum != c.want || got.RelativeMomentumValue != nil {
+			t.Errorf("%s: %q %v, want %q", c.name, got.RelativeMomentum, got.RelativeMomentumValue, c.want)
+		}
+	}
+	if got := contextAt(spec, momentumBars(entry, 100, 110)[:4], 3, market, entry, 0); got.RelativeMomentum != Unknown {
+		t.Errorf("a stock too short for the lookback: %q, want unknown", got.RelativeMomentum)
+	}
+}
+
+func TestNewDimensionsUseOnlyBarsBeforeEntry(t *testing.T) {
+	spec := ContextSpec{MomentumSessions: 5, MomentumEdges: []float64{-0.1, 0.1}, LiquiditySessions: 5,
+		LiquidityEdges: []float64{1e5, 1e6}, RelativeEdges: []float64{-0.05, 0.05}}
+	const entry = 20
+	bars, market := momentumBars(entry, 100, 110), momentumBars(entry, 100, 100)
+	for i := range bars {
+		bars[i].Volume = 5000
+	}
+	base := contextAt(spec, bars, entry, market, entry, 0)
+	if base.Liquidity != "mid" || base.RelativeMomentum != "high" {
+		t.Fatalf("context not measured: %+v", base)
+	}
+
+	changed, changedMarket := append([]Bar(nil), bars...), append([]Bar(nil), market...)
+	for i := entry; i < len(changed); i++ {
+		changed[i].Close, changed[i].Open, changed[i].Volume = 1e6, 1e6, 1e12
+		changedMarket[i].Close, changedMarket[i].Open, changedMarket[i].Volume = 1, 1, 1e12
+	}
+	if got := contextAt(spec, changed, entry, changedMarket, entry, 0); !reflect.DeepEqual(base, got) {
+		t.Errorf("bars at or after entry changed the context:\n%+v\n%+v", base, got)
+	}
+	changed[entry-1].Volume = 1e12
+	if got := contextAt(spec, changed, entry, market, entry, 0); got.Liquidity != "high" {
+		t.Errorf("the last bar before entry did not count: %s", got.Liquidity)
+	}
+}
+
+func TestContextSpecValidation(t *testing.T) {
+	good := func(mutate func(*Spec)) Spec {
+		s := testSpec()
+		s.Context.LiquiditySessions, s.Context.LiquidityEdges, s.Context.RelativeEdges = 20, []float64{1e6, 1e7}, []float64{-0.05, 0.05}
+		mutate(&s)
+		return s
+	}
+	for _, c := range []struct {
+		name   string
+		mutate func(*Spec)
+		ok     bool
+	}{
+		{"both on", func(*Spec) {}, true},
+		{"both off", func(s *Spec) {
+			s.Context.LiquiditySessions, s.Context.LiquidityEdges, s.Context.RelativeEdges = 0, nil, nil
+		}, true},
+		{"liquidity sessions negative", func(s *Spec) { s.Context.LiquiditySessions = -1 }, false},
+		{"liquidity edges without sessions", func(s *Spec) { s.Context.LiquiditySessions = 0 }, false},
+		{"liquidity sessions without edges", func(s *Spec) { s.Context.LiquidityEdges = nil }, false},
+		{"liquidity edges descending", func(s *Spec) { s.Context.LiquidityEdges = []float64{1e7, 1e6} }, false},
+		{"liquidity edges equal", func(s *Spec) { s.Context.LiquidityEdges = []float64{1e6, 1e6} }, false},
+		{"liquidity edges three", func(s *Spec) { s.Context.LiquidityEdges = []float64{1, 2, 3} }, false},
+		{"relative edges descending", func(s *Spec) { s.Context.RelativeEdges = []float64{0.05, -0.05} }, false},
+		{"relative edges one", func(s *Spec) { s.Context.RelativeEdges = []float64{0.05} }, false},
+		{"condition on liquidity that is on", func(s *Spec) { s.Where = []Condition{{Field: "context:liquidity", Op: "is", Text: "high"}} }, true},
+		{"condition on liquidity that is off", func(s *Spec) {
+			s.Context.LiquiditySessions, s.Context.LiquidityEdges = 0, nil
+			s.Where = []Condition{{Field: "context:liquidity", Op: "is", Text: "high"}}
+		}, false},
+		{"condition on relative momentum that is off", func(s *Spec) {
+			s.Context.RelativeEdges = nil
+			s.Where = []Condition{{Field: "context:relative_momentum", Op: "not", Text: "low"}}
+		}, false},
+	} {
+		if err := good(c.mutate).Validate(); (err == nil) != c.ok {
+			t.Errorf("%s: err = %v, want ok = %t", c.name, err, c.ok)
+		}
+	}
+	if err := (Condition{Field: "context:relative_momentum", Op: "is", Text: "high"}).Validate(); err != nil {
+		t.Errorf("a condition on relative momentum alone: %v", err)
+	}
+	if err := (Condition{Field: "context:nonsense", Op: "is", Text: "high"}).Validate(); err == nil {
+		t.Error("a condition on no dimension was accepted")
+	}
+	ctx := Context{Liquidity: "high", RelativeMomentum: "low"}
+	if ctx.Bucket("liquidity") != "high" || ctx.Bucket("relative_momentum") != "low" || ctx.Bucket("nonsense") != "" {
+		t.Errorf("Bucket does not know the new names: %+v", ctx)
 	}
 }

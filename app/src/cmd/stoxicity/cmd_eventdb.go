@@ -15,7 +15,7 @@ import (
 // cmdEventdb is the historical event database: economic events with their figures.
 func cmdEventdb(ctx context.Context, a *app, args []string) error {
 	if len(args) == 0 {
-		return usageErrorf("expected: build | list | show | coverage | types")
+		return usageErrorf("expected: build | list | show | coverage | import-analyst | fetch-analyst | types")
 	}
 	switch args[0] {
 	case "build":
@@ -26,6 +26,10 @@ func cmdEventdb(ctx context.Context, a *app, args []string) error {
 		return labEventdbShow(ctx, a, args[1:])
 	case "coverage":
 		return labEventdbCoverage(ctx, a, args[1:])
+	case "import-analyst":
+		return labEventdbImportAnalyst(ctx, a, args[1:])
+	case "fetch-analyst":
+		return labEventdbFetchAnalyst(ctx, a, args[1:])
 	case "types":
 		if len(args) > 1 {
 			return usageErrorf("eventdb types takes no arguments")
@@ -33,7 +37,7 @@ func cmdEventdb(ctx context.Context, a *app, args []string) error {
 		printEventTypes(a)
 		return nil
 	}
-	return usageErrorf("unknown subcommand %q (build, list, show, coverage, types)", args[0])
+	return usageErrorf("unknown subcommand %q (build, list, show, coverage, import-analyst, fetch-analyst, types)", args[0])
 }
 
 // labEndOfDay is the last moment of the day that parseDay reads.

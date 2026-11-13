@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -38,6 +39,9 @@ func at(cik int, end string, val float64) string {
 func scripted(answers map[string]httpx.Response, failures ...string) (*httpx.Fake, Fetcher) {
 	f := httpx.NewFake()
 	for _, s := range sources {
+		if s.historyOnly {
+			continue
+		}
 		var periods []string
 		if s.instant {
 			periods = quarterEnds(now)
@@ -92,6 +96,25 @@ func TestFetchKeepsYearsOnlyAndTheFirstConceptOfACompany(t *testing.T) {
 	}
 	if rep.Requests != 45 || rep.Missing != 43 || rep.Companies != 2 {
 		t.Errorf("report %+v", rep)
+	}
+}
+
+// The frames job asks for the same frames as before: the concepts that are read from a company's
+// history only add no request.
+func TestFetchDoesNotAskForHistoryOnlyConcepts(t *testing.T) {
+	fk, fe := scripted(nil)
+	_, rep, err := fe.Fetch(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := fk.Calls()
+	if rep.Requests != 45 || len(calls) != 45 {
+		t.Errorf("requests %d reported, %d made, want 45", rep.Requests, len(calls))
+	}
+	for _, c := range calls {
+		if strings.Contains(c.URL, "OperatingIncomeLoss") || strings.Contains(c.URL, "NetCashProvidedByUsedInOperatingActivities") {
+			t.Errorf("a history-only concept was asked of the frames: %s", c.URL)
+		}
 	}
 }
 

@@ -298,7 +298,7 @@ func playbookSignals(ctx context.Context, a *app, lab research.Lab, id string, s
 	if err != nil {
 		return p, report, nil, err
 	}
-	signals, err := research.Signals(ctx, db, research.SignalInput{Playbook: p, Report: report, From: start, To: end, Sectors: a.sectorMap()})
+	signals, err := research.Signals(ctx, db, research.SignalInput{Playbook: p, Report: report, From: start, To: end, Sectors: a.sectorMap(), Now: a.now()})
 	return p, report, signals, err
 }
 

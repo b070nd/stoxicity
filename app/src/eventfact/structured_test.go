@@ -117,3 +117,42 @@ func TestFromResults(t *testing.T) {
 		t.Errorf("without helpers: %+v", plain)
 	}
 }
+
+func TestFromResultsGivesMarginsAndCashFlowOnlyWhenKnown(t *testing.T) {
+	ev := EventText{EventID: "e1", SecurityID: "sec1", Symbol: "ABC", CIK: "0000000001", Kind: model.EventResults,
+		PublishedAt: time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC), AvailableAt: time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC),
+		Precision: PrecisionDay, Source: SourceCompany, SourceRef: "ref-e1", Evidence: []string{"ref-e1"}, Basis: Known}
+	cases := []struct {
+		name    string
+		figures Figures
+		want    map[string]string // name to unit
+		derived map[string]bool
+	}{
+		{"all", Figures{Period: "FY2025", Currency: "USD", NetMargin: ptr(0.1), OperatingMargin: ptr(0.25), OperatingCashFlow: ptr(80), CashFlowMargin: ptr(0.4)},
+			map[string]string{"net_margin": "ratio", "operating_margin": "ratio", "operating_cash_flow": "USD", "cash_flow_margin": "ratio"},
+			map[string]bool{"net_margin": true, "operating_margin": true, "operating_cash_flow": false, "cash_flow_margin": true}},
+		{"only net margin", Figures{Period: "FY2025", Currency: "USD", Revenue: ptr(10), NetMargin: ptr(0.1)},
+			map[string]string{"revenue": "USD", "net_margin": "ratio"}, map[string]bool{"net_margin": true}},
+		{"none", Figures{Period: "FY2025", Currency: "USD"}, map[string]string{}, nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			rs := FromResults([]EventText{ev}, func(string, string) (Figures, bool) { return c.figures, true }, nil)
+			if len(rs) != 1 {
+				t.Fatalf("got %d records, want 1 (Validate must accept the facts)", len(rs))
+			}
+			if err := rs[0].Validate(); err != nil {
+				t.Fatal(err)
+			}
+			if len(rs[0].Facts) != len(c.want) {
+				t.Fatalf("facts %+v, want %v", rs[0].Facts, c.want)
+			}
+			for name, unit := range c.want {
+				f, ok := rs[0].Fact(name)
+				if !ok || f.Unit != unit || f.Period != "FY2025" || f.Derived != c.derived[name] {
+					t.Errorf("%s = %+v, %v", name, f, ok)
+				}
+			}
+		})
+	}
+}
