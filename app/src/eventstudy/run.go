@@ -14,9 +14,12 @@ import (
 // loaded is a series as the run holds it: checked once, with the reason it
 // cannot be used when it cannot.
 type loaded struct {
-	bars  []Bar
-	state string
-	why   string
+	bars     []Bar
+	currency string
+	state    string
+	why      string
+	chain    []Link
+	endedOn  string
 }
 
 type run struct {
@@ -25,6 +28,18 @@ type run struct {
 	delay  time.Duration
 	prices Prices
 	series map[string]*loaded
+	// dividends and divs are set only for a study that counts distributions.
+	dividends DividendSource
+	divs      map[string]*loadedDividends
+	// priceOnly gives, for each benchmark whose return was counted without
+	// distributions in a study that counts them for the stock, why.
+	priceOnly map[string]string
+	// intraday, ibars, interval and early are set only for a study that enters
+	// intraday; early holds the days of the specification's early closes.
+	intraday IntradaySource
+	ibars    map[string]*loadedIntraday
+	interval time.Duration
+	early    map[string]bool
 }
 
 func (r *run) load(security string) *loaded {
@@ -40,7 +55,10 @@ func (r *run) load(security string) *loaded {
 		if err := s.Validate(); err != nil {
 			l.state, l.why = BadPrices, err.Error()
 		} else {
-			l.bars = s.Bars
+			l.bars, l.currency = s.Bars, s.Currency
+			if r.spec.FollowRenames {
+				l.chain, l.endedOn = s.Chain, s.EndedOn
+			}
 		}
 	}
 	r.series[security] = l
@@ -86,16 +104,35 @@ func Run(spec Spec, man Manifest, observations []Observation, prices Prices) (Re
 	})
 
 	r := &run{spec: spec, ses: ses, delay: time.Duration(spec.EntryDelayMinutes) * time.Minute, prices: prices, series: map[string]*loaded{}}
+	if err := r.startDividends(prices); err != nil {
+		return Report{}, err
+	}
+	if err := r.startIntraday(prices); err != nil {
+		return Report{}, err
+	}
 	rep := Report{Version: Version, Spec: spec, SpecHash: spec.Hash(), Manifest: man, Counts: map[string]int{}}
+	if spec.TotalReturn {
+		rep.Basis = BasisTotalReturnGross
+	}
+	if spec.Entry == Intraday {
+		rep.Entries = map[string]int{}
+	}
 	recon := map[string]rebuilt{}
 	for _, o := range obs {
 		out := r.measure(o)
 		rep.Counts[out.State]++
+		if rep.Entries != nil && out.State == Measured {
+			rep.Entries[out.EntryBasis]++
+		}
 		rep.Outcomes = append(rep.Outcomes, out)
 		recon[o.ID] = rebuilt{is: o.Reconstructed, attested: o.Reconstructed && o.Attested}
 	}
+	rep.Stitched, rep.Ended = r.renames()
 	rep.DataHash = r.dataHash(obs)
-	rep.Limits = limits(spec, man)
+	rep.Limits = append(limits(spec, man), r.priceOnlyLimits()...)
+	if len(r.priceOnly) > 0 {
+		rep.BenchmarkPriceOnly = r.priceOnly
+	}
 	rep.Groups, rep.Tested = r.groups(rep, recon)
 	rep.Status = Insufficient
 	for _, g := range rep.Groups {
@@ -107,6 +144,23 @@ func Run(spec Spec, man Manifest, observations []Observation, prices Prices) (Re
 		}
 	}
 	return rep, nil
+}
+
+// renames lists the series the run read that joined renames and those that
+// ended, by ticker; both are empty unless the study follows renames.
+func (r *run) renames() ([]Stitched, []Ended) {
+	var joined []Stitched
+	var ended []Ended
+	for _, id := range sortedKeys(r.series) {
+		l := r.series[id]
+		if len(l.chain) > 0 {
+			joined = append(joined, Stitched{Security: id, Chain: l.chain})
+		}
+		if l.endedOn != "" {
+			ended = append(ended, Ended{Security: id, Day: l.endedOn})
+		}
+	}
+	return joined, ended
 }
 
 // limits are the facts about the study and its data that keep every group
@@ -169,6 +223,22 @@ func (r *run) measure(o Observation) Outcome {
 	if r.spec.Entry == NextClose {
 		out.EntryPrice, first = entry.Close, e+1
 	}
+	var in *intradayEntered
+	if r.spec.Entry == Intraday {
+		if o.DayPrecision {
+			out.EntryBasis = EntryBasisDailyOpen
+		} else {
+			bar, why := r.intradayEntry(o, entry.Day)
+			if why != "" {
+				out.EntryDay, out.EntryPrice = "", 0
+				out.State, out.Why = Gap, why
+				return out
+			}
+			in = &intradayEntered{bar: bar}
+			in.closes, _ = r.ses.close(entry.Day)
+			out.EntryAt, out.EntryBasis, out.EntryPrice = bar.Start.UTC().Format(time.RFC3339), EntryBasisIntraday, bar.Open
+		}
+	}
 	switch {
 	case r.spec.Development.has(entry.Day):
 		out.Period = Development
@@ -207,6 +277,13 @@ func (r *run) measure(o Observation) Outcome {
 			sector = m.bars
 		}
 	}
+	var divs *loadedDividends
+	if r.spec.TotalReturn {
+		if divs = r.loadDividends(o.Security, s.currency); divs.why != "" {
+			out.State, out.Why = NoDividends, divs.why
+			return out
+		}
+	}
 	out.State = Measured
 	cost := r.spec.Costs.perSide()
 	for _, h := range r.spec.Horizons {
@@ -220,20 +297,34 @@ func (r *run) measure(o Observation) Outcome {
 		default:
 			exit := s.bars[x]
 			held.State, held.ExitDay = Measured, exit.Day
-			held.Gross = exit.Close/out.EntryPrice - 1
-			held.Net = exit.Close*(1-cost)/(out.EntryPrice*(1+cost)) - 1
-			low := out.EntryPrice
-			for i := first; i <= x; i++ {
+			cash, unclear := 0.0, ""
+			if divs != nil {
+				cash, unclear = divs.across(entry.Day, exit.Day)
+			}
+			if unclear != "" {
+				held.State = DividendUnclear
+				break
+			}
+			held.Dividend = cash
+			held.Gross = (exit.Close+cash)/out.EntryPrice - 1
+			held.Net = (exit.Close*(1-cost)+cash)/(out.EntryPrice*(1+cost)) - 1
+			low, from := out.EntryPrice, first
+			if in != nil {
+				// The entry day's part of the position starts at the entry bar, not at the
+				// day's open: the low before it was not lived through.
+				low, from = r.lowFrom(o.Security, in.bar, in.closes), e+1
+			}
+			for i := from; i <= x; i++ {
 				if s.bars[i].Low < low {
 					low = s.bars[i].Low
 				}
 			}
 			held.Drawdown = low/out.EntryPrice - 1
-			if m, ok := benchmark(market, entry.Day, exit.Day, r.spec.Entry); ok {
+			if m, ok := r.benchmarkReturn(r.spec.Benchmark, market, in, entry.Day, exit.Day); ok {
 				vs := held.Net - m
 				held.Market, held.VsMarket = &m, &vs
 			}
-			if m, ok := benchmark(sector, entry.Day, exit.Day, r.spec.Entry); ok {
+			if m, ok := r.benchmarkReturn(r.spec.SectorBenchmarks[o.Sector], sector, in, entry.Day, exit.Day); ok {
 				vs := held.Net - m
 				held.Sector, held.VsSector = &m, &vs
 			}
@@ -256,19 +347,20 @@ func gapped(bars []Bar, from, to int) bool {
 	return false
 }
 
-// benchmark is the return of a benchmark from the entry day to the close of
-// the exit day, entered by the same rule; false when it lacks either day.
-func benchmark(bars []Bar, entryDay, exitDay string, rule Entry) (float64, bool) {
+// benchmarkPrices is the price a benchmark is entered at on the entry day, by the
+// same rule as the stock, and its close on the exit day; false when it lacks
+// either day.
+func benchmarkPrices(bars []Bar, entryDay, exitDay string, rule Entry) (entry, exit float64, ok bool) {
 	e, ok1 := indexOfDay(bars, entryDay)
 	x, ok2 := indexOfDay(bars, exitDay)
 	if !ok1 || !ok2 {
-		return 0, false
+		return 0, 0, false
 	}
 	in := bars[e].Open
 	if rule == NextClose {
 		in = bars[e].Close
 	}
-	return bars[x].Close/in - 1, true
+	return in, bars[x].Close, true
 }
 
 type cellKey struct {
@@ -481,5 +573,29 @@ func (r *run) dataHash(obs []Observation) string {
 			h.Write([]byte{'\n'})
 		}
 	}
+	if r.spec.FollowRenames {
+		r.writeRenames(h)
+	}
+	if r.spec.TotalReturn {
+		r.writeDividends(h)
+	}
+	if r.spec.Entry == Intraday {
+		r.writeIntraday(h)
+	}
 	return hex.EncodeToString(h.Sum(nil))
+}
+
+// writeRenames adds the identity spans the run read (the joined symbols and the
+// day a series ended) to the data hash.
+func (r *run) writeRenames(h hash.Hash) {
+	for _, id := range sortedKeys(r.series) {
+		l := r.series[id]
+		if len(l.chain) == 0 && l.endedOn == "" {
+			continue
+		}
+		fmt.Fprintf(h, "identity:%s:%s\n", id, l.endedOn)
+		for _, k := range l.chain {
+			fmt.Fprintf(h, "%s,%s,%s\n", k.Symbol, k.From, k.To)
+		}
+	}
 }

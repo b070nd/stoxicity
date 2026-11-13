@@ -85,8 +85,9 @@ func change(now float64, before fundamentals.Fact, ok bool) *float64 {
 // earlier when that had been filed too. For the same period it also gives the net margin, the
 // operating margin, the operating cash flow and its margin, each margin only when both figures
 // were filed for exactly that period and revenue is above zero; the operating figures exist only
-// once a history refresh has stored them. It uses consolidated facts only; false when no revenue
-// or net income had been filed.
+// once a history refresh has stored them. Each margin also has its change against the same period
+// a year earlier, as a difference of ratios, only when that period has both inputs too. It uses
+// consolidated facts only; false when no revenue or net income had been filed.
 func figuresAsOf(facts []fundamentals.Fact, day string) (eventfact.Figures, bool) {
 	revenue := periodsOf(facts, fundamentals.Revenue, "USD", day)
 	income := periodsOf(facts, fundamentals.NetIncome, "USD", day)
@@ -148,7 +149,32 @@ func figuresAsOf(facts []fundamentals.Fact, day string) (eventfact.Figures, bool
 	out.NetMargin = margin(income, revenue, cur)
 	out.OperatingMargin = margin(operatingIncome, revenue, cur)
 	out.CashFlowMargin = margin(operatingCashFlow, revenue, cur)
+	// The same period a year earlier is found once, from revenue, so the three margin changes compare
+	// the same two periods.
+	var prev period
+	hadPrev := false
+	if before, ok := earlier(cur, revenue); ok {
+		prev, hadPrev = period{before.Start, before.End}, true
+	}
+	yearAgo := func(figure map[period]fundamentals.Fact) *float64 {
+		if !hadPrev {
+			return nil
+		}
+		return margin(figure, revenue, prev)
+	}
+	out.NetMarginChange = marginChange(out.NetMargin, yearAgo(income))
+	out.OperatingMarginChange = marginChange(out.OperatingMargin, yearAgo(operatingIncome))
+	out.CashFlowMarginChange = marginChange(out.CashFlowMargin, yearAgo(operatingCashFlow))
 	return out, true
+}
+
+// marginChange is the difference now minus before, in ratio terms; nil when either margin is missing.
+func marginChange(now, before *float64) *float64 {
+	if now == nil || before == nil {
+		return nil
+	}
+	v := *now - *before
+	return &v
 }
 
 // margin is the figure of the period over the revenue of the same period; nil when either is

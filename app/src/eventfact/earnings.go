@@ -21,6 +21,10 @@ type Figures struct {
 	// figures it needs are not known for the period.
 	OperatingCashFlow                          *float64
 	NetMargin, OperatingMargin, CashFlowMargin *float64
+
+	// The margin changes are differences of ratios against the same period a year earlier: 0.02
+	// means the margin rose by two percentage points. Each is nil unless both periods have both inputs.
+	NetMarginChange, OperatingMarginChange, CashFlowMarginChange *float64
 }
 
 // EpisodeDays is how long after the first results publication of a security further results publications are taken for the same reporting period (the release, its 8-K and the 10-Q that follows).
@@ -114,6 +118,9 @@ func earningsRecord(security string, episode []EventText, figures func(string, s
 			add("operating_margin", f.OperatingMargin, "ratio", true)
 			add("operating_cash_flow", f.OperatingCashFlow, f.Currency, false)
 			add("cash_flow_margin", f.CashFlowMargin, "ratio", true)
+			add("net_margin_change", f.NetMarginChange, "ratio", true)
+			add("operating_margin_change", f.OperatingMarginChange, "ratio", true)
+			add("cash_flow_margin_change", f.CashFlowMarginChange, "ratio", true)
 		}
 	}
 

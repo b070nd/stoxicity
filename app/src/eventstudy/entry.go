@@ -61,9 +61,10 @@ func (s sessions) close(day string) (time.Time, bool) { return s.at(day, s.close
 
 // entryIndex is the bar a position is opened on: the first whose open (for an
 // entry at the open) or close (for an entry at the close) lies strictly after
-// the information plus the delay. Information known only to the day is usable
-// from the first session after that day, whichever the rule. False when the
-// bars end before such a session.
+// the information plus the delay. An intraday entry is made inside a session, so
+// the session is the first that closes after that time. Information known only
+// to the day is usable from the first session after that day, whichever the
+// rule. False when the bars end before such a session.
 func entryIndex(bars []Bar, o Observation, rule Entry, delay time.Duration, ses sessions) (int, bool) {
 	if o.DayPrecision {
 		day := o.AvailableAt.UTC().Format(time.DateOnly)
@@ -77,7 +78,7 @@ func entryIndex(bars []Bar, o Observation, rule Entry, delay time.Duration, ses 
 	for i := sort.Search(len(bars), func(i int) bool { return bars[i].Day >= from }); i < len(bars); i++ {
 		var at time.Time
 		var ok bool
-		if rule == NextClose {
+		if rule == NextClose || rule == Intraday {
 			at, ok = ses.close(bars[i].Day)
 		} else {
 			at, ok = ses.open(bars[i].Day)

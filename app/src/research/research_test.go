@@ -168,7 +168,7 @@ func TestPrices(t *testing.T) {
 		},
 		splits: []marketdata.Split{{Ticker: "AAA", Day: "2025-03-03", From: 1, To: 2}, {Ticker: "BBB", Day: "2025-03-03", From: 1, To: 2}},
 	}
-	got, res, err := Prices(context.Background(), f, []string{"BBB", "AAA", "CCC"}, "2025-01-01", "2025-04-01", time.Time{})
+	got, res, err := Prices(context.Background(), f, []string{"BBB", "AAA", "CCC"}, "2025-01-01", "2025-04-01", time.Time{}, false)
 	if err != nil {
 		t.Fatal(err)
 	}

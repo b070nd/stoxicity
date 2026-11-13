@@ -123,6 +123,9 @@ func schema() map[Type]typeInfo {
 		{"operating_margin", "ratio", "operating income over revenue of the period"},
 		{"operating_cash_flow", "currency", "net cash from operating activities of the period"},
 		{"cash_flow_margin", "ratio", "operating cash flow over revenue of the period"},
+		{"net_margin_change", "ratio", "net margin against the same period a year before, as a difference of ratios"},
+		{"operating_margin_change", "ratio", "operating margin against the same period a year before, as a difference of ratios"},
+		{"cash_flow_margin_change", "ratio", "cash flow margin against the same period a year before, as a difference of ratios"},
 		{"eps_surprise", "ratio", "earnings per share against the stated consensus, as a change; only when the source states it"},
 		{"revenue_surprise", "ratio", "revenue against the stated consensus, as a change; only when the source states it"},
 	}

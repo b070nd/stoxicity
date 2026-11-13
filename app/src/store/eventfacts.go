@@ -36,7 +36,7 @@ func (db *DB) PutEventFacts(ctx context.Context, records []eventfact.Record, at 
 		return 0, fmt.Errorf("store: event facts: %w", err)
 	}
 	defer tx.Rollback()
-	latest, err := tx.PrepareContext(ctx, `SELECT revision, hash FROM event_fact WHERE id = ? ORDER BY revision DESC LIMIT 1`)
+	latest, err := tx.PrepareContext(ctx, `SELECT revision, hash, basis FROM event_fact WHERE id = ? ORDER BY revision DESC LIMIT 1`)
 	if err != nil {
 		return 0, fmt.Errorf("store: event facts: %w", err)
 	}
@@ -52,11 +52,21 @@ func (db *DB) PutEventFacts(ctx context.Context, records []eventfact.Record, at 
 	for _, r := range records {
 		hash := eventfact.Hash(r)
 		var rev int
-		var last string
-		switch err := latest.QueryRowContext(ctx, r.ID).Scan(&rev, &last); err {
+		var last, lastBasis string
+		switch err := latest.QueryRowContext(ctx, r.ID).Scan(&rev, &last, &lastBasis); err {
 		case nil:
 			if last == hash {
 				continue
+			}
+			// That an event was held when it happened cannot be recreated later: a
+			// reading of the same content that says "reconstructed" (an older row
+			// fetched again, a rebuild) must not replace it.
+			if lastBasis == string(eventfact.Known) && r.Basis == eventfact.Reconstructed {
+				same := r
+				same.Basis = eventfact.Known
+				if eventfact.Hash(same) == last {
+					continue
+				}
 			}
 		case sql.ErrNoRows:
 		default:

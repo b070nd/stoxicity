@@ -382,7 +382,10 @@ type StudyInput struct {
 }
 
 // Study runs the study over the events and bars the database holds, as they were held at
-// in.AsOf.
+// in.AsOf. A study with total_return also reads the cash distributions of the securities of the
+// events and of the benchmarks, as held at in.AsOf (see withDividends); every other study reads
+// none. A study that enters intraday also reads the intraday bars (see withIntraday); every other
+// study reads none.
 func Study(ctx context.Context, s Store, in StudyInput) (eventstudy.Report, PriceResult, error) {
 	if err := in.Spec.Validate(); err != nil {
 		return eventstudy.Report{}, PriceResult{}, err
@@ -409,10 +412,11 @@ func Study(ctx context.Context, s Store, in StudyInput) (eventstudy.Report, Pric
 		tickers = append(tickers, in.Spec.SectorBenchmarks[name])
 	}
 	prices, pr := eventstudy.MapPrices{}, PriceResult{Unresolved: map[string]string{}}
+	var dailyFrom, dailyTo string
 	if len(obs) > 0 {
 		first, last := obs[0].AvailableAt, obs[len(obs)-1].AvailableAt
-		prices, pr, err = Prices(ctx, s, tickers, first.AddDate(0, 0, -400).UTC().Format(time.DateOnly),
-			last.AddDate(0, 0, 60).UTC().Format(time.DateOnly), in.AsOf)
+		dailyFrom, dailyTo = first.AddDate(0, 0, -400).UTC().Format(time.DateOnly), last.AddDate(0, 0, 60).UTC().Format(time.DateOnly)
+		prices, pr, err = Prices(ctx, s, tickers, dailyFrom, dailyTo, in.AsOf, in.Spec.FollowRenames)
 		if err != nil {
 			return eventstudy.Report{}, pr, err
 		}
@@ -420,7 +424,18 @@ func Study(ctx context.Context, s Store, in StudyInput) (eventstudy.Report, Pric
 	if err := sizeObservations(ctx, s, obs, records, prices, in.AsOf); err != nil {
 		return eventstudy.Report{}, pr, err
 	}
-	report, err := eventstudy.Run(in.Spec, in.Manifest, obs, prices)
+	var priced eventstudy.Prices = prices
+	if in.Spec.TotalReturn {
+		if priced, err = withDividends(ctx, s, prices, tickers, in.AsOf); err != nil {
+			return eventstudy.Report{}, pr, err
+		}
+	}
+	if in.Spec.Entry == eventstudy.Intraday {
+		if priced, err = withIntraday(ctx, s, priced, obs, in.Spec, dailyFrom, dailyTo, in.AsOf, pr.Unresolved); err != nil {
+			return eventstudy.Report{}, pr, err
+		}
+	}
+	report, err := eventstudy.Run(in.Spec, in.Manifest, obs, priced)
 	return report, pr, err
 }
 
@@ -483,7 +498,7 @@ func Signals(ctx context.Context, s Store, in SignalInput) ([]playbook.Signal, e
 		return nil, nil
 	}
 	tickers := append(securitiesOfObservations(obs), in.Report.Spec.Benchmark)
-	prices, _, err := Prices(ctx, s, tickers, in.From.AddDate(0, 0, -400).UTC().Format(time.DateOnly), in.To.UTC().Format(time.DateOnly), time.Time{})
+	prices, _, err := Prices(ctx, s, tickers, in.From.AddDate(0, 0, -400).UTC().Format(time.DateOnly), in.To.UTC().Format(time.DateOnly), time.Time{}, in.Report.Spec.FollowRenames)
 	if err != nil {
 		return nil, err
 	}
