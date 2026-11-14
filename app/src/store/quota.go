@@ -46,7 +46,7 @@ func (db *DB) TakeQuota(ctx context.Context, key string, limit quota.Limit, now 
 	if err != nil {
 		return err
 	}
-	tx, err := h.w.BeginTx(ctx, nil)
+	tx, err := h.beginWrite(ctx)
 	if err != nil {
 		return err
 	}
@@ -114,7 +114,7 @@ func (db *DB) BlockQuota(ctx context.Context, key string, until time.Time, statu
 		return err
 	}
 	_, err = h.w.ExecContext(ctx, `INSERT INTO provider_quota(provider,until_ms,status) VALUES(?,?,?)
-		ON CONFLICT(provider) DO UPDATE SET until_ms=MAX(provider_quota.until_ms,excluded.until_ms),status=excluded.status`, key, ms(quotaCeil(until)), status)
+		ON CONFLICT(provider) DO UPDATE SET until_ms=CASE WHEN provider_quota.until_ms >= excluded.until_ms THEN provider_quota.until_ms ELSE excluded.until_ms END,status=excluded.status`, key, ms(quotaCeil(until)), status)
 	return err
 }
 

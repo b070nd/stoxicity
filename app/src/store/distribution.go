@@ -30,7 +30,7 @@ func (db *DB) PutDistributions(ctx context.Context, obs []distribution.Obs, at t
 	if at.IsZero() {
 		at = db.now()
 	}
-	tx, err := h.w.BeginTx(ctx, nil)
+	tx, err := h.beginWrite(ctx)
 	if err != nil {
 		return c, fmt.Errorf("store: distributions: %w", err)
 	}

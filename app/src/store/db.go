@@ -48,6 +48,7 @@ var _ Store = (*DB)(nil)
 type handle struct {
 	w *sql.DB // single write connection
 	r *sql.DB // read-only pool
+	d dialect // what differs in the SQL of this database
 }
 
 func (h *handle) close() error {
@@ -175,7 +176,7 @@ func openHandle(ctx context.Context, path string, fsys migrationFS, dir string) 
 		w.Close()
 		return nil, fmt.Errorf("store: %w", err)
 	}
-	return &handle{w: w, r: r}, nil
+	return &handle{w: w, r: r, d: sqliteDialect{}}, nil
 }
 
 // dsn builds the connection string. Every connection gets the same pragmas;

@@ -76,7 +76,7 @@ func (r Records) Append(ctx context.Context, in ...RecordInput) ([]Record, int, 
 		}
 	}
 	now := r.t.db.now()
-	tx, err := h.w.BeginTx(ctx, nil)
+	tx, err := h.beginWrite(ctx)
 	if err != nil {
 		return nil, 0, fmt.Errorf("store: records: %w", err)
 	}
@@ -85,7 +85,7 @@ func (r Records) Append(ctx context.Context, in ...RecordInput) ([]Record, int, 
 	fresh := 0
 	for _, x := range in {
 		hash := RecordHash(x.Body)
-		res, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO records (kind, key, hash, body, created_ms) VALUES (?, ?, ?, ?, ?)`, x.Kind, x.Key, hash, string(x.Body), ms(now))
+		res, err := tx.ExecContext(ctx, `INSERT INTO records (kind, key, hash, body, created_ms) VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`, x.Kind, x.Key, hash, string(x.Body), ms(now))
 		if err != nil {
 			return nil, 0, fmt.Errorf("store: records: %w", err)
 		}

@@ -65,12 +65,12 @@ func (t *tenantStore) AddHits(ctx context.Context, hits []watch.Hit) (int, error
 		return 0, nil
 	}
 	now := t.db.now()
-	tx, err := h.w.BeginTx(ctx, nil)
+	tx, err := h.beginWrite(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("store: put hits: %w", err)
 	}
 	defer tx.Rollback()
-	stmt, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO hits (watch_id, article_id, at_ms, alerts) VALUES (?, ?, ?, ?)`)
+	stmt, err := tx.PrepareContext(ctx, `INSERT INTO hits (watch_id, article_id, at_ms, alerts) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING`)
 	if err != nil {
 		return 0, fmt.Errorf("store: put hits: %w", err)
 	}
@@ -161,7 +161,7 @@ func (t *tenantStore) MarkSeen(ctx context.Context, watchID string, tm time.Time
 		return errors.New("store: mark seen: empty watch ID")
 	}
 	_, err = h.w.ExecContext(ctx, `INSERT INTO seen (watch_id, at_ms) VALUES (?, ?)
-		ON CONFLICT (watch_id) DO UPDATE SET at_ms = MAX(seen.at_ms, excluded.at_ms)`, watchID, ms(tm))
+		ON CONFLICT (watch_id) DO UPDATE SET at_ms = CASE WHEN seen.at_ms >= excluded.at_ms THEN seen.at_ms ELSE excluded.at_ms END`, watchID, ms(tm))
 	if err != nil {
 		return fmt.Errorf("store: mark seen: %w", err)
 	}

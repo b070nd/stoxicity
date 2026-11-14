@@ -23,12 +23,12 @@ func (db *DB) PutSplits(ctx context.Context, splits []marketdata.Split, since ti
 	if at.IsZero() {
 		at = db.now()
 	}
-	tx, err := h.w.BeginTx(ctx, nil)
+	tx, err := h.beginWrite(ctx)
 	if err != nil {
 		return fmt.Errorf("store: splits: %w", err)
 	}
 	defer tx.Rollback()
-	st, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO split (ticker, exec_day, split_from, split_to, source, first_seen_ms) VALUES (?, ?, ?, ?, 'polygon', ?)`)
+	st, err := tx.PrepareContext(ctx, `INSERT INTO split (ticker, exec_day, split_from, split_to, source, first_seen_ms) VALUES (?, ?, ?, ?, 'polygon', ?) ON CONFLICT DO NOTHING`)
 	if err != nil {
 		return fmt.Errorf("store: splits: %w", err)
 	}
@@ -45,7 +45,8 @@ func (db *DB) PutSplits(ctx context.Context, splits []marketdata.Split, since ti
 	// does not shorten it, but only joins it when it starts before the earlier
 	// reading ended. The caller reads from before the last reading, so it does.
 	if _, err := tx.ExecContext(ctx, `INSERT INTO split_run (id, since_day, read_ms) VALUES (1, ?, ?)
-		ON CONFLICT (id) DO UPDATE SET since_day = MIN(split_run.since_day, excluded.since_day), read_ms = MAX(split_run.read_ms, excluded.read_ms)`,
+		ON CONFLICT (id) DO UPDATE SET since_day = CASE WHEN split_run.since_day <= excluded.since_day THEN split_run.since_day ELSE excluded.since_day END,
+			read_ms = CASE WHEN split_run.read_ms >= excluded.read_ms THEN split_run.read_ms ELSE excluded.read_ms END`,
 		since.Format(time.DateOnly), ms(at)); err != nil {
 		return fmt.Errorf("store: splits: %w", err)
 	}

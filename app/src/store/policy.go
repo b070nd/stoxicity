@@ -40,7 +40,7 @@ func (s policyStore) Append(ctx context.Context, a policy.Activation) (policy.Re
 	effects, _ := json.Marshal(nonNilS(a.Effects))
 	notes, _ := json.Marshal(nonNilS(a.RiskNotes))
 
-	tx, err := h.w.BeginTx(ctx, nil)
+	tx, err := h.beginWrite(ctx)
 	if err != nil {
 		return policy.Record{}, fmt.Errorf("store: policy: %w", err)
 	}
@@ -59,7 +59,7 @@ func (s policyStore) Append(ctx context.Context, a policy.Activation) (policy.Re
 	if ms(a.At) < newestAt {
 		return policy.Record{}, fmt.Errorf("store: policy: activation at %s is before the previous one", a.At.Format(time.RFC3339))
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO policy_version (hash, content, created_ms) VALUES (?, ?, ?)`, a.Hash, string(content), ms(a.At)); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO policy_version (hash, content, created_ms) VALUES (?, ?, ?) ON CONFLICT DO NOTHING`, a.Hash, string(content), ms(a.At)); err != nil {
 		return policy.Record{}, fmt.Errorf("store: policy: %w", err)
 	}
 	var vseq int64
@@ -70,12 +70,9 @@ func (s policyStore) Append(ctx context.Context, a policy.Activation) (policy.Re
 	if a.RiskAccepted {
 		risk = 1
 	}
-	res, err := tx.ExecContext(ctx, `INSERT INTO policy_activation (version_seq, prev_seq, at_ms, risk_accepted, risk_notes, changes, effects) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		vseq, a.PrevEpoch, ms(a.At), risk, string(notes), string(changes), string(effects))
-	if err != nil {
-		return policy.Record{}, fmt.Errorf("store: policy: %w", err)
-	}
-	epoch, err := res.LastInsertId()
+	var epoch int64
+	err = tx.QueryRowContext(ctx, `INSERT INTO policy_activation (version_seq, prev_seq, at_ms, risk_accepted, risk_notes, changes, effects) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING seq`,
+		vseq, a.PrevEpoch, ms(a.At), risk, string(notes), string(changes), string(effects)).Scan(&epoch)
 	if err != nil {
 		return policy.Record{}, fmt.Errorf("store: policy: %w", err)
 	}

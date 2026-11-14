@@ -81,7 +81,7 @@ func (db *DB) PutPriceHistory(ctx context.Context, history marketdata.PriceHisto
 	if err != nil {
 		return err
 	}
-	tx, err := h.w.BeginTx(ctx, nil)
+	tx, err := h.beginWrite(ctx)
 	if err != nil {
 		return err
 	}
@@ -153,7 +153,7 @@ func (db *DB) CalendarHistories(ctx context.Context, from, monthlyFrom, through 
 		return nil, err
 	}
 	rows, err := h.r.QueryContext(ctx, `WITH ends AS (
-		SELECT ticker,MAX(month) month FROM price_history_month WHERE month>=?1 AND month<=?3
+		SELECT ticker,MAX(month) AS month FROM price_history_month WHERE month>=?1 AND month<=?3
 		GROUP BY ticker,CASE WHEN month>=?2 THEN month ELSE substr(month,1,4) END)
 		SELECT s.ticker,s.symbol,s.currency,s.latest_day,s.fetched_ms,m.month,m.close FROM ends e JOIN price_history_month m ON m.ticker=e.ticker AND m.month=e.month JOIN price_history_state s ON s.ticker=e.ticker ORDER BY s.ticker,m.month`, from, monthlyFrom, through)
 	if err != nil {

@@ -42,7 +42,7 @@ func (db *DB) PutSymbolHistory(ctx context.Context, rows []marketdata.SymbolSpan
 	if at.IsZero() {
 		at = db.now()
 	}
-	tx, err := h.w.BeginTx(ctx, nil)
+	tx, err := h.beginWrite(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("store: symbol history: %w", err)
 	}

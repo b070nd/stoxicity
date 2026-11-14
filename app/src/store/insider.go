@@ -52,7 +52,7 @@ func (db *DB) PutInsider(ctx context.Context, f insider.Filing, trades []model.I
 	if err != nil {
 		return err
 	}
-	tx, err := h.w.BeginTx(ctx, nil)
+	tx, err := h.beginWrite(ctx)
 	if err != nil {
 		return fmt.Errorf("store: insiders: %w", err)
 	}
@@ -73,8 +73,9 @@ func (db *DB) PutInsider(ctx context.Context, f insider.Filing, trades []model.I
 	if problem != "" {
 		status = "bad"
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO insider_filing (accession, cik, filed, read_ms, trades, status, error)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`, f.Accession, f.CIK, f.Filed, ms(at), len(trades), status, problem); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO insider_filing (accession, cik, filed, read_ms, trades, status, error)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT (accession) DO UPDATE SET cik = excluded.cik, filed = excluded.filed, read_ms = excluded.read_ms, trades = excluded.trades, status = excluded.status, error = excluded.error`, f.Accession, f.CIK, f.Filed, ms(at), len(trades), status, problem); err != nil {
 		return fmt.Errorf("store: insiders: %w", err)
 	}
 	cut := at.Add(-insiderKeep).Format(time.DateOnly)

@@ -25,19 +25,20 @@ func (db *DB) PutIntradayBars(ctx context.Context, bars []marketdata.IntradayBar
 	if err != nil {
 		return err
 	}
-	tx, err := h.w.BeginTx(ctx, nil)
+	tx, err := h.beginWrite(ctx)
 	if err != nil {
 		return fmt.Errorf("store: intraday bars: %w", err)
 	}
 	defer tx.Rollback()
-	st, err := tx.PrepareContext(ctx, `INSERT OR REPLACE INTO intraday_bar (ticker, interval_s, ts_utc_ms, open, high, low, close, volume, raw, currency, source, fetched_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	st, err := tx.PrepareContext(ctx, `INSERT INTO intraday_bar (ticker, interval_s, ts_utc_ms, open, high, low, close, volume, raw, currency, source, fetched_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT (ticker, interval_s, ts_utc_ms) DO UPDATE SET open = excluded.open, high = excluded.high, low = excluded.low, close = excluded.close, volume = excluded.volume, raw = excluded.raw, currency = excluded.currency, source = excluded.source, fetched_ms = excluded.fetched_ms`)
 	if err != nil {
 		return fmt.Errorf("store: intraday bars: %w", err)
 	}
 	defer st.Close()
-	keep, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO intraday_bar_revision (ticker, interval_s, ts_utc_ms, open, high, low, close, volume, raw, currency, source, fetched_ms, superseded_ms)
+	keep, err := tx.PrepareContext(ctx, `INSERT INTO intraday_bar_revision (ticker, interval_s, ts_utc_ms, open, high, low, close, volume, raw, currency, source, fetched_ms, superseded_ms)
 		SELECT ticker, interval_s, ts_utc_ms, open, high, low, close, volume, raw, currency, source, fetched_ms, ? FROM intraday_bar
-		WHERE ticker = ? AND interval_s = ? AND ts_utc_ms = ? AND (open <> ? OR high <> ? OR low <> ? OR close <> ? OR volume <> ? OR raw <> ? OR currency <> ?)`)
+		WHERE ticker = ? AND interval_s = ? AND ts_utc_ms = ? AND (open <> ? OR high <> ? OR low <> ? OR close <> ? OR volume <> ? OR raw <> ? OR currency <> ?) ON CONFLICT DO NOTHING`)
 	if err != nil {
 		return fmt.Errorf("store: intraday bars: %w", err)
 	}
@@ -141,7 +142,7 @@ func (db *DB) PutIntradayChecks(ctx context.Context, checks []marketdata.Intrada
 	if err != nil {
 		return err
 	}
-	tx, err := h.w.BeginTx(ctx, nil)
+	tx, err := h.beginWrite(ctx)
 	if err != nil {
 		return fmt.Errorf("store: intraday checks: %w", err)
 	}

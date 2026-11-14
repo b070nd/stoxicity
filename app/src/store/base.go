@@ -39,7 +39,7 @@ const (
 // are updated; id, source, domain, URL, published and first-fetched times
 // never change. A zero Fetched is stored as the time of the Save.
 //
-// An article's Score is stored per lens version with INSERT OR IGNORE: the
+// An article's Score is stored per lens version with ON CONFLICT DO NOTHING: the
 // score of a given version is never overwritten and a new version adds a row.
 // A completely zero Score means "not scored" and stores nothing; a Score with
 // any content but an empty LensVersion is an error and nothing is saved.
@@ -61,7 +61,7 @@ func (db *DB) Save(ctx context.Context, articles []model.Article) error {
 	}
 	now := db.now()
 
-	tx, err := h.w.BeginTx(ctx, nil)
+	tx, err := h.beginWrite(ctx)
 	if err != nil {
 		return fmt.Errorf("store: save: %w", err)
 	}
@@ -77,13 +77,13 @@ func (db *DB) Save(ctx context.Context, articles []model.Article) error {
 			title = excluded.title, summary = excluded.summary, form = excluded.form,
 			items = excluded.items, tickers = excluded.tickers, topics = excluded.topics,
 			cluster_id = excluded.cluster_id, cik = excluded.cik, change_seq = excluded.change_seq,
-			fetched_ms = CASE WHEN title IS NOT excluded.title OR summary IS NOT excluded.summary
+			fetched_ms = CASE WHEN title IS DISTINCT FROM excluded.title OR summary IS DISTINCT FROM excluded.summary
 				THEN excluded.fetched_ms ELSE fetched_ms END
 		WHERE (source_id = excluded.source_id OR articles.form <> '')
-			AND (title IS NOT excluded.title OR summary IS NOT excluded.summary OR form IS NOT excluded.form
-			OR items IS NOT excluded.items OR tickers IS NOT excluded.tickers
-			OR topics IS NOT excluded.topics OR cluster_id IS NOT excluded.cluster_id
-			OR cik IS NOT excluded.cik)`)
+			AND (title IS DISTINCT FROM excluded.title OR summary IS DISTINCT FROM excluded.summary OR form IS DISTINCT FROM excluded.form
+			OR items IS DISTINCT FROM excluded.items OR tickers IS DISTINCT FROM excluded.tickers
+			OR topics IS DISTINCT FROM excluded.topics OR cluster_id IS DISTINCT FROM excluded.cluster_id
+			OR cik IS DISTINCT FROM excluded.cik)`)
 	if err != nil {
 		return fmt.Errorf("store: save: %w", err)
 	}
@@ -116,16 +116,17 @@ func (db *DB) Save(ctx context.Context, articles []model.Article) error {
 	}
 	// A score of a lens version is kept as first written, unless the text it
 	// scored was changed (a correction), when it is written again.
-	rescore, err := tx.PrepareContext(ctx, `INSERT OR REPLACE INTO scores
+	rescore, err := tx.PrepareContext(ctx, `INSERT INTO scores
 		(article_id, lens_version, relevance, materiality, tone, kind, sector, reasons, created_ms)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT (article_id, lens_version) DO UPDATE SET relevance = excluded.relevance, materiality = excluded.materiality, tone = excluded.tone, kind = excluded.kind, sector = excluded.sector, reasons = excluded.reasons, created_ms = excluded.created_ms`)
 	if err != nil {
 		return fmt.Errorf("store: save: %w", err)
 	}
 	defer rescore.Close()
-	score, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO scores
+	score, err := tx.PrepareContext(ctx, `INSERT INTO scores
 		(article_id, lens_version, relevance, materiality, tone, kind, sector, reasons, created_ms)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`)
 	if err != nil {
 		return fmt.Errorf("store: save: %w", err)
 	}

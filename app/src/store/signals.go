@@ -72,7 +72,7 @@ func (db *DB) SignalEvents(ctx context.Context, q SignalQuery) ([]SignalEvent, e
 			SELECT es.security_id,
 			       COALESCE((SELECT t.ticker FROM security_ticker t WHERE t.security_id = es.security_id ORDER BY t.to_day = '' DESC, t.from_day DESC LIMIT 1), ''),
 			       l.event_id, l.kind, l.title, l.effective_day, l.public_ms, l.materiality,
-			       COALESCE((SELECT group_concat(c.security_id) FROM event_security c WHERE c.event_id = l.event_id AND c.revision = l.revision AND c.role = 'counterparty'), '')
+			       COALESCE((SELECT string_agg(c.security_id, ',' ORDER BY c.security_id) FROM event_security c WHERE c.event_id = l.event_id AND c.revision = l.revision AND c.role = 'counterparty'), '')
 			FROM latest l
 			JOIN event_security es ON es.event_id = l.event_id AND es.revision = l.revision AND es.role = 'subject'
 			ORDER BY es.security_id, l.public_ms, l.event_id`, args...)
