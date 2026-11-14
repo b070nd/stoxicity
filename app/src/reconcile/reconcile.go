@@ -503,6 +503,13 @@ func (u SubmissionsURL) fileURL(name string) string {
 // read only for accessions that the recent list does not hold, and only the
 // files whose filing days could hold them.
 func Enrich(ctx context.Context, db MetaStore, client httpx.Client, urls SubmissionsURL, want map[string][]string, filed map[string]string, now time.Time, maxRequests int) (EnrichReport, error) {
+	return EnrichObserved(ctx, db, client, urls, want, filed, now, maxRequests, nil)
+}
+
+// EnrichObserved is Enrich that also shows observe each wanted filing it finds,
+// with what the record says of it (such as its 8-K items), before it is stored.
+// observe may be nil.
+func EnrichObserved(ctx context.Context, db MetaStore, client httpx.Client, urls SubmissionsURL, want map[string][]string, filed map[string]string, now time.Time, maxRequests int, observe func(cik string, f fundamentals.Filing)) (EnrichReport, error) {
 	var rep EnrichReport
 	ciks := make([]string, 0, len(want))
 	for c := range want {
@@ -525,6 +532,9 @@ func Enrich(ctx context.Context, db MetaStore, client httpx.Client, urls Submiss
 					continue
 				}
 				delete(missing, f.Accession)
+				if observe != nil {
+					observe(cik, f)
+				}
 				m := store.FilingMeta{Accession: f.Accession, CIK: cik, Form: f.Form, FiledDay: f.Filed, ReportDay: f.Report, Document: f.Document, Source: "sec-submissions"}
 				if t, ok := f.AcceptedTime(); ok {
 					m.Accepted = t
