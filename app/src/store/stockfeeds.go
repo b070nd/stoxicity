@@ -42,7 +42,7 @@ func (db *DB) PutStockFeeds(ctx context.Context, list []StockFeed, at time.Time)
 	if err != nil {
 		return 0, err
 	}
-	tx, err := h.w.BeginTx(ctx, nil)
+	tx, err := h.beginWrite(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("store: stock feeds: %w", err)
 	}
@@ -162,7 +162,7 @@ func (db *DB) StockFeedStats(ctx context.Context) (map[string]StockFeedStat, err
 		return nil, err
 	}
 	rows, err := h.r.QueryContext(ctx, `SELECT kind, COUNT(*), COUNT(DISTINCT ticker),
-		SUM(last_ok_ms > 0), SUM(failures > 0) FROM stock_feed GROUP BY kind`)
+		SUM(CASE WHEN last_ok_ms > 0 THEN 1 ELSE 0 END), SUM(CASE WHEN failures > 0 THEN 1 ELSE 0 END) FROM stock_feed GROUP BY kind`)
 	if err != nil {
 		return nil, fmt.Errorf("store: stock feeds: %w", err)
 	}

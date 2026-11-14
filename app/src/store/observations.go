@@ -36,7 +36,7 @@ func (db *DB) PutFX(ctx context.Context, obs []quotes.FXObs, at time.Time) (ObsC
 	if at.IsZero() {
 		at = db.now()
 	}
-	tx, err := h.w.BeginTx(ctx, nil)
+	tx, err := h.beginWrite(ctx)
 	if err != nil {
 		return c, fmt.Errorf("store: fx: %w", err)
 	}
@@ -154,7 +154,7 @@ func (db *DB) PutPrices(ctx context.Context, obs []quotes.PriceObs, at time.Time
 	if at.IsZero() {
 		at = db.now()
 	}
-	tx, err := h.w.BeginTx(ctx, nil)
+	tx, err := h.beginWrite(ctx)
 	if err != nil {
 		return c, fmt.Errorf("store: prices: %w", err)
 	}

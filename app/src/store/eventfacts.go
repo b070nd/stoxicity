@@ -31,7 +31,7 @@ func (db *DB) PutEventFacts(ctx context.Context, records []eventfact.Record, at 
 	if at.IsZero() {
 		at = db.now()
 	}
-	tx, err := h.w.BeginTx(ctx, nil)
+	tx, err := h.beginWrite(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("store: event facts: %w", err)
 	}
@@ -224,7 +224,7 @@ func (db *DB) EventFactCounts(ctx context.Context) ([]EventFactCount, error) {
 		return nil, err
 	}
 	rows, err := h.r.QueryContext(ctx, `WITH w AS (SELECT type, basis, available_ms, ROW_NUMBER() OVER (PARTITION BY id ORDER BY revision DESC) AS rn FROM event_fact)
-		SELECT type, COUNT(*), SUM(basis = 'known'), MIN(available_ms), MAX(available_ms) FROM w WHERE rn = 1 GROUP BY type ORDER BY type`)
+		SELECT type, COUNT(*), SUM(CASE WHEN basis = 'known' THEN 1 ELSE 0 END), MIN(available_ms), MAX(available_ms) FROM w WHERE rn = 1 GROUP BY type ORDER BY type`)
 	if err != nil {
 		return nil, fmt.Errorf("store: event facts: %w", err)
 	}

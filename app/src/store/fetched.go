@@ -36,7 +36,7 @@ func (db *DB) FetchedAfter(ctx context.Context, after time.Time, allowed map[str
 	// The fetch time of the limit-th article closes the page.
 	upTo := int64(math.MaxInt64)
 	var cut int64
-	err = h.r.QueryRowContext(ctx, `SELECT a.fetched_ms FROM articles a WHERE a.fetched_ms > ?`+inSources+
+	err = h.r.QueryRowContext(ctx, `SELECT a.fetched_ms FROM articles a WHERE a.fetched_ms > ?`+h.inSources()+
 		` ORDER BY a.fetched_ms, a.id LIMIT 1 OFFSET ?`, from, list, limit-1).Scan(&cut)
 	switch {
 	case err == nil:
@@ -46,7 +46,7 @@ func (db *DB) FetchedAfter(ctx context.Context, after time.Time, allowed map[str
 	}
 
 	q := articleSelect + ` FROM articles a` + latestScoreJoin +
-		` WHERE a.fetched_ms > ? AND a.fetched_ms <= ?` + inSources + ` ORDER BY a.fetched_ms ASC, a.id ASC`
+		` WHERE a.fetched_ms > ? AND a.fetched_ms <= ?` + h.inSources() + ` ORDER BY a.fetched_ms ASC, a.id ASC`
 	out, err := queryArticles(ctx, h.r, q, from, upTo, list)
 	if err != nil {
 		return nil, fmt.Errorf("store: fetched after: %w", err)
@@ -74,7 +74,7 @@ func (db *DB) ChangedAfter(ctx context.Context, after int64, allowed map[string]
 		limit = defaultFetchedLimit
 	}
 	q := articleSelect + `, a.change_seq FROM articles a` + latestScoreJoin +
-		` WHERE a.change_seq > ?` + inSources + ` ORDER BY a.change_seq ASC LIMIT ?`
+		` WHERE a.change_seq > ?` + h.inSources() + ` ORDER BY a.change_seq ASC LIMIT ?`
 	rows, err := h.r.QueryContext(ctx, q, after, list, limit)
 	if err != nil {
 		return nil, after, fmt.Errorf("store: changed after: %w", err)

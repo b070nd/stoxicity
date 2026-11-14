@@ -25,15 +25,15 @@ func (db *DB) PutAssertions(ctx context.Context, results []assertion.Result, at 
 	if err != nil {
 		return 0, err
 	}
-	tx, err := h.w.BeginTx(ctx, nil)
+	tx, err := h.beginWrite(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("store: assertions: %w", err)
 	}
 	defer tx.Rollback()
-	st, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO assertion
+	st, err := tx.PrepareContext(ctx, `INSERT INTO assertion
 		(article_id, version, extractor, seq, kind, method, item, span, span_start, span_end, match, parties, negated, denied, historical, anticipatory,
 		 status, attribution, magnitude, routine, rated, model, prompt_version, truncated, recorded_ms, action)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`)
 	if err != nil {
 		return 0, fmt.Errorf("store: assertions: %w", err)
 	}
@@ -150,7 +150,7 @@ func (db *DB) PutAssessments(ctx context.Context, as []assertion.Assessment, at 
 	if err != nil {
 		return 0, err
 	}
-	tx, err := h.w.BeginTx(ctx, nil)
+	tx, err := h.beginWrite(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("store: assessments: %w", err)
 	}
@@ -165,8 +165,8 @@ func (db *DB) PutAssessments(ctx context.Context, as []assertion.Assessment, at 
 			continue
 		}
 		sj, _ := json.Marshal(a.Seqs)
-		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO assessment (article_id, ticker, dimension, version, value, label, abstained, basis, seqs, assessed_ms)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, a.ArticleID, a.Ticker, a.Dimension, a.Version, a.Value, a.Label, b2i(a.Abstained), a.Basis, string(sj), ms(at)); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO assessment (article_id, ticker, dimension, version, value, label, abstained, basis, seqs, assessed_ms)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`, a.ArticleID, a.Ticker, a.Dimension, a.Version, a.Value, a.Label, b2i(a.Abstained), a.Basis, string(sj), ms(at)); err != nil {
 			return 0, fmt.Errorf("store: assessments: %w", err)
 		}
 		n++

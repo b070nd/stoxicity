@@ -56,7 +56,7 @@ func (t *tenantStore) PendingAlerts(ctx context.Context) ([]PendingAlert, error)
 		return nil, err
 	}
 	rows, err := h.r.QueryContext(ctx, `SELECT h.watch_id, h.article_id, a.value, h.at_ms
-		FROM hits h, json_each(h.alerts) a
+		FROM hits h CROSS JOIN `+h.d.jsonEach("h.alerts", "a")+`
 		LEFT JOIN delivered d ON d.watch_id = h.watch_id AND d.article_id = h.article_id AND d.alert = a.value
 		WHERE h.alerts <> '[]' AND d.alert IS NULL
 		ORDER BY h.at_ms, h.watch_id, h.article_id, a.value`)
@@ -93,12 +93,12 @@ func (t *tenantStore) MarkDelivered(ctx context.Context, alerts []PendingAlert, 
 	if at.IsZero() {
 		at = t.db.now()
 	}
-	tx, err := h.w.BeginTx(ctx, nil)
+	tx, err := h.beginWrite(ctx)
 	if err != nil {
 		return fmt.Errorf("store: mark delivered: %w", err)
 	}
 	defer tx.Rollback()
-	stmt, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO delivered (watch_id, article_id, alert, at_ms) VALUES (?, ?, ?, ?)`)
+	stmt, err := tx.PrepareContext(ctx, `INSERT INTO delivered (watch_id, article_id, alert, at_ms) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING`)
 	if err != nil {
 		return fmt.Errorf("store: mark delivered: %w", err)
 	}
@@ -161,7 +161,7 @@ func (t *tenantStore) MarkDigestSent(ctx context.Context, watchID, periodKey str
 	if at.IsZero() {
 		at = t.db.now()
 	}
-	_, err = h.w.ExecContext(ctx, `INSERT OR IGNORE INTO digest_sent (watch_id, period_key, at_ms) VALUES (?, ?, ?)`,
+	_, err = h.w.ExecContext(ctx, `INSERT INTO digest_sent (watch_id, period_key, at_ms) VALUES (?, ?, ?) ON CONFLICT DO NOTHING`,
 		watchID, periodKey, ms(at))
 	if err != nil {
 		return fmt.Errorf("store: mark digest sent: %w", err)
@@ -214,12 +214,12 @@ func (t *tenantStore) MarkSentTo(ctx context.Context, alerts []PendingAlert, cha
 	if at.IsZero() {
 		at = t.db.now()
 	}
-	tx, err := h.w.BeginTx(ctx, nil)
+	tx, err := h.beginWrite(ctx)
 	if err != nil {
 		return fmt.Errorf("store: mark sent: %w", err)
 	}
 	defer tx.Rollback()
-	stmt, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO delivered_channel (watch_id, article_id, alert, channel, at_ms) VALUES (?, ?, ?, ?, ?)`)
+	stmt, err := tx.PrepareContext(ctx, `INSERT INTO delivered_channel (watch_id, article_id, alert, channel, at_ms) VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`)
 	if err != nil {
 		return fmt.Errorf("store: mark sent: %w", err)
 	}

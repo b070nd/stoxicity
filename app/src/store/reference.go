@@ -265,7 +265,7 @@ func replaceTable[T any](ctx context.Context, db *DB, src RefSource, at time.Tim
 	}
 	hash := hashRows(rows, fields)
 
-	tx, err := h.w.BeginTx(ctx, nil)
+	tx, err := h.beginWrite(ctx)
 	if err != nil {
 		return RefDiff{}, fmt.Errorf("store: %s: %w", table, err)
 	}
@@ -484,7 +484,7 @@ func (db *DB) PutCompanies(ctx context.Context, rows []RefCompany, at time.Time)
 	}
 	rows = slices.Clone(rows)
 	slices.SortFunc(rows, func(a, b RefCompany) int { return strings.Compare(a.CIK, b.CIK) })
-	tx, err := h.w.BeginTx(ctx, nil)
+	tx, err := h.beginWrite(ctx)
 	if err != nil {
 		return RefDiff{}, fmt.Errorf("store: companies: %w", err)
 	}
@@ -517,9 +517,10 @@ func (db *DB) PutCompanies(ctx context.Context, rows []RefCompany, at time.Time)
 		if !r.FetchedAt.IsZero() {
 			fetched = ms(r.FetchedAt)
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO ref_company
+		if _, err := tx.ExecContext(ctx, `INSERT INTO ref_company
 			(cik, name, sic, description, entity_type, category, state, fiscal_year, website, former, missing, fetched_ms, extra)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT (cik) DO UPDATE SET name = excluded.name, sic = excluded.sic, description = excluded.description, entity_type = excluded.entity_type, category = excluded.category, state = excluded.state, fiscal_year = excluded.fiscal_year, website = excluded.website, former = excluded.former, missing = excluded.missing, fetched_ms = excluded.fetched_ms, extra = excluded.extra`,
 			r.CIK, r.Name, r.SIC, r.Description, r.EntityType, r.Category, r.State, r.FiscalYear, r.Website,
 			string(former), r.Missing, fetched, r.extra()); err != nil {
 			return RefDiff{}, fmt.Errorf("store: companies: %w", err)
@@ -669,7 +670,7 @@ func (db *DB) PutWebsites(ctx context.Context, rows []RefWebsite, at time.Time) 
 	}
 	rows = slices.Clone(rows)
 	slices.SortFunc(rows, func(a, b RefWebsite) int { return strings.Compare(a.Ticker, b.Ticker) })
-	tx, err := h.w.BeginTx(ctx, nil)
+	tx, err := h.beginWrite(ctx)
 	if err != nil {
 		return RefDiff{}, fmt.Errorf("store: websites: %w", err)
 	}
@@ -701,7 +702,8 @@ func (db *DB) PutWebsites(ctx context.Context, rows []RefWebsite, at time.Time) 
 		if !r.FetchedAt.IsZero() {
 			fetched = ms(r.FetchedAt)
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO ref_website (ticker, url, label, fetched_ms) VALUES (?, ?, ?, ?)`,
+		if _, err := tx.ExecContext(ctx, `INSERT INTO ref_website (ticker, url, label, fetched_ms) VALUES (?, ?, ?, ?)
+		ON CONFLICT (ticker) DO UPDATE SET url = excluded.url, label = excluded.label, fetched_ms = excluded.fetched_ms`,
 			r.Ticker, r.URL, r.Label, fetched); err != nil {
 			return RefDiff{}, fmt.Errorf("store: websites: %w", err)
 		}

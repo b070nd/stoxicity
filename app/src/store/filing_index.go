@@ -77,14 +77,14 @@ func (db *DB) PutFilingDay(ctx context.Context, r DayResult, at time.Time) (adde
 	if r.Source == "" {
 		r.Source = "daily"
 	}
-	tx, err := h.w.BeginTx(ctx, nil)
+	tx, err := h.beginWrite(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("store: filing index: %w", err)
 	}
 	defer tx.Rollback()
 	for _, f := range r.Refs {
-		res, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO filing_index (accession, cik, form, filed_day, company, source, first_seen_ms)
-			VALUES (?, ?, ?, ?, ?, ?, ?)`, f.Accession, f.CIK, f.Form, f.Filed, f.Company, "edgar-"+r.Source+"-index", ms(at))
+		res, err := tx.ExecContext(ctx, `INSERT INTO filing_index (accession, cik, form, filed_day, company, source, first_seen_ms)
+			VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`, f.Accession, f.CIK, f.Form, f.Filed, f.Company, "edgar-"+r.Source+"-index", ms(at))
 		if err != nil {
 			return 0, fmt.Errorf("store: filing index: %w", err)
 		}
@@ -236,11 +236,13 @@ func (db *DB) StartReconcileRun(ctx context.Context, from, to, mode string, tota
 	if err != nil {
 		return 0, err
 	}
-	res, err := h.w.ExecContext(ctx, `INSERT INTO reconcile_run (from_day, to_day, mode, started_ms, days_total) VALUES (?, ?, ?, ?, ?)`, from, to, mode, ms(at), total)
+	var id int64
+	err = h.w.QueryRowContext(ctx, `INSERT INTO reconcile_run (from_day, to_day, mode, started_ms, days_total) VALUES (?, ?, ?, ?, ?) RETURNING id`,
+		from, to, mode, ms(at), total).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("store: reconcile run: %w", err)
 	}
-	return res.LastInsertId()
+	return id, nil
 }
 
 // UpdateReconcileRun records progress; a non-zero finished time ends the run.
@@ -312,7 +314,7 @@ func (db *DB) PutFilingMeta(ctx context.Context, metas []FilingMeta, at time.Tim
 	if err != nil {
 		return 0, err
 	}
-	tx, err := h.w.BeginTx(ctx, nil)
+	tx, err := h.beginWrite(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("store: filing meta: %w", err)
 	}
@@ -414,7 +416,7 @@ func (db *DB) PutBackfill(ctx context.Context, bs []Backfill, at time.Time) erro
 	if err != nil {
 		return err
 	}
-	tx, err := h.w.BeginTx(ctx, nil)
+	tx, err := h.beginWrite(ctx)
 	if err != nil {
 		return fmt.Errorf("store: backfill: %w", err)
 	}
@@ -426,7 +428,7 @@ func (db *DB) PutBackfill(ctx context.Context, bs []Backfill, at time.Time) erro
 		if b.Precision == "" {
 			b.Precision = PrecisionDay
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO article_backfill (article_id, kind, run_id, filed_day, precision, recovered_ms, reason) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		if _, err := tx.ExecContext(ctx, `INSERT INTO article_backfill (article_id, kind, run_id, filed_day, precision, recovered_ms, reason) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
 			b.ArticleID, b.Kind, b.RunID, b.FiledDay, b.Precision, ms(at), b.Reason); err != nil {
 			return fmt.Errorf("store: backfill: %w", err)
 		}
@@ -506,7 +508,7 @@ func (db *DB) FilingsOnDays(ctx context.Context, from, to string) (map[string][2
 	if err != nil {
 		return nil, err
 	}
-	rows, err := h.r.QueryContext(ctx, `SELECT i.filed_day, COUNT(*), SUM(EXISTS (SELECT 1 FROM articles a WHERE a.id = i.accession))
+	rows, err := h.r.QueryContext(ctx, `SELECT i.filed_day, COUNT(*), SUM(CASE WHEN EXISTS (SELECT 1 FROM articles a WHERE a.id = i.accession) THEN 1 ELSE 0 END)
 		FROM filing_index i WHERE i.filed_day >= ? AND i.filed_day <= ? GROUP BY i.filed_day`, from, to)
 	if err != nil {
 		return nil, fmt.Errorf("store: filing index: %w", err)

@@ -111,7 +111,7 @@ func (db *DB) PutInstruments(ctx context.Context, in instrument.Set, source stri
 	if at.IsZero() {
 		at = db.now()
 	}
-	tx, err := h.w.BeginTx(ctx, nil)
+	tx, err := h.beginWrite(ctx)
 	if err != nil {
 		return rep, fmt.Errorf("store: instruments: %w", err)
 	}
@@ -191,7 +191,7 @@ func (db *DB) PutInstruments(ctx context.Context, in instrument.Set, source stri
 				cik = i.CIK
 			}
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO security (id, cik, name, class, created_ms) VALUES (?, ?, ?, ?, ?)`, s.ID, cik, s.Name, s.ShareClass, ms(at)); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO security (id, cik, name, class, created_ms) VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`, s.ID, cik, s.Name, s.ShareClass, ms(at)); err != nil {
 			return rep, fmt.Errorf("store: instruments: %w", err)
 		}
 		if _, err := putRevision(ctx, tx, "security_revision", "security_id", s.ID, s,

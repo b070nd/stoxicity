@@ -26,7 +26,7 @@ func (db *DB) PutOrigins(ctx context.Context, os []origin.Origin, at time.Time) 
 	if at.IsZero() {
 		at = db.now()
 	}
-	tx, err := h.w.BeginTx(ctx, nil)
+	tx, err := h.beginWrite(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("store: origins: %w", err)
 	}
@@ -50,8 +50,8 @@ func (db *DB) PutOrigins(ctx context.Context, os []origin.Origin, at time.Time) 
 			return 0, fmt.Errorf("store: origins: %w", err)
 		}
 		for _, m := range o.Matches {
-			if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO origin_match (article_id, other_id, version, method, score, shared_runs, longest_run, passage, detected_ms)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, o.ArticleID, m.Other, o.Version, string(m.Method), m.Score, m.Shared, m.LongestRun, m.Passage, ms(at)); err != nil {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO origin_match (article_id, other_id, version, method, score, shared_runs, longest_run, passage, detected_ms)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`, o.ArticleID, m.Other, o.Version, string(m.Method), m.Score, m.Shared, m.LongestRun, m.Passage, ms(at)); err != nil {
 				return 0, fmt.Errorf("store: origins: %w", err)
 			}
 		}
@@ -168,7 +168,7 @@ func (db *DB) PutEpisodeDecisions(ctx context.Context, ds []EpisodeDecision, at 
 	if at.IsZero() {
 		at = db.now()
 	}
-	tx, err := h.w.BeginTx(ctx, nil)
+	tx, err := h.beginWrite(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("store: episodes: %w", err)
 	}

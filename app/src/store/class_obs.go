@@ -56,16 +56,16 @@ func (db *DB) PutCover(ctx context.Context, r fundamentals.CoverRead) error {
 	if !r.Accepted.IsZero() {
 		precision, accepted = "time", ms(r.Accepted)
 	}
-	tx, err := h.w.BeginTx(ctx, nil)
+	tx, err := h.beginWrite(ctx)
 	if err != nil {
 		return fmt.Errorf("store: cover: %w", err)
 	}
 	defer tx.Rollback()
 	for _, k := range order {
 		v := merged[k]
-		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO share_class_obs
+		if _, err := tx.ExecContext(ctx, `INSERT INTO share_class_obs
 			(cik, accession, form, filed_day, accepted_ms, precision, as_of, dimensions, shares, ticker, duplicates, source, received_ms)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'sec-cover', ?)`,
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'sec-cover', ?) ON CONFLICT DO NOTHING`,
 			r.CIK, r.Accession, r.Form, r.Filed, accepted, precision, k.asOf, k.dims, k.shares, v.ticker, v.n, ms(at)); err != nil {
 			return fmt.Errorf("store: cover: %w", err)
 		}
@@ -165,7 +165,7 @@ func (db *DB) PutClassMaps(ctx context.Context, maps []valuation.Mapping) (int, 
 	if err != nil {
 		return 0, err
 	}
-	tx, err := h.w.BeginTx(ctx, nil)
+	tx, err := h.beginWrite(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("store: class maps: %w", err)
 	}
@@ -257,7 +257,7 @@ func (db *DB) SecurityOf(ctx context.Context, ticker string, at time.Time) (stri
 	if err != nil {
 		return "", err
 	}
-	tx, err := h.w.BeginTx(ctx, nil)
+	tx, err := h.beginWrite(ctx)
 	if err != nil {
 		return "", fmt.Errorf("store: security: %w", err)
 	}

@@ -121,7 +121,7 @@ func (db *DB) SyncSecurities(ctx context.Context, at time.Time) (SecuritySync, e
 	if err != nil {
 		return rep, err
 	}
-	tx, err := h.w.BeginTx(ctx, nil)
+	tx, err := h.beginWrite(ctx)
 	if err != nil {
 		return rep, fmt.Errorf("store: sync securities: %w", err)
 	}
@@ -198,7 +198,7 @@ func (db *DB) PutEvents(ctx context.Context, in []EventInput, at time.Time) (int
 	if at.IsZero() {
 		at = db.now()
 	}
-	tx, err := h.w.BeginTx(ctx, nil)
+	tx, err := h.beginWrite(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("store: events: %w", err)
 	}
@@ -436,7 +436,7 @@ func putEvent(ctx context.Context, tx *sql.Tx, e EventInput, at time.Time) (bool
 		}
 	}
 	for _, r := range e.Relations {
-		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO event_relation (from_event, to_event, relation, basis, recorded_ms) VALUES (?, ?, ?, ?, ?)`,
+		if _, err := tx.ExecContext(ctx, `INSERT INTO event_relation (from_event, to_event, relation, basis, recorded_ms) VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
 			e.EventID, r.To, r.Relation, r.Basis, ms(at)); err != nil {
 			return false, err
 		}
@@ -448,8 +448,8 @@ func putEvent(ctx context.Context, tx *sql.Tx, e EventInput, at time.Time) (bool
 			if roles[id] != model.RoleSubject {
 				continue
 			}
-			if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO event_assessment (event_id, revision, security_id, rule, effect, direction, horizon,
-				confidence, rationale, assessed_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			if _, err := tx.ExecContext(ctx, `INSERT INTO event_assessment (event_id, revision, security_id, rule, effect, direction, horizon,
+				confidence, rationale, assessed_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
 				e.EventID, rev, id, e.LensVersion, fmt.Sprintf("materiality:%d", e.Materiality), model.DirectionUnknown, "unspecified",
 				e.Relevance, e.Rationale, ms(at)); err != nil {
 				return false, err
@@ -481,14 +481,14 @@ func (db *DB) SecurityTimeline(ctx context.Context, ticker string, knownAt time.
 		limit = 50
 	}
 	known := ms(knownAt)
-	rows, err := h.r.QueryContext(ctx, `SELECT r.event_id, r.revision, r.kind, r.status, r.title, es.role, r.public_ms, r.recorded_ms,
+	rows, err := h.r.QueryContext(ctx, `SELECT r.event_id, r.revision, r.kind, r.status, r.title, MIN(es.role), r.public_ms, r.recorded_ms,
 			r.materiality, r.relevance, (SELECT COUNT(*) FROM event_evidence v WHERE v.event_id = r.event_id AND v.revision = r.revision)
 		FROM security_ticker t
 		JOIN event_security es ON es.security_id = t.security_id
 		JOIN event_revision r ON r.event_id = es.event_id AND r.revision = es.revision
 		WHERE t.ticker = ? AND r.recorded_ms <= ? AND r.public_ms <= ? AND r.status <> 'withdrawn'
 		  AND r.revision = (SELECT MAX(r2.revision) FROM event_revision r2 WHERE r2.event_id = r.event_id AND r2.recorded_ms <= ?)
-		GROUP BY r.event_id
+		GROUP BY r.event_id, r.revision, r.kind, r.status, r.title, r.public_ms, r.recorded_ms, r.materiality, r.relevance
 		ORDER BY r.public_ms DESC, r.event_id LIMIT ?`, strings.ToUpper(strings.TrimSpace(ticker)), known, known, known, limit)
 	if err != nil {
 		return nil, fmt.Errorf("store: timeline: %w", err)
@@ -635,11 +635,13 @@ func (db *DB) LiveEvents(ctx context.Context, asOf time.Time) ([]LiveEvent, erro
 	if !asOf.IsZero() {
 		bound = ms(asOf)
 	}
-	rows, err := h.r.QueryContext(ctx, `SELECT r.event_id, r.kind, r.revision, COALESCE(group_concat(DISTINCT v.article_id), '')
-		FROM event_revision r LEFT JOIN event_evidence v ON v.event_id = r.event_id AND v.revision = r.revision
+	rows, err := h.r.QueryContext(ctx, `SELECT r.event_id, r.kind, r.revision,
+			COALESCE((SELECT string_agg(d.article_id, ',' ORDER BY d.article_id)
+				FROM (SELECT DISTINCT v.article_id FROM event_evidence v WHERE v.event_id = r.event_id AND v.revision = r.revision) AS d), '')
+		FROM event_revision r
 		WHERE r.status <> 'withdrawn'
 		  AND r.revision = (SELECT MAX(r2.revision) FROM event_revision r2 WHERE r2.event_id = r.event_id AND r2.recorded_ms <= ?)
-		GROUP BY r.event_id ORDER BY r.event_id`, bound)
+		ORDER BY r.event_id`, bound)
 	if err != nil {
 		return nil, fmt.Errorf("store: live events: %w", err)
 	}
@@ -682,7 +684,7 @@ func (db *DB) WithdrawEvents(ctx context.Context, ws []Withdrawal, at time.Time)
 	if at.IsZero() {
 		at = db.now()
 	}
-	tx, err := h.w.BeginTx(ctx, nil)
+	tx, err := h.beginWrite(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("store: withdraw: %w", err)
 	}
@@ -721,7 +723,7 @@ func (db *DB) WithdrawEvents(ctx context.Context, ws []Withdrawal, at time.Time)
 			rel, targets = model.RelationSuperseded, w.Successors
 		}
 		for _, to := range targets {
-			if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO event_relation (from_event, to_event, relation, basis, recorded_ms) VALUES (?, ?, ?, ?, ?)`,
+			if _, err := tx.ExecContext(ctx, `INSERT INTO event_relation (from_event, to_event, relation, basis, recorded_ms) VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
 				w.EventID, to, rel, w.Basis, ms(at)); err != nil {
 				return 0, fmt.Errorf("store: withdraw: %w", err)
 			}

@@ -19,12 +19,13 @@ func (db *DB) PutFundamentals(ctx context.Context, facts []fundamentals.Fact, at
 	if err != nil {
 		return err
 	}
-	tx, err := h.w.BeginTx(ctx, nil)
+	tx, err := h.beginWrite(ctx)
 	if err != nil {
 		return fmt.Errorf("store: fundamentals: %w", err)
 	}
 	defer tx.Rollback()
-	st, err := tx.PrepareContext(ctx, `INSERT OR REPLACE INTO fundamental (cik, metric, period_end, period_start, value) VALUES (?, ?, ?, ?, ?)`)
+	st, err := tx.PrepareContext(ctx, `INSERT INTO fundamental (cik, metric, period_end, period_start, value) VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT (cik, metric, period_end) DO UPDATE SET period_start = excluded.period_start, value = excluded.value`)
 	if err != nil {
 		return fmt.Errorf("store: fundamentals: %w", err)
 	}
@@ -129,7 +130,7 @@ func (db *DB) PutFactHistory(ctx context.Context, facts []fundamentals.Fact, at 
 	if err := h.r.QueryRowContext(ctx, `SELECT COUNT(*) FROM fundamental_fact`).Scan(&before); err != nil {
 		return 0, fmt.Errorf("store: fundamental history: %w", err)
 	}
-	tx, err := h.w.BeginTx(ctx, nil)
+	tx, err := h.beginWrite(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("store: fundamental history: %w", err)
 	}

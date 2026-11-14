@@ -21,7 +21,7 @@ import (
 // (the shape of sources.Registry.VisibleTo); keys with the value false are
 // ignored. An EMPTY set, or one with no true value, allows NO source: the
 // methods return nothing and never fall back to "all". The set may have any
-// size; it travels as one JSON parameter read with json_each, so SQLite's
+// size; it travels as one JSON parameter read as a table (dialect.jsonEach), so the database's
 // limit on bound variables does not apply.
 //
 // The unfiltered Day, Range, Get, Search and Has stay for ingest, which must
@@ -44,9 +44,6 @@ func allowedJSON(allowed map[string]bool) (string, bool) {
 	return string(b), true
 }
 
-// inSources is the SQL condition on the article table alias a.
-const inSources = ` AND a.source_id IN (SELECT value FROM json_each(?))`
-
 // DayIn is Day restricted to the allowed sources. The day is the calendar day
 // of day in day's own location.
 func (db *DB) DayIn(ctx context.Context, day time.Time, allowed map[string]bool) ([]model.Article, error) {
@@ -67,7 +64,7 @@ func (db *DB) RangeIn(ctx context.Context, from, to time.Time, allowed map[strin
 	if !ok {
 		return nil, nil
 	}
-	q, args := windowQuery(articleSelect+` FROM articles a`+latestScoreJoin+` WHERE 1 = 1`, nil, from, to, list)
+	q, args := h.windowQuery(articleSelect+` FROM articles a`+latestScoreJoin+` WHERE 1 = 1`, nil, from, to, list)
 	out, err := queryArticles(ctx, h.r, q+articleOrder, args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: range: %w", err)
@@ -88,7 +85,7 @@ func (db *DB) RangePageIn(ctx context.Context, from, to time.Time, allowed map[s
 	if !ok {
 		return nil, nil
 	}
-	q, args := windowQuery(articleSelect+` FROM articles a`+latestScoreJoin+` WHERE 1 = 1`, nil, from, to, list)
+	q, args := h.windowQuery(articleSelect+` FROM articles a`+latestScoreJoin+` WHERE 1 = 1`, nil, from, to, list)
 	q, args = page(q+articleOrder, args, limit, offset)
 	out, err := queryArticles(ctx, h.r, q, args...)
 	if err != nil {
@@ -109,7 +106,7 @@ func (db *DB) GetIn(ctx context.Context, id string, allowed map[string]bool) (mo
 	if !ok {
 		return model.Article{}, fmt.Errorf("%w: article %q", ErrNotFound, id)
 	}
-	q := articleSelect + ` FROM articles a` + latestScoreJoin + ` WHERE a.id = ?` + inSources
+	q := articleSelect + ` FROM articles a` + latestScoreJoin + ` WHERE a.id = ?` + h.inSources()
 	out, err := queryArticles(ctx, h.r, q, id, list)
 	if err != nil {
 		return model.Article{}, fmt.Errorf("store: get: %w", err)
@@ -137,7 +134,7 @@ func (db *DB) SearchIn(ctx context.Context, match string, from, to time.Time, al
 	if !ok {
 		return nil, nil
 	}
-	q, args := windowQuery(articleSelect+` FROM articles_fts JOIN articles a ON a.seq = articles_fts.rowid`+
+	q, args := h.windowQuery(articleSelect+` FROM articles_fts JOIN articles a ON a.seq = articles_fts.rowid`+
 		latestScoreJoin+` WHERE articles_fts MATCH ?`, []any{match}, from, to, list)
 	q, args = page(q+articleOrder, args, limit, offset)
 	out, err := queryArticles(ctx, h.r, q, args...)
@@ -161,7 +158,7 @@ func (db *DB) HasIn(ctx context.Context, ids []string, allowed map[string]bool) 
 	}
 	idList, _ := json.Marshal(ids) // a []string always marshals
 	rows, err := h.r.QueryContext(ctx, `SELECT a.id FROM articles a
-		WHERE a.id IN (SELECT value FROM json_each(?))`+inSources, string(idList), list)
+		WHERE a.id IN (SELECT value FROM `+h.d.jsonEach("?", "j")+`)`+h.inSources(), string(idList), list)
 	if err != nil {
 		return nil, fmt.Errorf("store: has: %w", err)
 	}
@@ -181,7 +178,7 @@ func (db *DB) HasIn(ctx context.Context, ids []string, allowed map[string]bool) 
 
 // windowQuery appends the time window and the source condition to a query that
 // ends in a WHERE clause. args are the arguments already bound.
-func windowQuery(q string, args []any, from, to time.Time, list string) (string, []any) {
+func (h *handle) windowQuery(q string, args []any, from, to time.Time, list string) (string, []any) {
 	if !from.IsZero() {
 		q += ` AND a.published_ms >= ?`
 		args = append(args, ms(from))
@@ -190,7 +187,7 @@ func windowQuery(q string, args []any, from, to time.Time, list string) (string,
 		q += ` AND a.published_ms < ?`
 		args = append(args, ms(to))
 	}
-	return q + inSources, append(args, list)
+	return q + h.inSources(), append(args, list)
 }
 
 // page appends LIMIT and OFFSET.

@@ -20,20 +20,21 @@ func (db *DB) PutCandles(ctx context.Context, rows []marketdata.Candle) error {
 	if err != nil {
 		return err
 	}
-	tx, err := h.w.BeginTx(ctx, nil)
+	tx, err := h.beginWrite(ctx)
 	if err != nil {
 		return fmt.Errorf("store: candles: %w", err)
 	}
 	defer tx.Rollback()
-	st, err := tx.PrepareContext(ctx, `INSERT OR REPLACE INTO candle (ticker, day, open, high, low, close, volume, raw, currency, fetched_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	st, err := tx.PrepareContext(ctx, `INSERT INTO candle (ticker, day, open, high, low, close, volume, raw, currency, fetched_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT (ticker, day) DO UPDATE SET open = excluded.open, high = excluded.high, low = excluded.low, close = excluded.close, volume = excluded.volume, raw = excluded.raw, currency = excluded.currency, fetched_ms = excluded.fetched_ms`)
 	if err != nil {
 		return fmt.Errorf("store: candles: %w", err)
 	}
 	defer st.Close()
 	// The version a different fetch replaces is kept, with when it was fetched.
-	keep, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO candle_revision (ticker, day, open, high, low, close, volume, raw, currency, fetched_ms, superseded_ms)
+	keep, err := tx.PrepareContext(ctx, `INSERT INTO candle_revision (ticker, day, open, high, low, close, volume, raw, currency, fetched_ms, superseded_ms)
 		SELECT ticker, day, open, high, low, close, volume, raw, currency, fetched_ms, ? FROM candle
-		WHERE ticker = ? AND day = ? AND (open <> ? OR high <> ? OR low <> ? OR close <> ? OR volume <> ? OR raw <> ? OR currency <> ?)`)
+		WHERE ticker = ? AND day = ? AND (open <> ? OR high <> ? OR low <> ? OR close <> ? OR volume <> ? OR raw <> ? OR currency <> ?) ON CONFLICT DO NOTHING`)
 	if err != nil {
 		return fmt.Errorf("store: candles: %w", err)
 	}
@@ -175,7 +176,7 @@ func (db *DB) SaveChecks(ctx context.Context, checks map[string]marketdata.Check
 	if err != nil {
 		return err
 	}
-	tx, err := h.w.BeginTx(ctx, nil)
+	tx, err := h.beginWrite(ctx)
 	if err != nil {
 		return fmt.Errorf("store: candles: %w", err)
 	}

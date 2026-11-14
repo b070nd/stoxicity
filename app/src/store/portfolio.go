@@ -327,7 +327,7 @@ func (p Portfolios) update(ctx context.Context, refs []string, fn func(tx *sql.T
 	if len(refs) == 0 {
 		return errors.New("store: portfolio: no book to update")
 	}
-	tx, err := h.w.BeginTx(ctx, nil)
+	tx, err := h.beginWrite(ctx)
 	if err != nil {
 		return fmt.Errorf("store: portfolio: %w", err)
 	}
@@ -464,7 +464,7 @@ func (p Portfolios) Archive(ctx context.Context, ref string) error {
 	if err != nil {
 		return err
 	}
-	tx, err := h.w.BeginTx(ctx, nil)
+	tx, err := h.beginWrite(ctx)
 	if err != nil {
 		return fmt.Errorf("store: portfolio: %w", err)
 	}
@@ -500,7 +500,7 @@ func (p Portfolios) ResetPaper(ctx context.Context, ref, newName string) (portfo
 	if err != nil {
 		return portfolio.Book{}, err
 	}
-	tx, err := h.w.BeginTx(ctx, nil)
+	tx, err := h.beginWrite(ctx)
 	if err != nil {
 		return portfolio.Book{}, fmt.Errorf("store: portfolio: %w", err)
 	}
