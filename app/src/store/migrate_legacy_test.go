@@ -12,7 +12,7 @@ import (
 // opened by this one: migrations 19 to 23 add what they add, convert the legacy
 // rows the way their comments say, and lose and duplicate nothing.
 func TestLegacyRowsSurviveMigrationsNineteenToTwentyThree(t *testing.T) {
-	ms, err := loadMigrations(baseFS, "migrations/base")
+	ms, err := loadMigrations(baseFS, "migrations/sqlite/base")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +29,7 @@ func TestLegacyRowsSurviveMigrationsNineteenToTwentyThree(t *testing.T) {
 	at := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
 	now := func() time.Time { return at }
 
-	if err := migrate(ctx, raw, ms[:18], now); err != nil {
+	if err := migrate(ctx, raw, sqliteDialect{}, ms[:18], now); err != nil {
 		t.Fatalf("migrations 1 to 18: %v", err)
 	}
 	for _, q := range []string{
@@ -46,11 +46,11 @@ func TestLegacyRowsSurviveMigrationsNineteenToTwentyThree(t *testing.T) {
 		}
 	}
 
-	if err := migrate(ctx, raw, ms, now); err != nil {
+	if err := migrate(ctx, raw, sqliteDialect{}, ms, now); err != nil {
 		t.Fatalf("migrations 19 to %d: %v", len(ms), err)
 	}
 	// Running again changes nothing.
-	if err := migrate(ctx, raw, ms, now); err != nil {
+	if err := migrate(ctx, raw, sqliteDialect{}, ms, now); err != nil {
 		t.Fatalf("second run: %v", err)
 	}
 	count := func(q string, args ...any) int {

@@ -391,7 +391,7 @@ func (a *app) store() (*store.DB, error) {
 	if a.noStore {
 		return nil, errStoreOff
 	}
-	db, err := store.Open(a.dataDir())
+	db, err := store.OpenAt(a.dataDir(), a.cfg.DatabaseURL)
 	if err != nil {
 		return nil, err
 	}

@@ -19,11 +19,11 @@ type SchemaVersions struct {
 // KnownSchema returns the newest embedded migration of the base and tenant
 // databases. It reads nothing from disk.
 func KnownSchema() (SchemaVersions, error) {
-	b, err := loadMigrations(baseFS, "migrations/base")
+	b, err := loadMigrations(baseFS, "migrations/sqlite/base")
 	if err != nil {
 		return SchemaVersions{}, err
 	}
-	t, err := loadMigrations(tenantFS, "migrations/tenant")
+	t, err := loadMigrations(tenantFS, "migrations/sqlite/tenant")
 	if err != nil {
 		return SchemaVersions{}, err
 	}

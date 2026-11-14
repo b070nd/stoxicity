@@ -26,6 +26,9 @@ var t0 = time.Date(2026, 3, 10, 12, 0, 0, 0, time.UTC)
 func openTemp(t *testing.T) (*DB, string) {
 	t.Helper()
 	dir := t.TempDir()
+	if pgTestURL() != "" {
+		return newPGDB(t), dir
+	}
 	db, err := Open(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -57,6 +60,7 @@ func mustSave(t *testing.T, db *DB, as ...model.Article) {
 }
 
 func TestSQLiteFeaturesAndPragmas(t *testing.T) {
+	sqliteOnly(t)
 	db, _ := openTemp(t)
 	ctx := context.Background()
 	var fts int
@@ -81,6 +85,7 @@ func TestSQLiteFeaturesAndPragmas(t *testing.T) {
 }
 
 func TestFileModes(t *testing.T) {
+	sqliteOnly(t)
 	db, dir := openTemp(t)
 	if err := db.Save(context.Background(), []model.Article{art("a", t0)}); err != nil {
 		t.Fatal(err)
@@ -330,6 +335,9 @@ func TestSearch(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			if pgTestURL() != "" && strings.Contains(tc.match, ":") {
+				t.Skip("a column filter is an FTS5 feature the Postgres search does not take")
+			}
 			got, err := db.Search(ctx, tc.match, tc.from, tc.to, tc.limit)
 			if err != nil {
 				t.Fatal(err)
@@ -452,14 +460,7 @@ func TestSourceState(t *testing.T) {
 	}
 	st.Cursor = "40"
 	db.SaveSource(ctx, "s1", st, h)
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
-	db2, err := Open(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db2.Close()
+	db2 := reopenTemp(t, db, dir)
 	check(db2)
 }
 
@@ -500,14 +501,26 @@ func TestTenantIsolation(t *testing.T) {
 	if err := b.Labels().Put(ctx, labels.Label{TenantID: "acme", ArticleID: "y", Verdict: labels.Drop}); err == nil {
 		t.Error("cross-tenant label accepted")
 	}
-	for _, name := range []string{"acme.db", "beta.db"} {
-		if _, err := os.Stat(filepath.Join(dir, "tenants", name)); err != nil {
+	// Each tenant has a file (a schema on Postgres) of its own.
+	for _, name := range []string{"acme", "beta"} {
+		if db.pgURL != "" {
+			var have bool
+			if err := db.base.r.QueryRow(`SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = ?)`, pgTenantSchema(name)).Scan(&have); err != nil || !have {
+				t.Errorf("missing tenant schema %s: %v", name, err)
+			}
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(dir, "tenants", name+".db")); err != nil {
 			t.Errorf("missing tenant file: %v", err)
 		}
 	}
-	// Tenant data is not in the base file.
+	// Tenant data is not in the base database.
 	var n int
-	err = db.base.r.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE name IN ('labels', 'hits', 'seen')`).Scan(&n)
+	if db.pgURL != "" {
+		err = db.base.r.QueryRow(`SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = current_schema() AND table_name IN ('labels', 'hits', 'seen')`).Scan(&n)
+	} else {
+		err = db.base.r.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE name IN ('labels', 'hits', 'seen')`).Scan(&n)
+	}
 	if err != nil || n != 0 {
 		t.Errorf("tenant tables in base: %d %v", n, err)
 	}
@@ -717,7 +730,7 @@ func TestPersistenceAcrossReopen(t *testing.T) {
 	}
 	var versions int
 	db.base.r.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&versions)
-	if ms, err := loadMigrations(baseFS, "migrations/base"); err != nil || versions != len(ms) {
+	if ms, err := loadMigrations(baseFS, "migrations/sqlite/base"); err != nil || versions != len(ms) {
 		t.Errorf("schema version %d, want the %d migrations (%v)", versions, len(ms), err)
 	}
 }
@@ -783,7 +796,7 @@ func TestMigrationsApplyInOrderAndAtomically(t *testing.T) {
 	}
 	defer raw.Close()
 	raw.SetMaxOpenConns(1)
-	if err := migrate(context.Background(), raw, ms, time.Now); err == nil {
+	if err := migrate(context.Background(), raw, sqliteDialect{}, ms, time.Now); err == nil {
 		t.Fatal("expected failure of migration 2")
 	}
 	var tables, version int
@@ -821,7 +834,7 @@ func TestLoadMigrationsValidation(t *testing.T) {
 		name string
 		fs   migrationFS
 		dir  string
-	}{{"base", baseFS, "migrations/base"}, {"tenant", tenantFS, "migrations/tenant"}} {
+	}{{"base", baseFS, "migrations/sqlite/base"}, {"tenant", tenantFS, "migrations/sqlite/tenant"}} {
 		if ms, err := loadMigrations(set.fs, set.dir); err != nil || len(ms) == 0 {
 			t.Errorf("%s: %v %v", set.name, ms, err)
 		}
@@ -1026,6 +1039,9 @@ func TestSaveDuplicateIDsInOneBatch(t *testing.T) {
 // checkFTS verifies that the full-text index matches the articles table.
 func checkFTS(t *testing.T, db *DB) {
 	t.Helper()
+	if pgTestURL() != "" {
+		return // the index is a generated column, there is nothing to check
+	}
 	if _, err := db.base.w.Exec(`INSERT INTO articles_fts (articles_fts, rank) VALUES ('integrity-check', 1)`); err != nil {
 		t.Errorf("fts integrity check: %v", err)
 	}

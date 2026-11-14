@@ -8,11 +8,7 @@ import (
 )
 
 func TestMonthlyCandlesSelectsLastStoredSessionWithinBounds(t *testing.T) {
-	db, err := Open(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	db, _ := openTemp(t)
 	ctx := context.Background()
 	var candles []marketdata.Candle
 	for _, row := range []struct {
@@ -40,11 +36,7 @@ func TestMonthlyCandlesSelectsLastStoredSessionWithinBounds(t *testing.T) {
 }
 
 func TestCalendarCandlesCombinesYearlyAndMonthlyEndpoints(t *testing.T) {
-	db, err := Open(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	db, _ := openTemp(t)
 	ctx := context.Background()
 	var candles []marketdata.Candle
 	for _, day := range []string{"2015-12-31", "2016-06-30", "2016-12-30", "2017-06-30", "2017-12-29", "2025-06-30", "2025-10-31", "2025-11-28", "2025-12-31", "2026-01-15", "2026-01-30", "2026-11-06", "2026-11-30"} {

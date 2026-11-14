@@ -77,13 +77,13 @@ func (db *DB) Save(ctx context.Context, articles []model.Article) error {
 			title = excluded.title, summary = excluded.summary, form = excluded.form,
 			items = excluded.items, tickers = excluded.tickers, topics = excluded.topics,
 			cluster_id = excluded.cluster_id, cik = excluded.cik, change_seq = excluded.change_seq,
-			fetched_ms = CASE WHEN title IS DISTINCT FROM excluded.title OR summary IS DISTINCT FROM excluded.summary
-				THEN excluded.fetched_ms ELSE fetched_ms END
-		WHERE (source_id = excluded.source_id OR articles.form <> '')
-			AND (title IS DISTINCT FROM excluded.title OR summary IS DISTINCT FROM excluded.summary OR form IS DISTINCT FROM excluded.form
-			OR items IS DISTINCT FROM excluded.items OR tickers IS DISTINCT FROM excluded.tickers
-			OR topics IS DISTINCT FROM excluded.topics OR cluster_id IS DISTINCT FROM excluded.cluster_id
-			OR cik IS DISTINCT FROM excluded.cik)`)
+			fetched_ms = CASE WHEN articles.title IS DISTINCT FROM excluded.title OR articles.summary IS DISTINCT FROM excluded.summary
+				THEN excluded.fetched_ms ELSE articles.fetched_ms END
+		WHERE (articles.source_id = excluded.source_id OR articles.form <> '')
+			AND (articles.title IS DISTINCT FROM excluded.title OR articles.summary IS DISTINCT FROM excluded.summary OR articles.form IS DISTINCT FROM excluded.form
+			OR articles.items IS DISTINCT FROM excluded.items OR articles.tickers IS DISTINCT FROM excluded.tickers
+			OR articles.topics IS DISTINCT FROM excluded.topics OR articles.cluster_id IS DISTINCT FROM excluded.cluster_id
+			OR articles.cik IS DISTINCT FROM excluded.cik)`)
 	if err != nil {
 		return fmt.Errorf("store: save: %w", err)
 	}
@@ -189,8 +189,7 @@ func (db *DB) Save(ctx context.Context, articles []model.Article) error {
 	}
 	// Rows added by this batch get sequence numbers above lastSeq; index them
 	// in one statement. Existing rows were re-indexed by the update trigger.
-	if _, err := tx.ExecContext(ctx, `INSERT INTO articles_fts (rowid, title, summary, tickers)
-		SELECT seq, title, summary, tickers FROM articles WHERE seq > ?`, lastSeq); err != nil {
+	if err := h.d.indexArticles(ctx, tx, lastSeq); err != nil {
 		return fmt.Errorf("store: save: index: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -298,9 +297,12 @@ func (db *DB) Search(ctx context.Context, match string, from, to time.Time, limi
 	if limit <= 0 {
 		limit = defaultSearchLimit
 	}
-	q := articleSelect + ` FROM articles_fts JOIN articles a ON a.seq = articles_fts.rowid` +
-		latestScoreJoin + ` WHERE articles_fts MATCH ?`
-	args := []any{match}
+	arg, err := h.d.matchArg(match)
+	if err != nil {
+		return nil, fmt.Errorf("store: search: %w", err)
+	}
+	q := articleSelect + h.d.searchFrom() + latestScoreJoin + h.d.searchWhere()
+	args := []any{arg}
 	if !from.IsZero() {
 		q += ` AND a.published_ms >= ?`
 		args = append(args, ms(from))

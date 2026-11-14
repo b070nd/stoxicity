@@ -93,12 +93,7 @@ func TestPolicyActivationsAreAppendOnlyAndReadableAsOf(t *testing.T) {
 	}
 
 	// It survives a reopen.
-	db.Close()
-	db2, err := Open(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db2.Close()
+	db2 := reopenTemp(t, db, dir)
 	again, ok, err := db2.Policies("default").AsOf(ctx, time.Time{})
 	if err != nil || !ok || again.Hash != rb.Hash {
 		t.Errorf("after reopen: %+v %v %v", again.Epoch, ok, err)

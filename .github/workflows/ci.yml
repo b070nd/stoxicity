@@ -21,6 +21,39 @@ jobs:
       - run: make vet build
       - run: cd app && go test -race ./...
 
+  # The store, the importer and the backups run against a real PostgreSQL as well
+  # (see docs/postgres.md). Not a required check at first; the two jobs above are.
+  test-postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      STOXICITY_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: app/go.mod
+      # pg_dump must be as new as the server; the runner image ships an older one.
+      - name: PostgreSQL 17 client tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y postgresql-client-17
+          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
+      - run: cd app && go test -count=1 ./src/store/... ./src/ops/...
+
   # Real data (databases, statements, prices, credentials, build output) must never
   # reach this repository. The hooks in .githooks stop it on the machine; this is
   # the net for a push that skipped them.

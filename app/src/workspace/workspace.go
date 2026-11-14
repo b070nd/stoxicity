@@ -157,7 +157,7 @@ func Open(opts Options) (*Workspace, error) {
 	if !filepath.IsAbs(dataDir) {
 		dataDir = filepath.Join(base, dataDir)
 	}
-	db, err := store.Open(dataDir)
+	db, err := store.OpenAt(dataDir, cfg.DatabaseURL)
 	if err != nil {
 		return nil, err
 	}

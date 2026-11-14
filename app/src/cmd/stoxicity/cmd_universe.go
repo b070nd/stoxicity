@@ -81,7 +81,11 @@ func (a *app) universeStatus() error {
 		return err
 	}
 	ctx := context.Background()
-	fmt.Fprintf(a.stdout, "database    %s (reference tables)\n", a.relative(filepath.Join(a.dataDir(), "base.db")))
+	if a.cfg.DatabaseURL != "" {
+		fmt.Fprintln(a.stdout, "database    Postgres, schema base (reference tables)")
+	} else {
+		fmt.Fprintf(a.stdout, "database    %s (reference tables)\n", a.relative(filepath.Join(a.dataDir(), "base.db")))
+	}
 	fmt.Fprintf(a.stdout, "downloads   %s\n", a.companyDir())
 	fmt.Fprintf(a.stdout, "layer       %s\n", a.relative(a.layerPath()))
 	srcs, err := db.RefSources(ctx)
