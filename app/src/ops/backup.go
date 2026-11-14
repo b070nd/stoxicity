@@ -34,7 +34,9 @@ type FileEntry struct {
 	SHA256 string           `json:"sha256"`
 	Bytes  int64            `json:"bytes"`
 	Schema int              `json:"schema,omitempty"` // migration applied, databases only
-	Tables map[string]int64 `json:"tables,omitempty"` // rows per table, databases only
+	Tables map[string]int64 `json:"tables,omitempty"` // rows per table ("schema.table" in a Postgres archive), databases only
+	// Schemas is the newest migration applied in each schema of a Postgres archive.
+	Schemas map[string]int `json:"schemas,omitempty"`
 }
 
 // Manifest describes a backup: every file with its checksum and, for a
@@ -470,13 +472,23 @@ func ReadManifest(dir string) (Manifest, error) {
 
 // VerifyReport says whether a backup can be trusted and what is wrong.
 type VerifyReport struct {
-	ID       string        `json:"id"`
-	OK       bool          `json:"ok"`
-	Coherent bool          `json:"coherent"`
-	Files    int           `json:"files"`
-	Bytes    int64         `json:"bytes"`
-	Problems []string      `json:"problems"`
-	Took     time.Duration `json:"took_ns"`
+	ID       string   `json:"id"`
+	OK       bool     `json:"ok"`
+	Coherent bool     `json:"coherent"`
+	Files    int      `json:"files"`
+	Bytes    int64    `json:"bytes"`
+	Problems []string `json:"problems"`
+	// Notes are checks that could not be made; they are not problems.
+	Notes []string      `json:"notes,omitempty"`
+	Took  time.Duration `json:"took_ns"`
+}
+
+// VerifyOptions say how far a verification may go.
+type VerifyOptions struct {
+	// PostgresURL is a server to restore a Postgres archive into (a scratch
+	// database that is dropped afterwards) to count its rows. Without it an
+	// archive is checked by checksum and by listing only.
+	PostgresURL string
 }
 
 // Verify checks a backup against its manifest: every file is there and has
@@ -484,6 +496,11 @@ type VerifyReport struct {
 // check and has the rows the manifest says, and none was written by a newer
 // program than this one.
 func Verify(ctx context.Context, dir string) (VerifyReport, error) {
+	return VerifyWith(ctx, dir, VerifyOptions{})
+}
+
+// VerifyWith is Verify with options.
+func VerifyWith(ctx context.Context, dir string, o VerifyOptions) (VerifyReport, error) {
 	start := time.Now()
 	rep := VerifyReport{Problems: []string{}}
 	m, err := ReadManifest(dir)
@@ -510,6 +527,11 @@ func Verify(ctx context.Context, dir string) (VerifyReport, error) {
 		rep.Bytes += n
 		if sum != f.SHA256 || n != f.Bytes {
 			rep.Problems = append(rep.Problems, f.Path+": the file differs from its checksum")
+			continue
+		}
+		if f.Kind == pgDumpKind {
+			cur, _ := store.KnownSchema()
+			verifyPGDump(ctx, p, f, o, &rep, cur)
 			continue
 		}
 		if f.Kind != "db" {

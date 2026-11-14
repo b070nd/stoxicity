@@ -130,6 +130,7 @@ var deviceName = regexp.MustCompile(`^[a-z]+(:[0-9]+)?$`)
 func applyEnv(cfg *Config) {
 	override("STOXICITY_TIMEZONE", &cfg.Timezone)
 	override("STOXICITY_DATA_DIR", &cfg.DataDir)
+	override("STOXICITY_DATABASE_URL", &cfg.DatabaseURL)
 	override("STOXICITY_CONTACT", &cfg.Fetch.Contact)
 	override("STOXICITY_POLYGON_KEY", &cfg.Company.PolygonKey)
 	if cfg.Company.PolygonKey == "" { // Polygon.io is now called Massive, and its keys carry that name

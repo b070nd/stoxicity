@@ -8,6 +8,12 @@
 #   ./backup.sh verify  <backup-dir>               checksums, integrity check and row counts
 #   ./backup.sh restore <backup-dir> [data-dir]    verify, then put the backup in place
 #
+# With STOXICITY_DATABASE_URL set the data is in Postgres, not in the SQLite files:
+# make and check backups with "stoxicity ops backup" and "stoxicity ops verify"
+# (pg_dump, restored into a scratch database to prove it). This script then
+# refuses to back up or restore, so an old set of SQLite files is never mistaken
+# for a backup, and it only checksums a Postgres backup it is given.
+#
 # restore never deletes: the folder it replaces is renamed to <data-dir>.before-restore-<time>,
 # and it refuses to run while stoxicity or stoxicity-tui is running. Run a backup
 # before the first run of a new binary: the databases migrate when they are opened,
@@ -47,8 +53,10 @@ check_db() { # check_db <db>: the integrity check says ok
 }
 
 mode=${1:-}
+pgurl=$(setting STOXICITY_DATABASE_URL)
 case "$mode" in
 backup)
+  [ -z "$pgurl" ] || die "STOXICITY_DATABASE_URL is set: the data is in Postgres. Use: stoxicity ops backup (and stoxicity ops verify BACKUP)"
   data=${2:-$(setting STOXICITY_DATA_DIR)}
   data=${data:-data}
   root=${3:-$(setting STOXICITY_BACKUP_DIR)}
@@ -75,6 +83,12 @@ verify)
   [ -d "$b" ] || die "usage: ./backup.sh verify <backup-dir>"
   [ -f "$b/MANIFEST" ] || die "$b has no MANIFEST"
   (cd "$b" && shasum -a 256 -c MANIFEST >/dev/null) || die "a file differs from its checksum"
+  if [ -f "$b/postgres.dump" ]; then
+    command -v pg_restore >/dev/null 2>&1 || die "pg_restore is needed to list the archive"
+    pg_restore --list "$b/postgres.dump" >/dev/null || die "the Postgres archive cannot be read"
+    echo "backup $b: checksums agree and the Postgres archive lists; its rows are NOT checked here: run stoxicity ops verify $b"
+    exit 0
+  fi
   (cd "$b" && find . -name '*.db' -type f | sort) | while IFS= read -r f; do
     check_db "$b/$f"
     counts "$b/$f" | cmp -s - "$b/$f.counts" || die "row counts of $f differ from those recorded at backup"
@@ -86,6 +100,8 @@ restore)
   data=${3:-$(setting STOXICITY_DATA_DIR)}
   data=${data:-data}
   [ -d "$b" ] || die "usage: ./backup.sh restore <backup-dir> [data-dir]"
+  [ ! -f "$b/postgres.dump" ] || die "$b is a Postgres backup: restore it with stoxicity ops restore BACKUP -by NAME (into a new database)"
+  [ -z "$pgurl" ] || die "STOXICITY_DATABASE_URL is set: restoring SQLite files would not change the data the program uses; unset it first, or restore a Postgres backup with stoxicity ops restore"
   "$0" verify "$b"
   if pgrep -x stoxicity >/dev/null 2>&1 || pgrep -x stoxicity-tui >/dev/null 2>&1; then
     die "stoxicity is running; stop it first"

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -134,6 +135,10 @@ func (d *doctor) schemaCheck(ctx context.Context) {
 		return
 	}
 	d.schema.KnownBase, d.schema.KnownTenant = known.Base, known.Tenant
+	if d.a.cfg.DatabaseURL != "" {
+		d.postgresSchema(ctx, known)
+		return
+	}
 	base, err := store.ReadSchema(ctx, filepath.Join(d.a.dataDir(), "base.db"))
 	if err != nil {
 		d.report(levelFail, "schema", "base.db: %v", err)
@@ -151,6 +156,57 @@ func (d *doctor) schemaCheck(ctx context.Context) {
 	default:
 		d.report(levelOK, "schema", "base.db is at schema %d", base.Applied)
 	}
+}
+
+// postgresSchema is schemaCheck for a Postgres database: it connects, reads the
+// migration tables of the base and tenant schemas, and writes nothing. A server
+// that cannot be reached is a failure, never a quiet fall back to the SQLite
+// files. The address and the password are not printed.
+func (d *doctor) postgresSchema(ctx context.Context, known store.SchemaVersions) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	st, err := store.InspectPostgres(ctx, d.a.cfg.DatabaseURL, false)
+	if err != nil {
+		d.report(levelFail, "schema", "Postgres (STOXICITY_DATABASE_URL) cannot be reached or read: %s", redactURL(err.Error(), d.a.cfg.DatabaseURL))
+		return
+	}
+	applied, ok := st.Schemas["base"]
+	d.schema.BaseExists, d.schema.AppliedBase = ok, applied
+	tenants, behind := 0, 0
+	for s, v := range st.Schemas {
+		if s == "base" {
+			continue
+		}
+		tenants++
+		if v > known.Tenant {
+			d.report(levelFail, "schema", "tenant schema %s is at %d, newer than this binary (%d); do not open it with this binary", s, v, known.Tenant)
+			return
+		}
+		if v < known.Tenant {
+			behind++
+		}
+	}
+	switch {
+	case !ok:
+		d.reportState(levelOK, readiness.StateImplemented, "schema", "Postgres: the base schema is not created yet; the first run creates it at schema %d", known.Base)
+	case applied > known.Base:
+		d.report(levelFail, "schema", "Postgres: base is at schema %d, newer than this binary (%d); do not open it with this binary", applied, known.Base)
+	case applied < known.Base || behind > 0:
+		d.schema.PendingBase = known.Base - applied
+		d.reportState(levelWarn, readiness.StateStale, "schema", "Postgres: base is at schema %d and this binary is at %d (%d tenant schema(s) behind); the first command that opens it migrates it: run ./stoxicity ops backup first", applied, known.Base, behind)
+	default:
+		d.report(levelOK, "schema", "Postgres: base is at schema %d, %d tenant schema(s) current", applied, tenants)
+	}
+}
+
+// redactURL removes the password of a database URL from text that may quote it.
+func redactURL(text, rawURL string) string {
+	if u, err := url.Parse(rawURL); err == nil && u.User != nil {
+		if pw, ok := u.User.Password(); ok && pw != "" {
+			text = strings.ReplaceAll(text, pw, "***")
+		}
+	}
+	return text
 }
 
 // writeCapabilities prints the readiness of one scope as a table. The five

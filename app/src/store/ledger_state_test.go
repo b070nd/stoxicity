@@ -81,6 +81,7 @@ func TestFetchedAfter(t *testing.T) {
 }
 
 func TestFetchedAfterUsesTheIndex(t *testing.T) {
+	sqliteOnly(t)
 	db, _ := openTemp(t)
 	rows, err := db.base.r.Query(`EXPLAIN QUERY PLAN SELECT a.id FROM articles a WHERE a.fetched_ms > ? AND a.fetched_ms <= ?
 		AND a.source_id IN (SELECT value FROM json_each(?)) ORDER BY a.fetched_ms ASC, a.id ASC`, 0, 1, `["pub"]`)

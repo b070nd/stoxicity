@@ -131,6 +131,7 @@ func TestBooksAreCreatedFoundAndKeptApartByTenant(t *testing.T) {
 }
 
 func TestADatabaseFileCopiedToAnotherTenantShowsNoBooks(t *testing.T) {
+	sqliteOnly(t)
 	ctx := context.Background()
 	db, dir := openTemp(t)
 	db.now = clock(pfT0)
@@ -459,7 +460,7 @@ func TestDatabaseRefusesWhatTheProgramWouldNotDo(t *testing.T) {
 	}
 	want := func(name string, err error, sub string) {
 		t.Helper()
-		if err == nil || !strings.Contains(err.Error(), sub) {
+		if err == nil || !strings.Contains(strings.ToLower(err.Error()), strings.ToLower(sub)) {
 			t.Errorf("%s: %v (want %q)", name, err, sub)
 		}
 	}
@@ -507,7 +508,7 @@ func TestVerifyFindsEditsMadeOutsideTheProgram(t *testing.T) {
 		{"an event time", "pf_tx_no_update", `UPDATE pf_tx SET event_ms = event_ms + 1 WHERE seq = 2`, "chain hash", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, p := newPF(t)
+			db, p := newPF(t)
 			mkBook(t, p, "main", "core", portfolio.Real)
 			deposit(t, p, "main/core", 1_000_000, "d")
 			if err := p.Update(ctx, []string{"main/core"}, func(now time.Time, ls []*portfolio.Ledger) (*ImportBatch, error) {
@@ -524,7 +525,12 @@ func TestVerifyFindsEditsMadeOutsideTheProgram(t *testing.T) {
 				t.Fatalf("before the edit: %v", err)
 			}
 			h, _ := p.t.handle()
-			if _, err := h.w.Exec(`DROP TRIGGER ` + tc.drop); err != nil {
+			drop := `DROP TRIGGER ` + tc.drop
+			if db.pgURL != "" {
+				table := strings.TrimSuffix(strings.TrimSuffix(tc.drop, "_no_update"), "_no_delete")
+				drop = `ALTER TABLE ` + table + ` DISABLE TRIGGER ` + tc.drop
+			}
+			if _, err := h.w.Exec(drop); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := h.w.Exec(tc.sql); err != nil {

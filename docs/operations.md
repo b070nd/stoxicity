@@ -10,6 +10,8 @@ stoxicity ops service launchd|systemd   stoxicity ops recover | reconciled -by N
 stoxicity ops drill [-work DIR] [-keep] [-target-backup D -target-restore D -target-open D]
 ```
 
+On Postgres (see [postgres.md](postgres.md)) `ops backup` uses `pg_dump` and proves the dump by restoring it into a scratch database, `ops verify` repeats that, `ops restore` restores into a new database beside the configured one, and `ops health` reads the migration tables; `ops drill` is SQLite only. The rest of this page describes the SQLite files.
+
 None of these opens a database through the application's store, so none of them migrates one. Databases are read through read-only connections and copied with SQLite's own snapshot (`VACUUM INTO`); a live database is never written. (`ops restore` and `ops reconciled` open the restored data afterwards, on purpose, to switch off orders and to check the broker records.)
 
 ## Health and metrics

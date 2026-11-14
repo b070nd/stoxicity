@@ -25,6 +25,7 @@ read. The loader is described in `app/src/envfile/envfile.go`.
 | `STOXICITY_TENANT` | `.env` | no | Tenant to open by default |
 | `STOXICITY_TIMEZONE` | `.env` | no | Time zone for days and digest times (`Europe/Berlin`) |
 | `STOXICITY_DATA_DIR` | `.env.local` | no | Database and runtime state. Keep it **outside the source folder** with an absolute path, e.g. `/Users/you/.stoxicity/data` (default: `data/` beside `.env`); see [data-location.md](data-location.md) |
+| `STOXICITY_DATABASE_URL` | `.env.local` | yes (may hold a password) | Use this PostgreSQL database instead of the SQLite files, e.g. `postgresql://user@localhost:5432/stoxicity_app`. Unset: SQLite. See [postgres.md](postgres.md) |
 | `STOXICITY_LOG_LEVEL` | `.env` | no | `debug`, `info`, `warn`, `error` |
 | `STOXICITY_LAYA_URL` | `.env` | no | laya-serve address |
 | `STOXICITY_LAYA_COMMAND` | `.env.local` | no | program that starts laya-serve (a path on your machine) |

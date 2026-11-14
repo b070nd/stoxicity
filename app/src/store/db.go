@@ -32,8 +32,9 @@ var errClosed = errors.New("store: closed")
 // Every database has one write connection and a separate pool of read-only
 // connections, all in WAL mode. A DB is safe for concurrent use.
 type DB struct {
-	dir string
-	now func() time.Time
+	dir   string // SQLite: the folder of the database files
+	pgURL string // Postgres: the database URL; empty for SQLite
+	now   func() time.Time
 
 	closed atomic.Bool
 
@@ -49,6 +50,8 @@ type handle struct {
 	w *sql.DB // single write connection
 	r *sql.DB // read-only pool
 	d dialect // what differs in the SQL of this database
+
+	lock int64 // key of the write lock, for a database that has one (Postgres)
 }
 
 func (h *handle) close() error {
@@ -78,7 +81,7 @@ func Open(dir string) (*DB, error) {
 		return nil, fmt.Errorf("store: %w", err)
 	}
 	db := &DB{dir: abs, now: time.Now, tenants: map[string]*handle{}}
-	db.base, err = openHandle(context.Background(), filepath.Join(abs, "base.db"), baseFS, "migrations/base")
+	db.base, err = openHandle(context.Background(), filepath.Join(abs, "base.db"), baseFS, "migrations/sqlite/base")
 	if err != nil {
 		return nil, err
 	}
@@ -123,11 +126,19 @@ func (db *DB) tenantHandle(id string) (*handle, error) {
 	if !model.ValidID(id) {
 		return nil, fmt.Errorf("store: invalid tenant id %q", id)
 	}
+	if db.pgURL != "" {
+		h, err := db.openPGTenant(context.Background(), id)
+		if err != nil {
+			return nil, fmt.Errorf("store: tenant %q: %w", id, err)
+		}
+		db.tenants[id] = h
+		return h, nil
+	}
 	tdir := filepath.Join(db.dir, "tenants")
 	if err := os.MkdirAll(tdir, 0o755); err != nil {
 		return nil, fmt.Errorf("store: %w", err)
 	}
-	h, err := openHandle(context.Background(), filepath.Join(tdir, id+".db"), tenantFS, "migrations/tenant")
+	h, err := openHandle(context.Background(), filepath.Join(tdir, id+".db"), tenantFS, "migrations/sqlite/tenant")
 	if err != nil {
 		return nil, fmt.Errorf("store: tenant %q: %w", id, err)
 	}
@@ -157,7 +168,7 @@ func openHandle(ctx context.Context, path string, fsys migrationFS, dir string) 
 	w.SetMaxOpenConns(1)
 	w.SetMaxIdleConns(1)
 	w.SetConnMaxLifetime(0)
-	if err := migrate(ctx, w, migrations, time.Now); err != nil {
+	if err := migrate(ctx, w, sqliteDialect{}, migrations, time.Now); err != nil {
 		w.Close()
 		return nil, fmt.Errorf("store: %s: %w", filepath.Base(path), err)
 	}

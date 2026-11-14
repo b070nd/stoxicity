@@ -34,7 +34,8 @@ and rehearse every trade on paper before anything near a broker. Your data stays
 - **Primary sources first.** SEC EDGAR filings and press releases, the Fed, ECB, Bank of England, SNB,
   EBA, BLS and more. 24 sources are configured and 19 are on by default, each with its stated licence.
 - **A query language you already know.** `"free cash flow" -rumor ticker:AAPL site:sec.gov`.
-- **Local and private.** One embedded SQLite database per install, no account and no cloud service.
+- **Local and private.** One embedded SQLite database per install (or a PostgreSQL database of your own, see
+  [docs/postgres.md](docs/postgres.md)), no account and no cloud service.
   Pure Go: single binaries, no C toolchain.
 - **Honest numbers.** Money is exact. A ratio that cannot be computed says why instead of showing a
   guess, and a missing price is never filled in.

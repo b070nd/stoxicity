@@ -71,7 +71,11 @@ type BackupHealth struct {
 
 // HealthOptions say where to look and what is too old.
 type HealthOptions struct {
-	DataDir      string
+	DataDir string
+	// PostgresURL, when set, says the data is in that Postgres database and not
+	// in SQLite files: the databases listed are its schemas, read without
+	// writing. The URL never appears in the result.
+	PostgresURL  string
 	BackupRoot   string
 	Quota        Quota
 	MaxBackupAge time.Duration // older than this is a warning; 0 means 48 hours
@@ -117,8 +121,10 @@ func Check(ctx context.Context, o HealthOptions) (Health, error) {
 		h.Status = level
 		return h, nil
 	}
-	dbs, err := Databases(o.DataDir)
-	if err != nil {
+	var dbs []string
+	if o.PostgresURL != "" {
+		pgHealth(ctx, o.PostgresURL, known, &h, bump)
+	} else if dbs, err = Databases(o.DataDir); err != nil {
 		return h, err
 	}
 	n := 0
@@ -155,7 +161,7 @@ func Check(ctx context.Context, o HealthOptions) (Health, error) {
 		}
 		h.DBs = append(h.DBs, dh)
 	}
-	if len(dbs) == 0 || dbs[0] != "base.db" {
+	if o.PostgresURL == "" && (len(dbs) == 0 || dbs[0] != "base.db") {
 		bump(Warn, "there is no base database yet")
 	}
 
@@ -215,6 +221,43 @@ func Check(ctx context.Context, o HealthOptions) (Health, error) {
 	sort.Strings(h.Problems)
 	h.Status = level
 	return h, nil
+}
+
+// pgHealth lists the schemas of a Postgres database as databases. It reads the
+// migration tables and nothing else.
+func pgHealth(ctx context.Context, url string, known store.SchemaVersions, h *Health, bump func(l, msg string)) {
+	st, err := store.InspectPostgres(ctx, url, false)
+	if err != nil {
+		bump(Fail, "Postgres cannot be reached or read")
+		return
+	}
+	names := make([]string, 0, len(st.Schemas))
+	for s := range st.Schemas {
+		names = append(names, s)
+	}
+	sort.Strings(names) // "base" sorts before "tenant_..."
+	n := 0
+	for _, s := range names {
+		name := "base"
+		if s != "base" {
+			n++
+			name = fmt.Sprintf("tenant-%d", n)
+		}
+		kn := known.KnownFor(s)
+		dh := DBHealth{Name: name, Known: kn, Applied: st.Schemas[s], State: "current"}
+		switch {
+		case dh.Applied > kn:
+			dh.State = "ahead"
+			bump(Fail, fmt.Sprintf("%s is at schema %d and this program knows %d: it was written by a newer program", name, dh.Applied, kn))
+		case dh.Applied < kn:
+			dh.State = "behind"
+			bump(Warn, fmt.Sprintf("%s is at schema %d and will migrate to %d when next opened: take a backup first", name, dh.Applied, kn))
+		}
+		h.DBs = append(h.DBs, dh)
+	}
+	if _, ok := st.Schemas["base"]; !ok {
+		bump(Warn, "there is no base schema yet")
+	}
 }
 
 // Metrics renders the health in the Prometheus text format. Labels come from a

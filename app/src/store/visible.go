@@ -134,8 +134,11 @@ func (db *DB) SearchIn(ctx context.Context, match string, from, to time.Time, al
 	if !ok {
 		return nil, nil
 	}
-	q, args := h.windowQuery(articleSelect+` FROM articles_fts JOIN articles a ON a.seq = articles_fts.rowid`+
-		latestScoreJoin+` WHERE articles_fts MATCH ?`, []any{match}, from, to, list)
+	arg, err := h.d.matchArg(match)
+	if err != nil {
+		return nil, fmt.Errorf("store: search: %w", err)
+	}
+	q, args := h.windowQuery(articleSelect+h.d.searchFrom()+latestScoreJoin+h.d.searchWhere(), []any{arg}, from, to, list)
 	q, args = page(q+articleOrder, args, limit, offset)
 	out, err := queryArticles(ctx, h.r, q, args...)
 	if err != nil {

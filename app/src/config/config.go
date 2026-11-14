@@ -20,6 +20,10 @@ type Config struct {
 	Timezone string `yaml:"timezone"`
 	// DataDir holds the database and other runtime state.
 	DataDir string `yaml:"data_dir"`
+	// DatabaseURL, when set, makes the program keep its data in that Postgres
+	// database instead of SQLite files in DataDir. It is meant for
+	// STOXICITY_DATABASE_URL in .env.local, not for this file: it may hold a password.
+	DatabaseURL string `yaml:"database_url"`
 	// Watchlist is the symbols the user already follows.
 	Watchlist []string `yaml:"watchlist"`
 	Lens      Lens     `yaml:"lens"`

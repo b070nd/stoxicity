@@ -16,15 +16,8 @@ import (
 
 func TestQuotaIsAtomicAcrossConnectionsAndRestarts(t *testing.T) {
 	ctx := context.Background()
-	dir := t.TempDir()
-	a, err := Open(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	b, err := Open(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	a, dir := openTemp(t)
+	b := openAgain(t, a, dir)
 	now := time.Date(2026, 11, 8, 10, 0, 0, 0, time.UTC)
 	limit := quota.Limit{Requests: 5, Period: time.Hour}
 	var successes atomic.Int32
@@ -56,11 +49,7 @@ func TestQuotaIsAtomicAcrossConnectionsAndRestarts(t *testing.T) {
 	if err := b.Close(); err != nil {
 		t.Fatal(err)
 	}
-	c, err := Open(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer c.Close()
+	c := openAgain(t, a, dir)
 	if err := c.TakeQuota(ctx, "provider.test", limit, now.Add(-time.Hour)); err == nil {
 		t.Fatal("clock rollback refilled budget")
 	}
@@ -76,11 +65,7 @@ func TestQuotaIsAtomicAcrossConnectionsAndRestarts(t *testing.T) {
 }
 
 func TestQuotaCooldownSurvivesBudgetResetAndConfigChange(t *testing.T) {
-	db, err := Open(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	db, _ := openTemp(t)
 	ctx := context.Background()
 	now := time.Date(2026, 11, 8, 10, 0, 0, 0, time.UTC)
 	if err := db.TakeQuota(ctx, "p", quota.Limit{Requests: 1, Period: time.Minute}, now); err != nil {
@@ -107,7 +92,7 @@ func TestQuotaCooldownSurvivesBudgetResetAndConfigChange(t *testing.T) {
 
 func TestQuotaMigrationOnCopyPreservesLegacyRows(t *testing.T) {
 	ctx := context.Background()
-	migrations, err := loadMigrations(baseFS, "migrations/base")
+	migrations, err := loadMigrations(baseFS, "migrations/sqlite/base")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +102,7 @@ func TestQuotaMigrationOnCopyPreservesLegacyRows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := migrate(ctx, raw, migrations[:26], time.Now); err != nil {
+	if err := migrate(ctx, raw, sqliteDialect{}, migrations[:26], time.Now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := raw.Exec(`INSERT INTO candle(ticker,day,open,high,low,close,volume) VALUES('KEEP','2026-11-03',1,2,1,2,5)`); err != nil {
@@ -195,11 +180,7 @@ func TestQuotaExtendedExhaustedWindowSurvivesRestart(t *testing.T) {
 }
 
 func TestQuotaDeadlinesNeverRoundDown(t *testing.T) {
-	db, err := Open(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	db, _ := openTemp(t)
 	ctx := context.Background()
 	now := time.Date(2026, 11, 8, 10, 0, 0, 500000, time.UTC)
 	limit := quota.Limit{Requests: 1, Period: time.Millisecond}

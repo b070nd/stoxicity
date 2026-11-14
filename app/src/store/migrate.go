@@ -12,10 +12,10 @@ import (
 	"time"
 )
 
-//go:embed migrations/base/*.sql
+//go:embed migrations/sqlite/base/*.sql
 var baseFS embed.FS
 
-//go:embed migrations/tenant/*.sql
+//go:embed migrations/sqlite/tenant/*.sql
 var tenantFS embed.FS
 
 // migrationFS is the part of fs.FS the loader needs.
@@ -23,6 +23,10 @@ type migrationFS interface {
 	fs.ReadDirFS
 	fs.ReadFileFS
 }
+
+// migrateLock is the key of the lock that lets one process at a time migrate a
+// database that has locks (Postgres).
+const migrateLock = 0x73746f78_6d696772
 
 var migrationName = regexp.MustCompile(`^(\d{4})_[a-z0-9_]+\.sql$`)
 
@@ -35,6 +39,13 @@ type migration struct {
 // loadMigrations reads the NNNN_name.sql files in dir, in version order. The
 // versions must start at 1 and have no gaps.
 func loadMigrations(fsys migrationFS, dir string) ([]migration, error) {
+	return loadMigrationsFrom(fsys, dir, false)
+}
+
+// loadMigrationsFrom is loadMigrations; with squashed the first file may have
+// any version (a baseline that stands for every earlier migration of the other
+// database), and the ones after it must follow without gaps.
+func loadMigrationsFrom(fsys migrationFS, dir string, squashed bool) ([]migration, error) {
 	entries, err := fsys.ReadDir(dir)
 	if err != nil {
 		return nil, fmt.Errorf("store: migrations: %w", err)
@@ -56,9 +67,13 @@ func loadMigrations(fsys migrationFS, dir string) ([]migration, error) {
 		list = append(list, migration{version: v, name: e.Name(), sql: string(body)})
 	}
 	slices.SortFunc(list, func(a, b migration) int { return a.version - b.version })
+	first := 1
+	if squashed && len(list) > 0 {
+		first = list[0].version
+	}
 	for i, m := range list {
-		if m.version != i+1 {
-			return nil, fmt.Errorf("store: migrations: %s: expected version %d", m.name, i+1)
+		if m.version != first+i {
+			return nil, fmt.Errorf("store: migrations: %s: expected version %d", m.name, first+i)
 		}
 	}
 	return list, nil
@@ -68,11 +83,8 @@ func loadMigrations(fsys migrationFS, dir string) ([]migration, error) {
 // own transaction, and records them in schema_migrations. A database whose
 // recorded version is higher than the newest known one was written by a newer
 // binary and is refused untouched.
-func migrate(ctx context.Context, db *sql.DB, list []migration, now func() time.Time) error {
-	_, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
-		version    INTEGER PRIMARY KEY,
-		name       TEXT NOT NULL,
-		applied_ms INTEGER NOT NULL)`)
+func migrate(ctx context.Context, db *sql.DB, d dialect, list []migration, now func() time.Time) error {
+	_, err := db.ExecContext(ctx, d.migrationsTable())
 	if err != nil {
 		return fmt.Errorf("migrate: %w", err)
 	}
@@ -88,19 +100,22 @@ func migrate(ctx context.Context, db *sql.DB, list []migration, now func() time.
 		return fmt.Errorf("migrate: database is at schema version %d, newer than this binary (%d)", cur.Int64, known)
 	}
 	for _, m := range list {
-		if err := applyMigration(ctx, db, m, now()); err != nil {
+		if err := applyMigration(ctx, db, d, m, now()); err != nil {
 			return fmt.Errorf("migrate: %s: %w", m.name, err)
 		}
 	}
 	return nil
 }
 
-func applyMigration(ctx context.Context, db *sql.DB, m migration, at time.Time) error {
+func applyMigration(ctx context.Context, db *sql.DB, d dialect, m migration, at time.Time) error {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	if err := d.afterBegin(ctx, tx, migrateLock); err != nil {
+		return err
+	}
 	var done int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations WHERE version = ?`, m.version).Scan(&done); err != nil {
 		return err

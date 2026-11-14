@@ -16,17 +16,8 @@ func (f historySource) History(ctx context.Context, ticker string) (marketdata.P
 }
 
 func TestPublicHistoryIsAtomicResumableAndSeparateFromDailyCandles(t *testing.T) {
-	dir := t.TempDir()
-	a, err := Open(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer a.Close()
-	b, err := Open(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer b.Close()
+	a, dir := openTemp(t)
+	b := openAgain(t, a, dir)
 	ctx := context.Background()
 	at := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
 	if err := a.PutCandles(ctx, []marketdata.Candle{{Ticker: "TEST", Day: "2026-11-06", Open: 123, High: 123, Low: 123, Close: 123, Raw: true}}); err != nil {
@@ -72,11 +63,7 @@ func TestPublicHistoryIsAtomicResumableAndSeparateFromDailyCandles(t *testing.T)
 	if err := b.Close(); err != nil {
 		t.Fatal(err)
 	}
-	b, err = Open(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer b.Close()
+	b = openAgain(t, a, dir)
 	states, err = b.HistoryStates(ctx)
 	if err != nil || states["TEST"].Months != 4 {
 		t.Fatalf("history not durable: %+v %v", states, err)
@@ -84,11 +71,7 @@ func TestPublicHistoryIsAtomicResumableAndSeparateFromDailyCandles(t *testing.T)
 }
 
 func TestHistoryKeeperFillsMissingFirstAndStopsOnProviderThrottle(t *testing.T) {
-	db, err := Open(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	db, _ := openTemp(t)
 	ctx := context.Background()
 	at := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
 	old := marketdata.PriceHistory{Ticker: "OLD", Symbol: "OLD", Currency: "USD", LatestDay: "2026-11-06", FetchedAt: at.Add(-48 * time.Hour), Months: []marketdata.HistoryMonth{{Month: "2026-11", Close: 100}}}

@@ -24,6 +24,11 @@ func TestLayaHelperProcess(t *testing.T) {
 	if dir == "" {
 		t.Skip("helper process")
 	}
+	// The handler comes first: once the "started" file exists the test may send
+	// SIGTERM at any moment, and a signal that arrives before the handler is
+	// installed ends the process without the marker (seen on a slow runner).
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGTERM)
 	record := fmt.Sprintf("host=%s port=%s key=%s", os.Getenv("LAYA_HOST"), os.Getenv("LAYA_PORT"), os.Getenv("LAYA_API_KEY"))
 	os.WriteFile(filepath.Join(dir, "started"), []byte(record), 0o600)
 	var env []string
@@ -39,8 +44,6 @@ func TestLayaHelperProcess(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, `{"status":"ok"}`) })
 	go http.Serve(ln, mux)
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGTERM)
 	<-sig
 	os.WriteFile(filepath.Join(dir, "terminated"), nil, 0o600)
 	os.Exit(0)

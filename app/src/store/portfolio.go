@@ -89,7 +89,7 @@ func insertBook(ctx context.Context, x pfExec, tenant string, b portfolio.Book, 
 	_, err := x.ExecContext(ctx, `INSERT INTO pf_books (id, tenant_id, account, name, env, base, method, allow_negative_cash, status, created_ms)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)`, b.ID, tenant, b.Account, b.Name, string(b.Env), string(b.Base), string(b.Method), neg, at)
 	if err != nil {
-		if strings.Contains(err.Error(), "UNIQUE") {
+		if isUniqueViolation(err) {
 			return fmt.Errorf("%w: %s/%s", ErrBookExists, b.Account, b.Name)
 		}
 		return fmt.Errorf("store: portfolio: %w", err)

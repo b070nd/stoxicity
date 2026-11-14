@@ -120,7 +120,7 @@ func opsHealth(ctx context.Context, a *app, args []string) error {
 	if err != nil {
 		return err
 	}
-	h, err := ops.Check(ctx, ops.HealthOptions{DataDir: a.dataDir(), BackupRoot: a.backupRoot(), Quota: q, Now: a.now})
+	h, err := ops.Check(ctx, ops.HealthOptions{DataDir: a.dataDir(), PostgresURL: a.cfg.DatabaseURL, BackupRoot: a.backupRoot(), Quota: q, Now: a.now})
 	if err != nil {
 		return err
 	}
@@ -157,7 +157,11 @@ func opsHealth(ctx context.Context, a *app, args []string) error {
 		for _, p := range h.Problems {
 			fmt.Fprintf(a.stdout, "  %s\n", p)
 		}
-		fmt.Fprintln(a.stdout, "Nothing here names a path, a tenant, an address or a key; no database was opened.")
+		if a.cfg.DatabaseURL != "" {
+			fmt.Fprintln(a.stdout, "Nothing here names a path, a tenant, an address or a key; Postgres was read (its migration tables) and nothing was written.")
+		} else {
+			fmt.Fprintln(a.stdout, "Nothing here names a path, a tenant, an address or a key; no database was opened.")
+		}
 	}
 	if h.Status == ops.Fail {
 		return errReported
@@ -184,7 +188,7 @@ func opsMetrics(ctx context.Context, a *app, args []string) error {
 	if err != nil {
 		return err
 	}
-	h, err := ops.Check(ctx, ops.HealthOptions{DataDir: a.dataDir(), BackupRoot: a.backupRoot(), Quota: q, Now: a.now})
+	h, err := ops.Check(ctx, ops.HealthOptions{DataDir: a.dataDir(), PostgresURL: a.cfg.DatabaseURL, BackupRoot: a.backupRoot(), Quota: q, Now: a.now})
 	if err != nil {
 		return err
 	}
@@ -217,6 +221,7 @@ func opsBackup(ctx context.Context, a *app, args []string) error {
 	if root == "" {
 		root = a.backupRoot()
 	}
+	postgres := a.cfg.DatabaseURL != ""
 	size, _ := ops.DirSize(a.dataDir())
 	if err := a.guardDisk(size + size/5); err != nil {
 		return fmt.Errorf("no backup was made: %w", err)
@@ -227,7 +232,13 @@ func opsBackup(ctx context.Context, a *app, args []string) error {
 	}
 	defer lease.Release()
 
-	dest, m, err := ops.Snapshot(ctx, a.dataDir(), root, ops.SnapshotOptions{Now: a.now, AllowIncoherent: *incoherent})
+	var dest string
+	var m ops.Manifest
+	if postgres {
+		dest, m, err = ops.SnapshotPostgres(ctx, a.cfg.DatabaseURL, a.dataDir(), root, ops.SnapshotOptions{Now: a.now})
+	} else {
+		dest, m, err = ops.Snapshot(ctx, a.dataDir(), root, ops.SnapshotOptions{Now: a.now, AllowIncoherent: *incoherent})
+	}
 	if err != nil {
 		return err
 	}
@@ -260,7 +271,11 @@ func opsBackup(ctx context.Context, a *app, args []string) error {
 	if *asJSON {
 		return printJSON(a, res)
 	}
-	fmt.Fprintf(a.stdout, "backup %s: %d files, verified (checksums, integrity, rows of every table)\n", m.ID, len(m.Files))
+	if postgres {
+		fmt.Fprintf(a.stdout, "backup %s: %d files; the Postgres dump was restored into a scratch database (dropped again) and every table counted, and the archive on disk was checked by checksum and listing\n", m.ID, len(m.Files))
+	} else {
+		fmt.Fprintf(a.stdout, "backup %s: %d files, verified (checksums, integrity, rows of every table)\n", m.ID, len(m.Files))
+	}
 	if !m.Coherent {
 		fmt.Fprintln(a.stdout, "WARNING: the databases changed while they were copied; this backup is not one moment of the data folder.")
 	} else if m.Attempts > 1 {
@@ -327,7 +342,7 @@ func opsVerify(ctx context.Context, a *app, args []string) error {
 	if len(rest) != 1 {
 		return usageErrorf("usage: ops verify BACKUP-FOLDER [-json]")
 	}
-	rep, err := ops.Verify(ctx, a.backupPath(rest[0]))
+	rep, err := ops.VerifyWith(ctx, a.backupPath(rest[0]), ops.VerifyOptions{PostgresURL: a.cfg.DatabaseURL})
 	if err != nil {
 		return err
 	}
@@ -337,6 +352,9 @@ func opsVerify(ctx context.Context, a *app, args []string) error {
 		}
 	} else if rep.OK {
 		fmt.Fprintf(a.stdout, "backup %s is intact: %d files, %d bytes, every checksum, integrity check and row count agrees (%s)\n", rep.ID, rep.Files, rep.Bytes, rep.Took.Round(time.Millisecond))
+		for _, n := range rep.Notes {
+			fmt.Fprintf(a.stdout, "not checked: %s\n", n)
+		}
 	} else {
 		fmt.Fprintf(a.stdout, "backup %s does NOT verify:\n", rep.ID)
 		for _, p := range rep.Problems {
@@ -364,6 +382,12 @@ func opsRestore(ctx context.Context, a *app, args []string) error {
 	rest, err := parseMixed(fs, args)
 	if err != nil {
 		return err
+	}
+	if a.cfg.DatabaseURL != "" {
+		if len(rest) != 1 || strings.TrimSpace(*by) == "" {
+			return usageErrorf("usage: ops restore BACKUP -by NAME   (restores into a new database beside the configured one; nothing is replaced)")
+		}
+		return opsRestorePostgres(ctx, a, rest[0], strings.TrimSpace(*by))
 	}
 	if len(rest) != 1 || !*replace || strings.TrimSpace(*by) == "" {
 		return usageErrorf("usage: ops restore BACKUP -replace-data -by NAME   (stop every other stoxicity process first)")
@@ -398,6 +422,76 @@ func opsRestore(ctx context.Context, a *app, args []string) error {
 	fmt.Fprintf(a.stdout, "new orders for real and paper_broker books are switched off in %d tenant(s), and new risk is refused until the broker is reconciled.\n", len(ids))
 	fmt.Fprintln(a.stdout, "Next: broker sync BOOK for every book bound to a broker, settle the differences, then ops reconciled -by NAME, then order control enable.")
 	return nil
+}
+
+// opsRestorePostgres restores a backup into a new database. The configured
+// database is left as it is; the owner switches to the restored one by setting
+// STOXICITY_DATABASE_URL, which keeps the old one as the way back.
+func opsRestorePostgres(ctx context.Context, a *app, backup, by string) error {
+	if !restoreSkipProcessCheck {
+		if pids, known := ops.Running(); !known {
+			return errors.New("cannot tell whether the program is running (pgrep is missing); stop it first and run this again")
+		} else if len(pids) > 0 {
+			return fmt.Errorf("the program is running (process %v); stop it first", pids)
+		}
+	}
+	res, err := ops.RestorePostgres(ctx, a.backupPath(backup), a.cfg.DatabaseURL, ops.RestoreOptions{Now: a.now})
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(a.stdout, "restored backup %s into the new database %s: %d tables, %d rows, every table equal to the backup (%s)\n", res.BackupID, res.Database, res.Tables, res.Rows, res.Total.Round(time.Millisecond))
+	fmt.Fprintf(a.stdout, "the configured database %s was not touched\n", res.Previous)
+	m, _ := ops.ReadManifest(a.backupPath(backup))
+	if err := os.MkdirAll(a.dataDir(), 0o755); err != nil {
+		return err
+	}
+	if err := ops.WriteRestore(a.dataDir(), ops.RestoreMarker{State: ops.NeedsReconcile, Restored: a.now().UTC(), BackupID: res.BackupID, BackupTook: m.Taken, Previous: res.Previous}); err != nil {
+		return err
+	}
+	// New orders that could reach a broker are switched off in every tenant of
+	// the restored database, and new risk is refused until the broker is reconciled.
+	db, err := store.OpenPostgres(ctx, res.URL)
+	if err != nil {
+		return fmt.Errorf("restored, but the new database could not be opened to switch off new orders: %w", err)
+	}
+	defer db.Close()
+	restored := *a
+	restored.cfg.DatabaseURL = res.URL
+	ids, err := restored.tenantIDList(ctx)
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		for _, env := range []portfolio.Env{portfolio.Real, portfolio.PaperBroker} {
+			if err := db.Orders(id).SetControl(ctx, env, true, "restored from backup "+res.BackupID, by); err != nil {
+				return fmt.Errorf("restored, but new %s orders of %s could not be switched off: %w", env, id, err)
+			}
+		}
+	}
+	fmt.Fprintf(a.stdout, "new orders for real and paper_broker books are switched off in %d tenant(s), and new risk is refused until the broker is reconciled.\n", len(ids))
+	fmt.Fprintf(a.stdout, "To use the restored data, set STOXICITY_DATABASE_URL to the same server and user with the database name %s (in .env.local), then: broker sync BOOK for every book bound to a broker, ops reconciled -by NAME, order control enable.\n", res.Database)
+	fmt.Fprintln(a.stdout, "Company files in the backup were not copied; they are in the backup folder.")
+	return nil
+}
+
+// tenantIDList lists the tenants that have a database: SQLite files in the data
+// folder, or the tenant schemas of the configured Postgres database.
+func (a *app) tenantIDList(ctx context.Context) ([]string, error) {
+	if a.cfg.DatabaseURL == "" {
+		return tenantIDs(a.dataDir())
+	}
+	st, err := store.InspectPostgres(ctx, a.cfg.DatabaseURL, false)
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	for s := range st.Schemas {
+		if id, ok := strings.CutPrefix(s, "tenant_"); ok && model.ValidID(id) {
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
+	return ids, nil
 }
 
 func tenantIDs(dataDir string) ([]string, error) {
@@ -520,7 +614,7 @@ func opsReconciled(ctx context.Context, a *app, args []string) error {
 	if err != nil {
 		return err
 	}
-	ids, err := tenantIDs(a.dataDir())
+	ids, err := a.tenantIDList(ctx)
 	if err != nil {
 		return err
 	}
@@ -550,6 +644,9 @@ func opsReconciled(ctx context.Context, a *app, args []string) error {
 }
 
 func opsDrill(ctx context.Context, a *app, args []string) error {
+	if a.cfg.DatabaseURL != "" {
+		return errors.New("ops drill works on SQLite files and does not yet drill a Postgres database; ops backup restores every dump into a scratch database to prove it, and ops verify does the same for any backup")
+	}
 	fs := newFlags("ops drill")
 	work := fs.String("work", "", "a folder outside the data folder for the copies (default: a temporary one, removed afterwards)")
 	keep := fs.Bool("keep", false, "keep the copies")
