@@ -27,6 +27,8 @@
 # the program's own folders
 /research/
 /exports/
+/reference/
+/graphify-out/
 /reports/
 /private/
 /local/
@@ -49,3 +51,6 @@
 /broker*.json
 # stray copies of the built binary
 /app/src/stoxicity
+
+# macOS folder metadata
+.DS_Store
