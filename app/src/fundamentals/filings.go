@@ -22,6 +22,9 @@ type Filing struct {
 	// Accepted is the acceptance time as the SEC writes it (RFC 3339), empty
 	// when the record does not give one.
 	Accepted string
+	// Items are the Form 8-K item numbers as the SEC lists them ("2.02,9.01"),
+	// empty for other forms or when the record does not give them.
+	Items string
 }
 
 // Periodic reports whether the filing is an annual or quarterly report, which
@@ -71,6 +74,7 @@ func ParseSubmissions(body []byte) (Submissions, error) {
 		Report    []string `json:"reportDate"`
 		Document  []string `json:"primaryDocument"`
 		Accepted  []string `json:"acceptanceDateTime"`
+		Items     []string `json:"items"`
 	}
 	var ans struct {
 		arrays
@@ -90,7 +94,7 @@ func ParseSubmissions(body []byte) (Submissions, error) {
 	if len(r.Accession) == 0 && len(ans.Accession) > 0 { // an extra file holds the arrays at the top
 		r = ans.arrays
 	}
-	filings, err := fromArrays(r.Accession, r.Form, r.Filed, r.Report, r.Document, r.Accepted)
+	filings, err := fromArrays(r.Accession, r.Form, r.Filed, r.Report, r.Document, r.Accepted, r.Items)
 	if err != nil {
 		return Submissions{}, err
 	}
@@ -101,7 +105,7 @@ func ParseSubmissions(body []byte) (Submissions, error) {
 	return out, nil
 }
 
-func fromArrays(acc, form, filed, report, doc, accepted []string) ([]Filing, error) {
+func fromArrays(acc, form, filed, report, doc, accepted, items []string) ([]Filing, error) {
 	n := len(acc)
 	if len(form) != n || len(filed) != n || len(report) != n || len(doc) != n || (len(accepted) != 0 && len(accepted) != n) {
 		return nil, errors.New("fundamentals: the company's filing lists differ in length")
@@ -111,6 +115,9 @@ func fromArrays(acc, form, filed, report, doc, accepted []string) ([]Filing, err
 		out[i] = Filing{Accession: acc[i], Form: form[i], Filed: filed[i], Report: report[i], Document: doc[i]}
 		if len(accepted) == n {
 			out[i].Accepted = accepted[i]
+		}
+		if len(items) == n { // optional: a record without the list, or of another length, gives none
+			out[i].Items = items[i]
 		}
 	}
 	return out, nil
